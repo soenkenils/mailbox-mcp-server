@@ -76,7 +76,7 @@ class MailboxMcpServer {
   private initializeServices(): void {
     try {
       this.cache = new MemoryCache(this.config.cache);
-      this.emailService = new EmailService(this.config.email, this.cache);
+      this.emailService = new EmailService(this.config.email, this.cache, this.server);
       this.calendarService = new CalendarService(
         this.config.calendar,
         this.cache,

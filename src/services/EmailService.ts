@@ -1,5 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailMessage,
@@ -12,10 +13,12 @@ export class EmailService {
   private connection: ImapConnection;
   private cache: LocalCache;
   private client?: ImapFlow;
+  private server: Server;
 
-  constructor(connection: ImapConnection, cache: LocalCache) {
+  constructor(connection: ImapConnection, cache: LocalCache, server: Server) {
     this.connection = connection;
     this.cache = cache;
+    this.server = server;
   }
 
   async connect(): Promise<void> {
@@ -30,12 +33,23 @@ export class EmailService {
       logger: false, // Disable logging for production
     });
 
+    if (this.client.on && typeof this.client.on === 'function') {
+      this.client.on("error", (error: Error) => {
+        console.error("IMAP connection error:", error);
+      });
+    }
+
     await this.client.connect();
   }
 
   async disconnect(): Promise<void> {
     if (this.client) {
-      await this.client.logout();
+      try {
+        await this.client.logout();
+      } catch (error) {
+        console.warn("Error during logout:", error);
+      }
+      this.client = undefined;
     }
   }
 
@@ -66,17 +80,36 @@ export class EmailService {
       return cached;
     }
 
-    if (!this.client) {
-      await this.connect();
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      await this.server.sendLoggingMessage({
+        level: "info",
+        logger: "EmailService",
+        data: `Fetching email with UID ${uid} from folder ${folder}`
+      });
+
+      const message = await this.fetchEmailByUid(uid, folder);
+
+      if (message) {
+        this.cache.set(cacheKey, message, 600000); // 10 minutes TTL
+      }
+
+      await this.server.sendLoggingMessage({
+        level: "info",
+        logger: "EmailService",
+        data: `Fetched email with UID ${uid} from folder ${folder}`
+      });
+
+      return message;
+    } catch (error) {
+      console.error(`Error fetching email UID ${uid}:`, error);
+      // Reset connection on error
+      this.client = undefined;
+      throw error;
     }
-
-    const message = await this.fetchEmailByUid(uid, folder);
-
-    if (message) {
-      this.cache.set(cacheKey, message, 600000); // 10 minutes TTL
-    }
-
-    return message;
   }
 
   async getEmailThread(
@@ -145,7 +178,7 @@ export class EmailService {
     }
 
     // Apply in-memory filtering for complex queries
-    let filteredMessages = this.applyInMemoryFilters(messages, options);
+    const filteredMessages = this.applyInMemoryFilters(messages, options);
 
     // Sort by date (newest first)
     filteredMessages.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -167,18 +200,24 @@ export class EmailService {
 
       // Fetch the full message by UID using fetch method
       let message: any = null;
-      for await (const msg of this.client.fetch(`${uid}:${uid}`, {
-        source: true,
-        envelope: true,
-        uid: true,
-        flags: true,
-      }, { uid: true })) {
+      for await (const msg of this.client.fetch(
+        `${uid}:${uid}`,
+        {
+          source: true,
+          envelope: true,
+          uid: true,
+          flags: true,
+        },
+        { uid: true },
+      )) {
         message = msg;
         break; // We only expect one message
       }
 
       if (!message) {
-        console.error(`Failed to fetch email with UID ${uid} from folder ${folder}`);
+        console.error(
+          `Failed to fetch email with UID ${uid} from folder ${folder}`,
+        );
         return null;
       }
 
@@ -187,7 +226,23 @@ export class EmailService {
 
       return this.parseFullEmailMessage(parsed, message, folder);
     } catch (error) {
-      throw new Error(`Failed to fetch email with UID ${uid} from folder ${folder}: ${error instanceof Error ? error.message : String(error)}`);
+      // Log the specific error type for debugging
+      if (error instanceof Error) {
+        const errorWithCode = error as Error & { code?: string };
+        if (
+          errorWithCode.code === "ECONNRESET" ||
+          errorWithCode.code === "EPIPE"
+        ) {
+          console.error(
+            `Connection error while fetching UID ${uid}: ${error.message}`,
+          );
+          // Reset client to force reconnection on next attempt
+          this.client = undefined;
+        }
+      }
+      throw new Error(
+        `Failed to fetch email with UID ${uid} from folder ${folder}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -206,7 +261,7 @@ export class EmailService {
     // Handle query searches
     if (options.query) {
       const query = options.query.trim();
-      
+
       // Handle complex queries with OR operations
       if (query.includes(" OR ")) {
         // For OR queries, we'll use a broader search and filter in memory
@@ -216,26 +271,23 @@ export class EmailService {
         }
         return criteria; // Return just date filters, handle query in memory
       }
-      
+
       // Handle from: queries
       if (query.toLowerCase().startsWith("from:")) {
         const fromValue = query.substring(5).trim();
         criteria.from = fromValue;
         return criteria;
       }
-      
+
       // Handle to: queries
       if (query.toLowerCase().startsWith("to:")) {
         const toValue = query.substring(3).trim();
         criteria.to = toValue;
         return criteria;
       }
-      
+
       // For simple text queries, search in subject and body
-      criteria.or = [
-        { subject: query },
-        { body: query }
-      ];
+      criteria.or = [{ subject: query }, { body: query }];
     }
 
     // If no criteria, return all messages
@@ -254,11 +306,12 @@ export class EmailService {
 
     // Apply query filter for complex queries that weren't handled by IMAP
     if (options.query) {
-      const needsInMemoryQueryFilter = 
-        options.query.includes(" OR ");
-      
+      const needsInMemoryQueryFilter = options.query.includes(" OR ");
+
       if (needsInMemoryQueryFilter) {
-        filtered = filtered.filter((msg) => this.matchesQuery(msg, options.query!));
+        filtered = filtered.filter((msg) =>
+          this.matchesQuery(msg, options.query!),
+        );
       }
     }
 
@@ -271,8 +324,8 @@ export class EmailService {
 
     // Handle OR operations
     if (lowercaseQuery.includes(" or ")) {
-      const orParts = lowercaseQuery.split(" or ").map(part => part.trim());
-      return orParts.some(part => this.matchesSingleQuery(message, part));
+      const orParts = lowercaseQuery.split(" or ").map((part) => part.trim());
+      return orParts.some((part) => this.matchesSingleQuery(message, part));
     }
 
     return this.matchesSingleQuery(message, lowercaseQuery);
@@ -282,16 +335,16 @@ export class EmailService {
     // Handle from: queries
     if (query.startsWith("from:")) {
       const emailDomain = query.substring(5).trim();
-      return message.from.some(from => 
-        from.address.toLowerCase().includes(emailDomain)
+      return message.from.some((from) =>
+        from.address.toLowerCase().includes(emailDomain),
       );
     }
 
-    // Handle to: queries  
+    // Handle to: queries
     if (query.startsWith("to:")) {
       const emailDomain = query.substring(3).trim();
-      return message.to.some(to => 
-        to.address.toLowerCase().includes(emailDomain)
+      return message.to.some((to) =>
+        to.address.toLowerCase().includes(emailDomain),
       );
     }
 
@@ -299,21 +352,20 @@ export class EmailService {
     const searchText = query.toLowerCase();
     return (
       message.subject.toLowerCase().includes(searchText) ||
-      message.from.some(from => 
-        from.address.toLowerCase().includes(searchText) ||
-        (from.name && from.name.toLowerCase().includes(searchText))
+      message.from.some(
+        (from) =>
+          from.address.toLowerCase().includes(searchText) ||
+          (from.name && from.name.toLowerCase().includes(searchText)),
       ) ||
-      message.to.some(to => 
-        to.address.toLowerCase().includes(searchText) ||
-        (to.name && to.name.toLowerCase().includes(searchText))
+      message.to.some(
+        (to) =>
+          to.address.toLowerCase().includes(searchText) ||
+          (to.name && to.name.toLowerCase().includes(searchText)),
       )
     );
   }
 
-  private parseEmailMessage(
-    message: any,
-    folder: string,
-  ): EmailMessage | null {
+  private parseEmailMessage(message: any, folder: string): EmailMessage | null {
     if (!message.envelope) {
       return null;
     }

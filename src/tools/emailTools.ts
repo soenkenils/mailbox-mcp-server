@@ -131,10 +131,28 @@ export async function handleEmailTool(
       }
 
       case "get_email": {
-        const email = await emailService.getEmail(
-          args.uid,
-          args.folder || "INBOX",
-        );
+        let email: any;
+        try {
+          email = await emailService.getEmail(args.uid, args.folder || "INBOX");
+        } catch (error) {
+          // Handle connection errors gracefully
+          if (
+            error instanceof Error &&
+            (error.message.includes("ECONNRESET") ||
+              error.message.includes("EPIPE"))
+          ) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Connection error while fetching email UID ${args.uid}. The IMAP server may have closed the connection. Please try again.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          throw error;
+        }
 
         if (!email) {
           return {

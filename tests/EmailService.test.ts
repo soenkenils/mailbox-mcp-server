@@ -55,10 +55,7 @@ describe("EmailService", () => {
     it("should build text criteria for simple query search", () => {
       const result = buildSearchCriteria({ query: "test" });
       expect(result).toEqual({
-        or: [
-          { subject: "test" },
-          { body: "test" }
-        ]
+        or: [{ subject: "test" }, { body: "test" }],
       });
     });
 
@@ -92,10 +89,7 @@ describe("EmailService", () => {
       });
       expect(result).toEqual({
         since: since,
-        or: [
-          { subject: "important" },
-          { body: "important" }
-        ]
+        or: [{ subject: "important" }, { body: "important" }],
       });
     });
 
