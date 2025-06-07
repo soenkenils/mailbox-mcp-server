@@ -1,0 +1,71 @@
+{
+  "name": "mailbox-mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for mailbox.org email, calendar, and contacts integration",
+  "main": "dist/main.js",
+  "bin": {
+    "mailbox-mcp-server": "dist/main.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest",
+    "test:unit": "vitest run unit",
+    "test:unit:caldav": "vitest run unit/CalDavService",
+    "test:unit:main": "vitest run unit/MainServer",
+    "test:integration": "RUN_INTEGRATION_TESTS=true vitest run integration",
+    "test:integration:caldav": "RUN_INTEGRATION_TESTS=true vitest run integration/CalDavService",
+    "test:watch": "vitest",
+    "format": "biome format --write src/ tests/",
+    "lint": "biome lint src/ tests/",
+    "check": "biome check --write src/ tests/",
+    "test:imap": "tsx scripts/test-imap.ts"
+  },
+  "keywords": [
+    "mcp",
+    "mailbox.org",
+    "email",
+    "calendar",
+    "contacts",
+    "claude",
+    "anthropic"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Sönke",
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/dotenv": "^6.1.1",
+    "@types/imap": "^0.8.42",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.14.1",
+    "@types/node-fetch": "^2.6.11",
+    "dotenv": "^16.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@types/nodemailer": "^6.4.17",
+    "dayjs": "^1.11.13",
+    "ical.js": "^1.5.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.3",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^7.0.3"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  }
+}
