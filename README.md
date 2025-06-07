@@ -5,6 +5,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 ## Features
 
 ### **Email Integration (IMAP + SMTP)**
+
 - ✅ **Search emails** by text content, sender, subject, and date range
 - ✅ **Retrieve complete email content** including headers, body, and attachments
 - ✅ **Send new emails** with rich text and HTML formatting
@@ -17,6 +18,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 - ✅ **Attachment detection** and metadata extraction
 
 ### **Calendar Integration (CalDAV)**
+
 - ✅ **Retrieve calendar events** within specified date ranges
 - ✅ **Search calendar events** by title, description, location
 - ✅ **Free/busy time checking** for scheduling
@@ -48,24 +50,35 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
    npm run build
    ```
 
-2. Configure environment variables in a `.env` file:
+2. Copy the example environment file and update it with your credentials:
 
    ```bash
-   # Required: Your mailbox.org credentials
-   IMAP_USER=your.email@mailbox.org
-   IMAP_PASSWORD=your-password-or-app-password
-   
-   # Optional: SMTP settings (defaults to mailbox.org)
-   SMTP_HOST=smtp.mailbox.org
-   SMTP_PORT=587
-   SMTP_SECURE=false
-   
-   # Optional: CalDAV/CardDAV settings
-   CALDAV_URL=dav.mailbox.org
-   CARDDAV_URL=dav.mailbox.org
+   cp .env.example .env
    ```
 
-3. Add to Claude Desktop configuration:
+   > **Note**: For security, it's recommended to use an [App Password](https://support.mailbox.org/en/help/app-passwords) instead of your main account password.
+
+3. Edit the `.env` file with your mailbox.org credentials:
+
+   ```env
+   # Required settings
+   IMAP_HOST=imap.mailbox.org
+   IMAP_PORT=993
+   IMAP_USER=your-email@mailbox.org
+   IMAP_PASSWORD=your-app-specific-password
+   
+   # CalDAV (optional, uses IMAP credentials if not set)
+   CALDAV_URL=https://dav.mailbox.org/caldav/your-calendar-path
+   CALDAV_USER=your-email@mailbox.org
+   CALDAV_PASSWORD=your-app-specific-password
+   
+   # CardDAV (optional, uses IMAP credentials if not set)
+   CARDDAV_URL=https://dav.mailbox.org/carddav/your-addressbook-path
+   CARDDAV_USER=your-email@mailbox.org
+   CARDDAV_PASSWORD=your-app-specific-password
+   ```
+
+4. Add to Claude Desktop configuration:
 
    Add this server to your Claude Desktop `claude_desktop_config.json`:
 
@@ -112,12 +125,8 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 - `IMAP_USER`: Your mailbox.org username (**required**)
 - `IMAP_PASSWORD`: Your mailbox.org password (**required**)
 
-#### **SMTP Configuration** 
-- `SMTP_HOST`: SMTP server host (default: `smtp.mailbox.org`)
-- `SMTP_PORT`: SMTP server port (default: `587`)
-- `SMTP_SECURE`: Use secure connection (default: `false`)
-- `SMTP_USER`: SMTP username (defaults to `IMAP_USER`)
-- `SMTP_PASSWORD`: SMTP password (defaults to `IMAP_PASSWORD`)
+#### **Calendar & Contacts Configuration**
+- `CALDAV_URL`: CalDAV server URL (default: `dav.mailbox.org`)
 
 #### **Calendar & Contacts Configuration**
 - `CALDAV_URL`: CalDAV server URL (default: `dav.mailbox.org`)
