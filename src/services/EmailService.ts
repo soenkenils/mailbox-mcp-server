@@ -178,6 +178,7 @@ export class EmailService {
       }
 
       if (!message) {
+        console.error(`Failed to fetch email with UID ${uid} from folder ${folder}`);
         return null;
       }
 
