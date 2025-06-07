@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { loadConfig, type ServerConfig } from "./config/config.js";
+import { type ServerConfig, loadConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";

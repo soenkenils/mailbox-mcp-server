@@ -1,4 +1,4 @@
-import * as Imap from "imap";
+import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
@@ -11,7 +11,7 @@ import type {
 export class EmailService {
   private connection: ImapConnection;
   private cache: LocalCache;
-  private imap?: Imap;
+  private client?: ImapFlow;
 
   constructor(connection: ImapConnection, cache: LocalCache) {
     this.connection = connection;
@@ -19,31 +19,23 @@ export class EmailService {
   }
 
   async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.imap = new (Imap as any)({
+    this.client = new ImapFlow({
+      host: this.connection.host,
+      port: this.connection.port,
+      secure: this.connection.secure,
+      auth: {
         user: this.connection.user,
-        password: this.connection.password,
-        host: this.connection.host,
-        port: this.connection.port,
-        tls: this.connection.secure,
-        tlsOptions: { rejectUnauthorized: false },
-      });
-
-      this.imap!.once("ready", () => {
-        resolve();
-      });
-
-      this.imap!.once("error", (err: Error) => {
-        reject(err);
-      });
-
-      this.imap!.connect();
+        pass: this.connection.password,
+      },
+      logger: false, // Disable logging for production
     });
+
+    await this.client.connect();
   }
 
   async disconnect(): Promise<void> {
-    if (this.imap) {
-      this.imap.end();
+    if (this.client) {
+      await this.client.logout();
     }
   }
 
@@ -55,7 +47,7 @@ export class EmailService {
       return cached;
     }
 
-    if (!this.imap) {
+    if (!this.client) {
       await this.connect();
     }
 
@@ -74,7 +66,7 @@ export class EmailService {
       return cached;
     }
 
-    if (!this.imap) {
+    if (!this.client) {
       await this.connect();
     }
 
@@ -111,193 +103,243 @@ export class EmailService {
     folder: string,
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
-    return new Promise((resolve, reject) => {
-      if (!this.imap) {
-        reject(new Error("IMAP connection not established"));
-        return;
-      }
+    if (!this.client) {
+      throw new Error("IMAP connection not established");
+    }
 
-      this.imap.openBox(folder, true, (err, box) => {
-        if (err) {
-          reject(err);
-          return;
+    // Select the mailbox
+    await this.client.mailboxOpen(folder);
+
+    // Build search criteria
+    const searchCriteria = this.buildSearchCriteria(options);
+
+    // Search for messages
+    const searchResult = await this.client.search(searchCriteria);
+
+    if (!searchResult || searchResult.length === 0) {
+      return [];
+    }
+
+    // Apply pagination
+    const limitedResults = options.limit
+      ? searchResult.slice(
+          options.offset || 0,
+          (options.offset || 0) + options.limit,
+        )
+      : searchResult.slice(options.offset || 0);
+
+    // Fetch message headers and envelopes
+    const messages: EmailMessage[] = [];
+
+    if (limitedResults.length > 0) {
+      for await (const message of this.client.fetch(limitedResults, {
+        envelope: true,
+        uid: true,
+        flags: true,
+      })) {
+        const emailMessage = this.parseEmailMessage(message, folder);
+        if (emailMessage) {
+          messages.push(emailMessage);
         }
+      }
+    }
 
-        const searchCriteria = this.buildSearchCriteria(options);
+    // Apply in-memory filtering for complex queries
+    let filteredMessages = this.applyInMemoryFilters(messages, options);
 
-        this.imap!.search(searchCriteria, (err, results) => {
-          if (err) {
-            reject(err);
-            return;
-          }
+    // Sort by date (newest first)
+    filteredMessages.sort((a, b) => b.date.getTime() - a.date.getTime());
 
-          if (!results || results.length === 0) {
-            resolve([]);
-            return;
-          }
-
-          const limitedResults = options.limit
-            ? results.slice(
-                options.offset || 0,
-                (options.offset || 0) + options.limit,
-              )
-            : results.slice(options.offset || 0);
-
-          const fetch = this.imap!.fetch(limitedResults, {
-            bodies: "HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)",
-            struct: true,
-          });
-
-          const messages: EmailMessage[] = [];
-
-          fetch.on("message", (msg, seqno) => {
-            let headers: any = {};
-            let uid = 0;
-
-            msg.on("body", (stream: any, info: any) => {
-              simpleParser(stream as any, (err: any, parsed: ParsedMail) => {
-                if (err) return;
-                headers = parsed.headers;
-              });
-            });
-
-            msg.once("attributes", (attrs) => {
-              uid = attrs.uid;
-            });
-
-            msg.once("end", () => {
-              const emailMessage = this.parseEmailMessage(headers, uid, folder);
-              if (emailMessage) {
-                messages.push(emailMessage);
-              }
-            });
-          });
-
-          fetch.once("error", (err) => {
-            reject(err);
-          });
-
-          fetch.once("end", () => {
-            resolve(
-              messages.sort((a, b) => b.date.getTime() - a.date.getTime()),
-            );
-          });
-        });
-      });
-    });
+    return filteredMessages;
   }
 
   private async fetchEmailByUid(
     uid: number,
     folder: string,
   ): Promise<EmailMessage | null> {
-    return new Promise((resolve, reject) => {
-      if (!this.imap) {
-        reject(new Error("IMAP connection not established"));
-        return;
-      }
-
-      this.imap.openBox(folder, true, (err, box) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-
-        const fetch = this.imap!.fetch([uid], {
-          bodies: "",
-          struct: true,
-        });
-
-        let emailMessage: EmailMessage | null = null;
-
-        fetch.on("message", (msg, seqno) => {
-          let buffer = "";
-
-          msg.on("body", (stream, info) => {
-            stream.on("data", (chunk) => {
-              buffer += chunk.toString();
-            });
-
-            stream.once("end", () => {
-              simpleParser(buffer, (err, parsed) => {
-                if (err) {
-                  reject(err);
-                  return;
-                }
-
-                emailMessage = this.parseFullEmailMessage(parsed, uid, folder);
-              });
-            });
-          });
-
-          msg.once("attributes", (attrs) => {
-            // Additional attributes handling if needed
-          });
-        });
-
-        fetch.once("error", (err) => {
-          reject(err);
-        });
-
-        fetch.once("end", () => {
-          resolve(emailMessage);
-        });
-      });
-    });
-  }
-
-  private buildSearchCriteria(options: EmailSearchOptions): any[] {
-    const criteria: any[] = ["ALL"];
-
-    if (options.query) {
-      criteria.push([
-        "OR",
-        ["SUBJECT", options.query],
-        ["BODY", options.query],
-      ]);
+    if (!this.client) {
+      throw new Error("IMAP connection not established");
     }
 
+    try {
+      // Select the mailbox
+      await this.client.mailboxOpen(folder);
+
+      // Fetch the full message by UID using fetch method
+      let message: any = null;
+      for await (const msg of this.client.fetch(`${uid}:${uid}`, {
+        source: true,
+        envelope: true,
+        uid: true,
+        flags: true,
+      }, { uid: true })) {
+        message = msg;
+        break; // We only expect one message
+      }
+
+      if (!message) {
+        return null;
+      }
+
+      // Parse the full message
+      const parsed = await simpleParser(message.source as Buffer);
+
+      return this.parseFullEmailMessage(parsed, message, folder);
+    } catch (error) {
+      throw new Error(`Failed to fetch email with UID ${uid} from folder ${folder}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private buildSearchCriteria(options: EmailSearchOptions): any {
+    const criteria: any = {};
+
+    // Add date filters
     if (options.since) {
-      criteria.push(["SINCE", options.since]);
+      criteria.since = options.since;
     }
 
     if (options.before) {
-      criteria.push(["BEFORE", options.before]);
+      criteria.before = options.before;
     }
 
-    return criteria.length === 1 ? criteria : [["AND", ...criteria.slice(1)]];
+    // Handle query searches
+    if (options.query) {
+      const query = options.query.trim();
+      
+      // Handle complex queries with OR operations
+      if (query.includes(" OR ")) {
+        // For OR queries, we'll use a broader search and filter in memory
+        // imapflow doesn't support complex OR queries in the same way
+        if (Object.keys(criteria).length === 0) {
+          return { all: true }; // No date filters, search all
+        }
+        return criteria; // Return just date filters, handle query in memory
+      }
+      
+      // Handle from: queries
+      if (query.toLowerCase().startsWith("from:")) {
+        const fromValue = query.substring(5).trim();
+        criteria.from = fromValue;
+        return criteria;
+      }
+      
+      // Handle to: queries
+      if (query.toLowerCase().startsWith("to:")) {
+        const toValue = query.substring(3).trim();
+        criteria.to = toValue;
+        return criteria;
+      }
+      
+      // For simple text queries, search in subject and body
+      criteria.or = [
+        { subject: query },
+        { body: query }
+      ];
+    }
+
+    // If no criteria, return all messages
+    if (Object.keys(criteria).length === 0) {
+      return { all: true };
+    }
+
+    return criteria;
+  }
+
+  private applyInMemoryFilters(
+    messages: EmailMessage[],
+    options: EmailSearchOptions,
+  ): EmailMessage[] {
+    let filtered = messages;
+
+    // Apply query filter for complex queries that weren't handled by IMAP
+    if (options.query) {
+      const needsInMemoryQueryFilter = 
+        options.query.includes(" OR ");
+      
+      if (needsInMemoryQueryFilter) {
+        filtered = filtered.filter((msg) => this.matchesQuery(msg, options.query!));
+      }
+    }
+
+    return filtered;
+  }
+
+  private matchesQuery(message: EmailMessage, query: string): boolean {
+    // Handle complex query matching in memory
+    const lowercaseQuery = query.toLowerCase();
+
+    // Handle OR operations
+    if (lowercaseQuery.includes(" or ")) {
+      const orParts = lowercaseQuery.split(" or ").map(part => part.trim());
+      return orParts.some(part => this.matchesSingleQuery(message, part));
+    }
+
+    return this.matchesSingleQuery(message, lowercaseQuery);
+  }
+
+  private matchesSingleQuery(message: EmailMessage, query: string): boolean {
+    // Handle from: queries
+    if (query.startsWith("from:")) {
+      const emailDomain = query.substring(5).trim();
+      return message.from.some(from => 
+        from.address.toLowerCase().includes(emailDomain)
+      );
+    }
+
+    // Handle to: queries  
+    if (query.startsWith("to:")) {
+      const emailDomain = query.substring(3).trim();
+      return message.to.some(to => 
+        to.address.toLowerCase().includes(emailDomain)
+      );
+    }
+
+    // Default text search in subject and from/to addresses
+    const searchText = query.toLowerCase();
+    return (
+      message.subject.toLowerCase().includes(searchText) ||
+      message.from.some(from => 
+        from.address.toLowerCase().includes(searchText) ||
+        (from.name && from.name.toLowerCase().includes(searchText))
+      ) ||
+      message.to.some(to => 
+        to.address.toLowerCase().includes(searchText) ||
+        (to.name && to.name.toLowerCase().includes(searchText))
+      )
+    );
   }
 
   private parseEmailMessage(
-    headers: any,
-    uid: number,
+    message: any,
     folder: string,
   ): EmailMessage | null {
-    if (!headers.subject || !headers.from) {
+    if (!message.envelope) {
       return null;
     }
 
+    const envelope = message.envelope;
+
     return {
-      id: headers["message-id"]?.[0] || `${uid}@${folder}`,
-      uid,
-      subject: headers.subject?.[0] || "",
-      from: this.parseAddresses(headers.from),
-      to: this.parseAddresses(headers.to),
-      cc: this.parseAddresses(headers.cc),
-      date: new Date(headers.date?.[0] || Date.now()),
-      flags: [],
+      id: envelope.messageId || `${message.uid}@${folder}`,
+      uid: message.uid,
+      subject: envelope.subject || "",
+      from: this.parseAddressesFromEnvelope(envelope.from),
+      to: this.parseAddressesFromEnvelope(envelope.to),
+      cc: this.parseAddressesFromEnvelope(envelope.cc),
+      date: envelope.date || new Date(),
+      flags: message.flags || [],
       folder,
     };
   }
 
   private parseFullEmailMessage(
     parsed: ParsedMail,
-    uid: number,
+    message: any,
     folder: string,
   ): EmailMessage {
     return {
-      id: parsed.messageId || `${uid}@${folder}`,
-      uid,
+      id: parsed.messageId || `${message.uid}@${folder}`,
+      uid: message.uid,
       subject: parsed.subject || "",
       from: this.parseAddressesFromParsed(parsed.from),
       to: this.parseAddressesFromParsed(parsed.to),
@@ -312,25 +354,22 @@ export class EmailService {
         size: att.size,
         contentId: att.cid,
       })),
-      flags: [],
+      flags: message.flags || [],
       folder,
     };
   }
 
-  private parseAddresses(
+  private parseAddressesFromEnvelope(
     addresses: any,
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
-    if (typeof addresses === "string") {
-      return [{ address: addresses }];
+    if (!Array.isArray(addresses)) {
+      return [addresses];
     }
-    if (Array.isArray(addresses)) {
-      return addresses.map((addr) => ({
-        name: addr.name,
-        address: addr.address || addr,
-      }));
-    }
-    return [];
+    return addresses.map((addr) => ({
+      name: addr.name,
+      address: addr.address,
+    }));
   }
 
   private parseAddressesFromParsed(
