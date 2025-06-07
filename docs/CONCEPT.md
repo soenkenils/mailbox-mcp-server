@@ -13,7 +13,7 @@ A local MCP server provides direct, secure access to personal data without cloud
 **Communication Flow**:
 
 ```
-Claude Desktop ←→ MCP Server (stdio) ←→ mailbox.org (IMAP/CalDAV/CardDAV)
+Claude Desktop ←→ MCP Server (stdio) ←→ mailbox.org (IMAP/CalDAV)
 ```
 
 ## System Architecture and Data Sources
