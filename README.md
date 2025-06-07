@@ -84,11 +84,13 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ## Available Tools
 
 ### **Email Tools**
+
 - **`search_emails`** - Search your mailbox by text, sender, date, etc.
 - **`get_email`** - Retrieve complete email content by UID
 - **`get_email_thread`** - Get conversation threads by message ID
 
 ### **Calendar Tools**
+
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
@@ -98,28 +100,34 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Environment Variables**
 
 #### **Required Configuration**
+
 - `MAILBOX_EMAIL`: Your mailbox.org email address (**required**)
 - `MAILBOX_PASSWORD`: Your mailbox.org app password (**required**)
 
 #### **Optional Email Configuration**
+
 - `MAILBOX_IMAP_HOST`: IMAP server host (default: `imap.mailbox.org`)
 - `MAILBOX_IMAP_PORT`: IMAP server port (default: `993`)
 - `MAILBOX_IMAP_SECURE`: Use TLS encryption (default: `true`)
 
 #### **Optional Calendar Configuration**
+
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
 - `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
 
 #### **Optional Cache Configuration**
+
 - `CACHE_EMAIL_SEARCH_TTL`: Email search cache TTL in ms (default: `300000`)
 - `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`)
 - `CACHE_CALENDAR_EVENTS_TTL`: Calendar events cache TTL in ms (default: `900000`)
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
 
 #### **Optional Debug Configuration**
+
 - `DEBUG`: Enable debug logging (default: `false`)
 
 ### **Security Notes**
+
 - Use **app-specific passwords** instead of your main password for better security
 - All credentials are passed via environment variables (no persistent storage)
 - Consider using a `.env` file for local development (add it to `.gitignore`)
@@ -138,17 +146,20 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Setup**
 
 1. Clone the repository:
+
    ```bash
    git clone <repository-url>
    cd mailbox-mcp-server
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    ```
 
 3. Create environment configuration:
+
    ```bash
    cp .env.example .env
    # Edit .env with your mailbox.org credentials
