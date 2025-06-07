@@ -1,21 +1,17 @@
 # Mailbox.org MCP Server
 
-A Model Context Protocol (MCP) server that integrates mailbox.org email, calendar, and contact services with Anthropic's Claude Desktop application. This server enables Claude to access, search, and interact with your personal email and calendar data through a secure, locally-hosted interface.
+A Model Context Protocol (MCP) server that integrates mailbox.org email and calendar services with Anthropic's Claude Desktop application. This server enables Claude to access, search, and interact with your personal email and calendar data through a secure, locally-hosted interface.
 
 ## Features
 
-### **Email Integration (IMAP + SMTP)**
+### **Email Integration (IMAP)**
 
 - ✅ **Search emails** by text content, sender, subject, and date range
 - ✅ **Retrieve complete email content** including headers, body, and attachments
-- ✅ **Send new emails** with rich text and HTML formatting
-- ✅ **Reply to emails** with proper threading (reply vs reply-all)
-- ✅ **Forward emails** with original content and attachments
-- ✅ **Move emails** between folders
-- ✅ **Set email flags** (mark as read/unread, flagged, etc.)
 - ✅ **Email thread management** with conversation grouping
 - ✅ **Multiple mailbox folder support** (INBOX, Sent, Drafts, etc.)
 - ✅ **Attachment detection** and metadata extraction
+- ✅ **Session-based caching** for improved performance
 
 ### **Calendar Integration (CalDAV)**
 
@@ -24,14 +20,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 - ✅ **Free/busy time checking** for scheduling
 - ✅ **Multi-calendar support** and aggregation
 - ✅ **Recurring events** and exception handling
-- ✅ **Timezone-aware** event processing
-
-### **Contact Integration (CardDAV)**
-- ✅ **Search contacts** by name, email, phone, or organization
-- ✅ **Complete contact profiles** with all fields (addresses, phones, etc.)
-- ✅ **Contact groups and categories**
-- ✅ **Fuzzy matching** for partial searches
-- ✅ **Multi-addressbook support**
+- ✅ **Session-based caching** for improved performance
 
 ## Requirements
 
@@ -53,7 +42,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 2. Copy the example environment file and update it with your credentials:
 
    ```bash
-   cp .env.example .env
+   cp env.example .env
    ```
 
    > **Note**: For security, it's recommended to use an [App Password](https://support.mailbox.org/en/help/app-passwords) instead of your main account password.
@@ -62,20 +51,19 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 
    ```env
    # Required settings
-   IMAP_HOST=imap.mailbox.org
-   IMAP_PORT=993
-   IMAP_USER=your-email@mailbox.org
-   IMAP_PASSWORD=your-app-specific-password
+   MAILBOX_EMAIL=your-email@mailbox.org
+   MAILBOX_PASSWORD=your-app-specific-password
    
-   # CalDAV (optional, uses IMAP credentials if not set)
-   CALDAV_URL=https://dav.mailbox.org/caldav/your-calendar-path
-   CALDAV_USER=your-email@mailbox.org
-   CALDAV_PASSWORD=your-app-specific-password
+   # Optional: IMAP configuration (defaults shown)
+   MAILBOX_IMAP_HOST=imap.mailbox.org
+   MAILBOX_IMAP_PORT=993
+   MAILBOX_IMAP_SECURE=true
    
-   # CardDAV (optional, uses IMAP credentials if not set)
-   CARDDAV_URL=https://dav.mailbox.org/carddav/your-addressbook-path
-   CARDDAV_USER=your-email@mailbox.org
-   CARDDAV_PASSWORD=your-app-specific-password
+   # Optional: CalDAV configuration (defaults shown) 
+   MAILBOX_CALDAV_URL=https://dav.mailbox.org/
+   
+   # Optional: Enable debug logging
+   DEBUG=false
    ```
 
 4. Add to Claude Desktop configuration:
@@ -97,44 +85,39 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email, calenda
 
 ### **Email Tools**
 - **`search_emails`** - Search your mailbox by text, sender, date, etc.
-- **`get_email`** - Retrieve complete email content by ID
-- **`send_email`** - Send new emails with to/cc/bcc recipients
-- **`reply_email`** - Reply to existing emails (reply vs reply-all)
-- **`forward_email`** - Forward emails with optional attachments
-- **`move_email`** - Move emails between folders
-- **`set_email_flags`** - Mark emails as read/unread, flagged, etc.
-- **`get_email_thread`** - Get conversation threads
+- **`get_email`** - Retrieve complete email content by UID
+- **`get_email_thread`** - Get conversation threads by message ID
 
 ### **Calendar Tools**
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
 
-### **Contact Tools**
-- **`search_contacts`** - Search contacts by name, email, organization
-- **`get_contact_details`** - Get complete contact information
-
 ## Configuration
 
 ### **Environment Variables**
 
-#### **Email Configuration**
-- `IMAP_HOST`: IMAP server host (default: `imap.mailbox.org`)
-- `IMAP_PORT`: IMAP server port (default: `993`)
-- `IMAP_TLS`: Use TLS encryption (default: `true`)
-- `IMAP_USER`: Your mailbox.org username (**required**)
-- `IMAP_PASSWORD`: Your mailbox.org password (**required**)
+#### **Required Configuration**
+- `MAILBOX_EMAIL`: Your mailbox.org email address (**required**)
+- `MAILBOX_PASSWORD`: Your mailbox.org app password (**required**)
 
-#### **Calendar & Contacts Configuration**
-- `CALDAV_URL`: CalDAV server URL (default: `dav.mailbox.org`)
+#### **Optional Email Configuration**
+- `MAILBOX_IMAP_HOST`: IMAP server host (default: `imap.mailbox.org`)
+- `MAILBOX_IMAP_PORT`: IMAP server port (default: `993`)
+- `MAILBOX_IMAP_SECURE`: Use TLS encryption (default: `true`)
 
-#### **Calendar & Contacts Configuration**
-- `CALDAV_URL`: CalDAV server URL (default: `dav.mailbox.org`)
-- `CALDAV_USER`: CalDAV username (defaults to `IMAP_USER`)
-- `CALDAV_PASSWORD`: CalDAV password (defaults to `IMAP_PASSWORD`)
-- `CARDDAV_URL`: CardDAV server URL (default: `dav.mailbox.org`)
-- `CARDDAV_USER`: CardDAV username (defaults to `IMAP_USER`)
-- `CARDDAV_PASSWORD`: CardDAV password (defaults to `IMAP_PASSWORD`)
+#### **Optional Calendar Configuration**
+- `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
+
+#### **Optional Cache Configuration**
+- `CACHE_EMAIL_SEARCH_TTL`: Email search cache TTL in ms (default: `300000`)
+- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`)
+- `CACHE_CALENDAR_EVENTS_TTL`: Calendar events cache TTL in ms (default: `900000`)
+- `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
+
+#### **Optional Debug Configuration**
+- `DEBUG`: Enable debug logging (default: `false`)
 
 ### **Security Notes**
 - Use **app-specific passwords** instead of your main password for better security

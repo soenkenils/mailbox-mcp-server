@@ -12,7 +12,6 @@ export default defineConfig({
       '**/.git/**',
       '**/.idea/**',
     ],
-    setupFiles: ['./tests/setup.ts'],
     testTimeout: 5000, // 5 second timeout for tests
     hookTimeout: 30000, // 30 second timeout for hooks
     teardownTimeout: 10000, // 10 second timeout for teardown
