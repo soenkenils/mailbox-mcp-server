@@ -52,11 +52,11 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@types/nodemailer": "^6.4.17",
     "dayjs": "^1.11.13",
-    "ical.js": "^1.5.0",
     "imapflow": "^1.0.187",
     "mailparser": "^3.7.3",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^7.0.3"
+    "nodemailer": "^7.0.3",
+    "tsdav": "^2.1.4"
   },
   "directories": {
     "doc": "docs",

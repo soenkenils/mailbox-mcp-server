@@ -1,6 +1,6 @@
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailMessage,
@@ -33,7 +33,7 @@ export class EmailService {
       logger: false, // Disable logging for production
     });
 
-    if (this.client.on && typeof this.client.on === 'function') {
+    if (this.client.on && typeof this.client.on === "function") {
       this.client.on("error", (error: Error) => {
         console.error("IMAP connection error:", error);
       });
@@ -88,7 +88,7 @@ export class EmailService {
       await this.server.sendLoggingMessage({
         level: "info",
         logger: "EmailService",
-        data: `Fetching email with UID ${uid} from folder ${folder}`
+        data: `Fetching email with UID ${uid} from folder ${folder}`,
       });
 
       const message = await this.fetchEmailByUid(uid, folder);
@@ -100,7 +100,7 @@ export class EmailService {
       await this.server.sendLoggingMessage({
         level: "info",
         logger: "EmailService",
-        data: `Fetched email with UID ${uid} from folder ${folder}`
+        data: `Fetched email with UID ${uid} from folder ${folder}`,
       });
 
       return message;

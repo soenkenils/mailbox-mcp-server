@@ -293,9 +293,9 @@ The development environment leverages modern tooling for optimal developer exper
 **Core Dependencies (Implemented)**:
 
 - **@modelcontextprotocol/sdk**: MCP protocol implementation
-- **imap**: IMAP client for email access
+- **imapflow**: IMAP client for email access
 - **mailparser**: Email message parsing and content extraction
-- **ical.js**: iCalendar parsing for CalDAV
+- **tsdav**: CalDAV client for calendar access
 - **dayjs**: Date manipulation and timezone handling
 - **node-fetch**: HTTP client for CalDAV/CardDAV
 
