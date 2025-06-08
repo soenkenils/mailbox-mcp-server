@@ -1,0 +1,16 @@
+title = "Custom gitleaks config"
+
+[extend]
+useDefault = true  # This keeps default rules
+
+[[rules]]
+id = "generic-password"
+description = "Generic password detection"
+regex = '''(?i)(password|pwd|pass)\s*[=:]\s*["\']?[a-zA-Z0-9!@#$%^&*()_+=-]{8,}["\']?'''
+tags = ["password"]
+
+[[rules]]
+id = "api-key-pattern"
+description = "Generic API key"
+regex = '''(?i)(api[_-]?key|apikey)\s*[=:]\s*["\']?[a-zA-Z0-9]{16,}["\']?'''
+tags = ["api-key"]
