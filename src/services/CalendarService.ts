@@ -1,4 +1,5 @@
 import dayjs from "dayjs";
+import ICAL from "ical.js";
 import { type DAVCalendar, type DAVObject, createDAVClient } from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
@@ -137,7 +138,7 @@ export class CalendarService {
     try {
       const client = await this.getClient();
       const calendars = await client.fetchCalendars();
-      
+
       const targetCalendar = calendars.find(
         (cal: DAVCalendar) =>
           cal.displayName === calendar || cal.url.includes(calendar),
@@ -189,11 +190,12 @@ export class CalendarService {
     const events: CalendarEvent[] = [];
 
     try {
-      // Basic iCalendar parsing - extract VEVENT sections
-      const vevents = this.extractVEvents(icalData);
+      const jcalData = ICAL.parse(icalData);
+      const comp = new ICAL.Component(jcalData);
+      const vevents = comp.getAllSubcomponents("vevent");
 
-      for (const veventData of vevents) {
-        const event = this.parseVEvent(veventData, calendar);
+      for (const vevent of vevents) {
+        const event = this.parseVEvent(vevent, calendar);
         if (event) {
           events.push(event);
         }
@@ -205,52 +207,53 @@ export class CalendarService {
     return events;
   }
 
-  private extractVEvents(icalData: string): string[] {
-    const vevents: string[] = [];
-    const lines = icalData.split(/\r?\n/);
-    let currentVEvent = "";
-    let inVEvent = false;
-
-    for (const line of lines) {
-      if (line.startsWith("BEGIN:VEVENT")) {
-        inVEvent = true;
-        currentVEvent = line + "\n";
-      } else if (line.startsWith("END:VEVENT")) {
-        currentVEvent += line;
-        vevents.push(currentVEvent);
-        currentVEvent = "";
-        inVEvent = false;
-      } else if (inVEvent) {
-        currentVEvent += line + "\n";
-      }
-    }
-
-    return vevents;
-  }
-
-  private parseVEvent(
-    veventData: string,
-    calendar: string,
-  ): CalendarEvent | null {
+  private parseVEvent(vevent: any, calendar: string): CalendarEvent | null {
     try {
-      const props = this.parseVEventProperties(veventData);
+      const event = new ICAL.Event(vevent);
 
-      const uid = props.get("UID") || `${Date.now()}-${Math.random()}`;
-      const summary = props.get("SUMMARY") || "";
-      const description = props.get("DESCRIPTION");
-      const location = props.get("LOCATION");
-      const dtstart = props.get("DTSTART");
-      const dtend = props.get("DTEND") || props.get("DTSTART");
-      const rrule = props.get("RRULE");
+      const uid = event.uid || `${Date.now()}-${Math.random()}`;
+      const summary = event.summary || "";
+      const description = event.description;
+      const location = event.location;
 
-      if (!dtstart) return null;
+      if (!event.startDate || !event.endDate) return null;
 
-      const start = this.parseDateTime(dtstart);
-      const end = this.parseDateTime(dtend || dtstart);
+      const start = event.startDate.toJSDate();
+      const end = event.endDate.toJSDate();
+      const allDay = event.startDate.isDate;
 
-      if (!start || !end) return null;
+      const attendees = event.attendees?.map((attendee: any) => {
+        const email = attendee.getFirstValue
+          ? attendee.getFirstValue()
+          : String(attendee);
+        return {
+          email: email.replace("mailto:", ""),
+          name: attendee.getParameter
+            ? attendee.getParameter("cn")
+            : email.split("@")[0],
+          status: attendee.getParameter
+            ? attendee.getParameter("partstat") || "needs-action"
+            : "needs-action",
+        };
+      });
 
-      const allDay = dtstart.length === 8; // YYYYMMDD format
+      const organizer = event.organizer
+        ? {
+            email: ((event.organizer as any).getFirstValue
+              ? (event.organizer as any).getFirstValue()
+              : String(event.organizer)
+            ).replace("mailto:", ""),
+            name: (event.organizer as any).getParameter
+              ? (event.organizer as any).getParameter("cn")
+              : String(event.organizer).replace("mailto:", "").split("@")[0],
+          }
+        : undefined;
+
+      const categories = event.component.getFirstPropertyValue("categories");
+      const categoriesArray =
+        categories && typeof categories === "string"
+          ? categories.split(",").map((cat: string) => cat.trim())
+          : [];
 
       return {
         id: uid,
@@ -261,14 +264,22 @@ export class CalendarService {
         start,
         end,
         allDay,
-        recurring: !!rrule,
-        recurrenceRule: rrule,
-        attendees: this.parseAttendeesFromProps(props),
-        organizer: this.parseOrganizerFromProps(props),
+        recurring: event.isRecurring(),
+        recurrenceRule: event.component
+          .getFirstPropertyValue("rrule")
+          ?.toString(),
+        attendees: attendees?.length > 0 ? attendees : undefined,
+        organizer,
         calendar,
-        categories: this.parseCategoriesFromProps(props),
-        created: new Date(),
-        modified: new Date(),
+        categories: categoriesArray,
+        created:
+          this.parseICalDate(
+            event.component.getFirstPropertyValue("created"),
+          ) || new Date(),
+        modified:
+          this.parseICalDate(
+            event.component.getFirstPropertyValue("last-modified"),
+          ) || new Date(),
       };
     } catch (error) {
       console.error("Error parsing VEVENT:", error);
@@ -276,86 +287,15 @@ export class CalendarService {
     }
   }
 
-  private parseVEventProperties(veventData: string): Map<string, string> {
-    const props = new Map<string, string>();
-    const lines = veventData.split(/\r?\n/);
-
-    for (let i = 0; i < lines.length; i++) {
-      let line = lines[i];
-
-      // Handle line folding
-      while (
-        i + 1 < lines.length &&
-        (lines[i + 1].startsWith(" ") || lines[i + 1].startsWith("\t"))
-      ) {
-        line += lines[i + 1].substring(1);
-        i++;
-      }
-
-      const colonIndex = line.indexOf(":");
-      if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex).split(";")[0]; // Remove parameters
-        const value = line.substring(colonIndex + 1);
-        props.set(key, value);
-      }
+  private parseICalDate(value: any): Date | null {
+    if (!value) return null;
+    if (value.toJSDate && typeof value.toJSDate === "function") {
+      return value.toJSDate();
     }
-
-    return props;
-  }
-
-  private parseDateTime(dateStr: string): Date | null {
-    try {
-      // Handle different date formats
-      if (dateStr.length === 8) {
-        // YYYYMMDD format
-        return dayjs(dateStr, "YYYYMMDD").toDate();
-      } else if (dateStr.includes("T")) {
-        // YYYYMMDDTHHMMSS format
-        const cleanDate = dateStr.replace(/[TZ]/g, "");
-        return dayjs(cleanDate, "YYYYMMDDHHmmss").toDate();
-      }
-      return null;
-    } catch {
-      return null;
+    if (typeof value === "string") {
+      return dayjs(value).toDate();
     }
-  }
-
-  private parseAttendeesFromProps(
-    props: Map<string, string>,
-  ): CalendarEvent["attendees"] {
-    const attendees: CalendarEvent["attendees"] = [];
-
-    // This is a simplified implementation - in a real scenario you'd need to handle multiple attendees
-    // and parse the full property parameters
-    for (const [key, value] of props) {
-      if (key.startsWith("ATTENDEE")) {
-        const email = value.replace("mailto:", "");
-        attendees.push({
-          email,
-          name: email.split("@")[0],
-          status: "needs-action",
-        });
-      }
-    }
-
-    return attendees.length > 0 ? attendees : undefined;
-  }
-
-  private parseOrganizerFromProps(
-    props: Map<string, string>,
-  ): CalendarEvent["organizer"] {
-    const organizer = props.get("ORGANIZER");
-    if (!organizer) return undefined;
-
-    const email = organizer.replace("mailto:", "");
-    return { email, name: email.split("@")[0] };
-  }
-
-  private parseCategoriesFromProps(props: Map<string, string>): string[] {
-    const categories = props.get("CATEGORIES");
-    if (!categories) return [];
-
-    return categories.split(",").map((cat) => cat.trim());
+    return null;
   }
 
   private filterEventsByQuery(
