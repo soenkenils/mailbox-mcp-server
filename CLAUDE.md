@@ -22,9 +22,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Bash commands
 
-- npm run build: Build the project
-- npm test: Run the test suite
-- npm run check: Run both linting and formatting
+### Development
+- npm run dev: Start development server with file watching
+- npm run build: Build TypeScript to JavaScript
+- npm run start: Start the built application
+
+### Testing
+- npm test: Run vitest test suite
+- npm run test:watch: Run tests in watch mode
+- npm run test:imap: Run IMAP integration test
+
+### Code Quality
+- npm run check: Run Biome linting and formatting (writes fixes)
+- npm run lint: Run Biome linting only
+- npm run format: Format code with Biome
 
 ## Workflow
 
