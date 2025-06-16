@@ -136,36 +136,43 @@ export class EmailService {
     folder: string,
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
-    if (!this.client) {
-      throw new Error("IMAP connection not established");
-    }
-
-    // Select the mailbox
-    await this.client.mailboxOpen(folder);
-
-    // Build search criteria
-    const searchCriteria = this.buildSearchCriteria(options);
-
-    // Search for messages
-    const searchResult = await this.client.search(searchCriteria);
-
+    await this.ensureConnectionAndSelectFolder(folder);
+    
+    const searchResult = await this.executeSearch(options);
     if (!searchResult || searchResult.length === 0) {
       return [];
     }
 
-    // Apply pagination
-    const limitedResults = options.limit
-      ? searchResult.slice(
-          options.offset || 0,
-          (options.offset || 0) + options.limit,
-        )
-      : searchResult.slice(options.offset || 0);
+    const paginatedResults = this.applyPagination(searchResult, options);
+    const messages = await this.fetchMessageHeaders(paginatedResults, folder);
+    const filteredMessages = this.applyInMemoryFilters(messages, options);
+    
+    return this.sortMessagesByDate(filteredMessages);
+  }
 
-    // Fetch message headers and envelopes
+  private async ensureConnectionAndSelectFolder(folder: string): Promise<void> {
+    if (!this.client) {
+      throw new Error("IMAP connection not established");
+    }
+    await this.client.mailboxOpen(folder);
+  }
+
+  private async executeSearch(options: EmailSearchOptions): Promise<number[] | null> {
+    const searchCriteria = this.buildSearchCriteria(options);
+    return await this.client!.search(searchCriteria);
+  }
+
+  private applyPagination(searchResult: number[], options: EmailSearchOptions): number[] {
+    const offset = options.offset || 0;
+    const end = options.limit ? offset + options.limit : undefined;
+    return searchResult.slice(offset, end);
+  }
+
+  private async fetchMessageHeaders(uids: number[], folder: string): Promise<EmailMessage[]> {
     const messages: EmailMessage[] = [];
-
-    if (limitedResults.length > 0) {
-      for await (const message of this.client.fetch(limitedResults, {
+    
+    if (uids.length > 0) {
+      for await (const message of this.client!.fetch(uids, {
         envelope: true,
         uid: true,
         flags: true,
@@ -176,125 +183,140 @@ export class EmailService {
         }
       }
     }
+    
+    return messages;
+  }
 
-    // Apply in-memory filtering for complex queries
-    const filteredMessages = this.applyInMemoryFilters(messages, options);
-
-    // Sort by date (newest first)
-    filteredMessages.sort((a, b) => b.date.getTime() - a.date.getTime());
-
-    return filteredMessages;
+  private sortMessagesByDate(messages: EmailMessage[]): EmailMessage[] {
+    return messages.sort((a, b) => b.date.getTime() - a.date.getTime());
   }
 
   private async fetchEmailByUid(
     uid: number,
     folder: string,
   ): Promise<EmailMessage | null> {
-    if (!this.client) {
-      throw new Error("IMAP connection not established");
-    }
-
     try {
-      // Select the mailbox
-      await this.client.mailboxOpen(folder);
-
-      // Fetch the full message by UID using fetch method
-      let message: any = null;
-      for await (const msg of this.client.fetch(
-        `${uid}:${uid}`,
-        {
-          source: true,
-          envelope: true,
-          uid: true,
-          flags: true,
-        },
-        { uid: true },
-      )) {
-        message = msg;
-        break; // We only expect one message
-      }
-
-      if (!message) {
-        console.error(
-          `Failed to fetch email with UID ${uid} from folder ${folder}`,
-        );
+      await this.ensureConnectionAndSelectFolder(folder);
+      const rawMessage = await this.fetchRawMessageByUid(uid, folder);
+      
+      if (!rawMessage) {
         return null;
       }
 
-      // Parse the full message
-      const parsed = await simpleParser(message.source as Buffer);
-
-      return this.parseFullEmailMessage(parsed, message, folder);
+      const parsed = await simpleParser(rawMessage.source as Buffer);
+      return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
-      // Log the specific error type for debugging
-      if (error instanceof Error) {
-        const errorWithCode = error as Error & { code?: string };
-        if (
-          errorWithCode.code === "ECONNRESET" ||
-          errorWithCode.code === "EPIPE"
-        ) {
-          console.error(
-            `Connection error while fetching UID ${uid}: ${error.message}`,
-          );
-          // Reset client to force reconnection on next attempt
-          this.client = undefined;
-        }
-      }
+      this.handleFetchError(error, uid, folder);
       throw new Error(
         `Failed to fetch email with UID ${uid} from folder ${folder}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  private buildSearchCriteria(options: EmailSearchOptions): any {
-    const criteria: any = {};
+  private async fetchRawMessageByUid(uid: number, folder: string): Promise<any | null> {
+    for await (const msg of this.client!.fetch(
+      `${uid}:${uid}`,
+      {
+        source: true,
+        envelope: true,
+        uid: true,
+        flags: true,
+      },
+      { uid: true },
+    )) {
+      return msg;
+    }
+    
+    console.error(
+      `Failed to fetch email with UID ${uid} from folder ${folder}`,
+    );
+    return null;
+  }
 
-    // Add date filters
+  private handleFetchError(error: unknown, uid: number, folder: string): void {
+    if (error instanceof Error) {
+      const errorWithCode = error as Error & { code?: string };
+      if (
+        errorWithCode.code === "ECONNRESET" ||
+        errorWithCode.code === "EPIPE"
+      ) {
+        console.error(
+          `Connection error while fetching UID ${uid}: ${error.message}`,
+        );
+        this.client = undefined;
+      }
+    }
+  }
+
+  private buildSearchCriteria(options: EmailSearchOptions): any {
+    let criteria: any = {};
+    
+    criteria = this.addDateFilters(criteria, options);
+    criteria = this.addQueryFilters(criteria, options);
+    
+    return Object.keys(criteria).length === 0 ? { all: true } : criteria;
+  }
+
+  private addDateFilters(criteria: any, options: EmailSearchOptions): any {
     if (options.since) {
       criteria.since = options.since;
     }
-
     if (options.before) {
       criteria.before = options.before;
     }
+    return criteria;
+  }
 
-    // Handle query searches
-    if (options.query) {
-      const query = options.query.trim();
-
-      // Handle complex queries with OR operations
-      if (query.includes(" OR ")) {
-        // For OR queries, we'll use a broader search and filter in memory
-        // imapflow doesn't support complex OR queries in the same way
-        if (Object.keys(criteria).length === 0) {
-          return { all: true }; // No date filters, search all
-        }
-        return criteria; // Return just date filters, handle query in memory
-      }
-
-      // Handle from: queries
-      if (query.toLowerCase().startsWith("from:")) {
-        const fromValue = query.substring(5).trim();
-        criteria.from = fromValue;
-        return criteria;
-      }
-
-      // Handle to: queries
-      if (query.toLowerCase().startsWith("to:")) {
-        const toValue = query.substring(3).trim();
-        criteria.to = toValue;
-        return criteria;
-      }
-
-      // For simple text queries, search in subject and body
-      criteria.or = [{ subject: query }, { body: query }];
+  private addQueryFilters(criteria: any, options: EmailSearchOptions): any {
+    if (!options.query) {
+      return criteria;
     }
 
-    // If no criteria, return all messages
-    if (Object.keys(criteria).length === 0) {
-      return { all: true };
+    const query = options.query.trim();
+
+    if (this.isOrQuery(query)) {
+      return this.handleOrQuery(criteria);
     }
 
+    if (this.isFromQuery(query)) {
+      return this.handleFromQuery(criteria, query);
+    }
+
+    if (this.isToQuery(query)) {
+      return this.handleToQuery(criteria, query);
+    }
+
+    return this.handleTextQuery(criteria, query);
+  }
+
+  private isOrQuery(query: string): boolean {
+    return query.includes(" OR ");
+  }
+
+  private handleOrQuery(criteria: any): any {
+    return Object.keys(criteria).length === 0 ? { all: true } : criteria;
+  }
+
+  private isFromQuery(query: string): boolean {
+    return query.toLowerCase().startsWith("from:");
+  }
+
+  private handleFromQuery(criteria: any, query: string): any {
+    criteria.from = query.substring(5).trim();
+    return criteria;
+  }
+
+  private isToQuery(query: string): boolean {
+    return query.toLowerCase().startsWith("to:");
+  }
+
+  private handleToQuery(criteria: any, query: string): any {
+    criteria.to = query.substring(3).trim();
+    return criteria;
+  }
+
+  private handleTextQuery(criteria: any, query: string): any {
+    criteria.or = [{ subject: query }, { body: query }];
     return criteria;
   }
 

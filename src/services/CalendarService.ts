@@ -210,81 +210,117 @@ export class CalendarService {
   private parseVEvent(vevent: any, calendar: string): CalendarEvent | null {
     try {
       const event = new ICAL.Event(vevent);
-
-      const uid = event.uid || `${Date.now()}-${Math.random()}`;
-      const summary = event.summary || "";
-      const description = event.description;
-      const location = event.location;
-
-      if (!event.startDate || !event.endDate) return null;
-
-      const start = event.startDate.toJSDate();
-      const end = event.endDate.toJSDate();
-      const allDay = event.startDate.isDate;
-
-      const attendees = event.attendees?.map((attendee: any) => {
-        const email = attendee.getFirstValue
-          ? attendee.getFirstValue()
-          : String(attendee);
-        return {
-          email: email.replace("mailto:", ""),
-          name: attendee.getParameter
-            ? attendee.getParameter("cn")
-            : email.split("@")[0],
-          status: attendee.getParameter
-            ? attendee.getParameter("partstat") || "needs-action"
-            : "needs-action",
-        };
-      });
-
-      const organizer = event.organizer
-        ? {
-            email: ((event.organizer as any).getFirstValue
-              ? (event.organizer as any).getFirstValue()
-              : String(event.organizer)
-            ).replace("mailto:", ""),
-            name: (event.organizer as any).getParameter
-              ? (event.organizer as any).getParameter("cn")
-              : String(event.organizer).replace("mailto:", "").split("@")[0],
-          }
-        : undefined;
-
-      const categories = event.component.getFirstPropertyValue("categories");
-      const categoriesArray =
-        categories && typeof categories === "string"
-          ? categories.split(",").map((cat: string) => cat.trim())
-          : [];
-
+      
+      const basicInfo = this.extractBasicEventInfo(event);
+      if (!this.hasValidDates(event)) {
+        return null;
+      }
+      
+      const timeInfo = this.extractTimeInfo(event);
+      const participantInfo = this.extractParticipants(event);
+      const metadataInfo = this.extractMetadata(event, calendar);
+      
       return {
-        id: uid,
-        uid,
-        summary,
-        description,
-        location,
-        start,
-        end,
-        allDay,
-        recurring: event.isRecurring(),
-        recurrenceRule: event.component
-          .getFirstPropertyValue("rrule")
-          ?.toString(),
-        attendees: attendees?.length > 0 ? attendees : undefined,
-        organizer,
-        calendar,
-        categories: categoriesArray,
-        created:
-          this.parseICalDate(
-            event.component.getFirstPropertyValue("created"),
-          ) || new Date(),
-        modified:
-          this.parseICalDate(
-            event.component.getFirstPropertyValue("last-modified"),
-          ) || new Date(),
+        ...basicInfo,
+        ...timeInfo,
+        ...participantInfo,
+        ...metadataInfo,
       };
     } catch (error) {
       console.error("Error parsing VEVENT:", error);
       return null;
     }
+  }
+
+  private extractBasicEventInfo(event: any): Pick<CalendarEvent, "id" | "uid" | "summary" | "description" | "location"> {
+    const uid = event.uid || `${Date.now()}-${Math.random()}`;
+    return {
+      id: uid,
+      uid,
+      summary: event.summary || "",
+      description: event.description,
+      location: event.location,
+    };
+  }
+
+  private hasValidDates(event: any): boolean {
+    return !!(event.startDate && event.endDate);
+  }
+
+  private extractTimeInfo(event: any): Pick<CalendarEvent, "start" | "end" | "allDay" | "recurring" | "recurrenceRule"> {
+    return {
+      start: event.startDate.toJSDate(),
+      end: event.endDate.toJSDate(),
+      allDay: event.startDate.isDate,
+      recurring: event.isRecurring(),
+      recurrenceRule: event.component.getFirstPropertyValue("rrule")?.toString(),
+    };
+  }
+
+  private extractParticipants(event: any): Pick<CalendarEvent, "attendees" | "organizer"> {
+    const attendees = this.parseAttendees(event.attendees);
+    const organizer = this.parseOrganizer(event.organizer);
+    
+    return {
+      attendees: attendees?.length > 0 ? attendees : undefined,
+      organizer,
+    };
+  }
+
+  private parseAttendees(attendees: any[]): Array<{ email: string; name: string; status: string }> | undefined {
+    return attendees?.map((attendee: any) => {
+      const email = this.extractEmail(attendee);
+      return {
+        email: email.replace("mailto:", ""),
+        name: this.extractName(attendee, email),
+        status: this.extractStatus(attendee),
+      };
+    });
+  }
+
+  private parseOrganizer(organizer: any): { email: string; name: string } | undefined {
+    if (!organizer) {
+      return undefined;
+    }
+    
+    const email = this.extractEmail(organizer).replace("mailto:", "");
+    return {
+      email,
+      name: this.extractName(organizer, email),
+    };
+  }
+
+  private extractEmail(participant: any): string {
+    return participant.getFirstValue ? participant.getFirstValue() : String(participant);
+  }
+
+  private extractName(participant: any, email: string): string {
+    return participant.getParameter
+      ? participant.getParameter("cn")
+      : email.replace("mailto:", "").split("@")[0];
+  }
+
+  private extractStatus(attendee: any): string {
+    return attendee.getParameter
+      ? attendee.getParameter("partstat") || "needs-action"
+      : "needs-action";
+  }
+
+  private extractMetadata(event: any, calendar: string): Pick<CalendarEvent, "calendar" | "categories" | "created" | "modified"> {
+    const categories = this.parseCategories(event.component.getFirstPropertyValue("categories"));
+    
+    return {
+      calendar,
+      categories,
+      created: this.parseICalDate(event.component.getFirstPropertyValue("created")) || new Date(),
+      modified: this.parseICalDate(event.component.getFirstPropertyValue("last-modified")) || new Date(),
+    };
+  }
+
+  private parseCategories(categories: any): string[] {
+    return categories && typeof categories === "string"
+      ? categories.split(",").map((cat: string) => cat.trim())
+      : [];
   }
 
   private parseICalDate(value: any): Date | null {
