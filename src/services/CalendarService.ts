@@ -3,6 +3,7 @@ import ICAL from "ical.js";
 import { type DAVCalendar, type DAVObject, createDAVClient } from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
+  Attendee,
   CalDavConnection,
   CalendarEvent,
   CalendarSearchOptions,
@@ -276,15 +277,20 @@ export class CalendarService {
     const organizer = this.parseOrganizer(event.organizer);
 
     return {
-      attendees: attendees && attendees.length > 0 ? attendees : undefined,
+      attendees: attendees.length > 0 ? attendees : undefined,
       organizer,
     };
   }
 
   private parseAttendees(
     attendees: any[],
-  ): Array<{ email: string; name?: string; status: "needs-action" | "accepted" | "declined" | "tentative" }> | undefined {
-    return attendees?.map((attendee: any) => {
+  ): Attendee[] {
+    // Früher Return mit leerem Array wenn attendees falsy ist
+    if (!attendees || !Array.isArray(attendees)) {
+      return [];
+    }
+
+    return attendees.map((attendee: any) => {
       const email = this.extractEmail(attendee);
       return {
         email: email.replace("mailto:", ""),

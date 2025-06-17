@@ -1,3 +1,10 @@
+// Shared types for calendar functionality
+export interface Attendee {
+  email: string;
+  name?: string;
+  status: "needs-action" | "accepted" | "declined" | "tentative";
+}
+
 export interface CalendarEvent {
   id: string;
   uid: string;
@@ -9,11 +16,7 @@ export interface CalendarEvent {
   allDay: boolean;
   recurring: boolean;
   recurrenceRule?: string;
-  attendees?: Array<{
-    email: string;
-    name?: string;
-    status: "needs-action" | "accepted" | "declined" | "tentative";
-  }>;
+  attendees?: Attendee[];
   organizer?: {
     email: string;
     name?: string;
