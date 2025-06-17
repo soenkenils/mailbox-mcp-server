@@ -276,14 +276,14 @@ export class CalendarService {
     const organizer = this.parseOrganizer(event.organizer);
 
     return {
-      attendees: attendees?.length > 0 ? attendees : undefined,
+      attendees: attendees && attendees.length > 0 ? attendees : undefined,
       organizer,
     };
   }
 
   private parseAttendees(
     attendees: any[],
-  ): Array<{ email: string; name: string; status: string }> | undefined {
+  ): Array<{ email: string; name?: string; status: "needs-action" | "accepted" | "declined" | "tentative" }> | undefined {
     return attendees?.map((attendee: any) => {
       const email = this.extractEmail(attendee);
       return {
@@ -320,10 +320,22 @@ export class CalendarService {
       : email.replace("mailto:", "").split("@")[0];
   }
 
-  private extractStatus(attendee: any): string {
-    return attendee.getParameter
+  private extractStatus(attendee: any): "needs-action" | "accepted" | "declined" | "tentative" {
+    const status = attendee.getParameter
       ? attendee.getParameter("partstat") || "needs-action"
       : "needs-action";
+    
+    // Map iCal status values to our expected types
+    switch (status.toLowerCase()) {
+      case "accepted":
+        return "accepted";
+      case "declined":
+        return "declined";
+      case "tentative":
+        return "tentative";
+      default:
+        return "needs-action";
+    }
   }
 
   private extractMetadata(
