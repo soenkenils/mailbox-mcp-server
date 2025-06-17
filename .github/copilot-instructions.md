@@ -15,14 +15,15 @@
 
 - Use Biom for formatting and linting JavaScript and TypeScript code
 - Use vitest for testing JavaScript and TypeScript code
+- Use pnpm as package manager
 - Use Git for version control
 - Use GitHub for hosting the code repository
 
 ## Bash commands
 
-- npm run build: Build the project
-- npm test: Run the test suite
-- npm run check: Run both linting and formatting
+- pnpm build: Build the project
+- pnpm test: Run the test suite
+- pnpm run check: Run both linting and formatting
 
 ## Workflow
 
