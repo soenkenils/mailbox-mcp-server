@@ -210,16 +210,16 @@ export class CalendarService {
   private parseVEvent(vevent: any, calendar: string): CalendarEvent | null {
     try {
       const event = new ICAL.Event(vevent);
-      
+
       const basicInfo = this.extractBasicEventInfo(event);
       if (!this.hasValidDates(event)) {
         return null;
       }
-      
+
       const timeInfo = this.extractTimeInfo(event);
       const participantInfo = this.extractParticipants(event);
       const metadataInfo = this.extractMetadata(event, calendar);
-      
+
       return {
         ...basicInfo,
         ...timeInfo,
@@ -232,7 +232,12 @@ export class CalendarService {
     }
   }
 
-  private extractBasicEventInfo(event: any): Pick<CalendarEvent, "id" | "uid" | "summary" | "description" | "location"> {
+  private extractBasicEventInfo(
+    event: any,
+  ): Pick<
+    CalendarEvent,
+    "id" | "uid" | "summary" | "description" | "location"
+  > {
     const uid = event.uid || `${Date.now()}-${Math.random()}`;
     return {
       id: uid,
@@ -247,27 +252,38 @@ export class CalendarService {
     return !!(event.startDate && event.endDate);
   }
 
-  private extractTimeInfo(event: any): Pick<CalendarEvent, "start" | "end" | "allDay" | "recurring" | "recurrenceRule"> {
+  private extractTimeInfo(
+    event: any,
+  ): Pick<
+    CalendarEvent,
+    "start" | "end" | "allDay" | "recurring" | "recurrenceRule"
+  > {
     return {
       start: event.startDate.toJSDate(),
       end: event.endDate.toJSDate(),
       allDay: event.startDate.isDate,
       recurring: event.isRecurring(),
-      recurrenceRule: event.component.getFirstPropertyValue("rrule")?.toString(),
+      recurrenceRule: event.component
+        .getFirstPropertyValue("rrule")
+        ?.toString(),
     };
   }
 
-  private extractParticipants(event: any): Pick<CalendarEvent, "attendees" | "organizer"> {
+  private extractParticipants(
+    event: any,
+  ): Pick<CalendarEvent, "attendees" | "organizer"> {
     const attendees = this.parseAttendees(event.attendees);
     const organizer = this.parseOrganizer(event.organizer);
-    
+
     return {
       attendees: attendees?.length > 0 ? attendees : undefined,
       organizer,
     };
   }
 
-  private parseAttendees(attendees: any[]): Array<{ email: string; name: string; status: string }> | undefined {
+  private parseAttendees(
+    attendees: any[],
+  ): Array<{ email: string; name: string; status: string }> | undefined {
     return attendees?.map((attendee: any) => {
       const email = this.extractEmail(attendee);
       return {
@@ -278,11 +294,13 @@ export class CalendarService {
     });
   }
 
-  private parseOrganizer(organizer: any): { email: string; name: string } | undefined {
+  private parseOrganizer(
+    organizer: any,
+  ): { email: string; name: string } | undefined {
     if (!organizer) {
       return undefined;
     }
-    
+
     const email = this.extractEmail(organizer).replace("mailto:", "");
     return {
       email,
@@ -291,7 +309,9 @@ export class CalendarService {
   }
 
   private extractEmail(participant: any): string {
-    return participant.getFirstValue ? participant.getFirstValue() : String(participant);
+    return participant.getFirstValue
+      ? participant.getFirstValue()
+      : String(participant);
   }
 
   private extractName(participant: any, email: string): string {
@@ -306,14 +326,24 @@ export class CalendarService {
       : "needs-action";
   }
 
-  private extractMetadata(event: any, calendar: string): Pick<CalendarEvent, "calendar" | "categories" | "created" | "modified"> {
-    const categories = this.parseCategories(event.component.getFirstPropertyValue("categories"));
-    
+  private extractMetadata(
+    event: any,
+    calendar: string,
+  ): Pick<CalendarEvent, "calendar" | "categories" | "created" | "modified"> {
+    const categories = this.parseCategories(
+      event.component.getFirstPropertyValue("categories"),
+    );
+
     return {
       calendar,
       categories,
-      created: this.parseICalDate(event.component.getFirstPropertyValue("created")) || new Date(),
-      modified: this.parseICalDate(event.component.getFirstPropertyValue("last-modified")) || new Date(),
+      created:
+        this.parseICalDate(event.component.getFirstPropertyValue("created")) ||
+        new Date(),
+      modified:
+        this.parseICalDate(
+          event.component.getFirstPropertyValue("last-modified"),
+        ) || new Date(),
     };
   }
 

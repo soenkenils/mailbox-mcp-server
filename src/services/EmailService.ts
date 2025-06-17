@@ -137,7 +137,7 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
     await this.ensureConnectionAndSelectFolder(folder);
-    
+
     const searchResult = await this.executeSearch(options);
     if (!searchResult || searchResult.length === 0) {
       return [];
@@ -146,7 +146,7 @@ export class EmailService {
     const paginatedResults = this.applyPagination(searchResult, options);
     const messages = await this.fetchMessageHeaders(paginatedResults, folder);
     const filteredMessages = this.applyInMemoryFilters(messages, options);
-    
+
     return this.sortMessagesByDate(filteredMessages);
   }
 
@@ -157,20 +157,28 @@ export class EmailService {
     await this.client.mailboxOpen(folder);
   }
 
-  private async executeSearch(options: EmailSearchOptions): Promise<number[] | null> {
+  private async executeSearch(
+    options: EmailSearchOptions,
+  ): Promise<number[] | null> {
     const searchCriteria = this.buildSearchCriteria(options);
     return await this.client!.search(searchCriteria);
   }
 
-  private applyPagination(searchResult: number[], options: EmailSearchOptions): number[] {
+  private applyPagination(
+    searchResult: number[],
+    options: EmailSearchOptions,
+  ): number[] {
     const offset = options.offset || 0;
     const end = options.limit ? offset + options.limit : undefined;
     return searchResult.slice(offset, end);
   }
 
-  private async fetchMessageHeaders(uids: number[], folder: string): Promise<EmailMessage[]> {
+  private async fetchMessageHeaders(
+    uids: number[],
+    folder: string,
+  ): Promise<EmailMessage[]> {
     const messages: EmailMessage[] = [];
-    
+
     if (uids.length > 0) {
       for await (const message of this.client!.fetch(uids, {
         envelope: true,
@@ -183,7 +191,7 @@ export class EmailService {
         }
       }
     }
-    
+
     return messages;
   }
 
@@ -198,7 +206,7 @@ export class EmailService {
     try {
       await this.ensureConnectionAndSelectFolder(folder);
       const rawMessage = await this.fetchRawMessageByUid(uid, folder);
-      
+
       if (!rawMessage) {
         return null;
       }
@@ -213,7 +221,10 @@ export class EmailService {
     }
   }
 
-  private async fetchRawMessageByUid(uid: number, folder: string): Promise<any | null> {
+  private async fetchRawMessageByUid(
+    uid: number,
+    folder: string,
+  ): Promise<any | null> {
     for await (const msg of this.client!.fetch(
       `${uid}:${uid}`,
       {
@@ -226,7 +237,7 @@ export class EmailService {
     )) {
       return msg;
     }
-    
+
     console.error(
       `Failed to fetch email with UID ${uid} from folder ${folder}`,
     );
@@ -250,10 +261,10 @@ export class EmailService {
 
   private buildSearchCriteria(options: EmailSearchOptions): any {
     let criteria: any = {};
-    
+
     criteria = this.addDateFilters(criteria, options);
     criteria = this.addQueryFilters(criteria, options);
-    
+
     return Object.keys(criteria).length === 0 ? { all: true } : criteria;
   }
 
