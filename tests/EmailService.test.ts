@@ -27,7 +27,8 @@ describe("EmailService", () => {
       delete: vi.fn(),
       clear: vi.fn(),
       cleanup: vi.fn(),
-      getStats: vi.fn(),
+      has: vi.fn(),
+      size: vi.fn(),
     };
 
     mockConnection = {
@@ -269,6 +270,90 @@ describe("EmailService", () => {
 
       expect(result).toBe(mockThread);
       expect(mockCache.get).toHaveBeenCalledWith("thread:INBOX:message-id");
+    });
+  });
+
+  describe("parseEmailMessage", () => {
+    it("should parse a standard envelope", () => {
+      const message = {
+        uid: 42,
+        envelope: {
+          messageId: "msg-42",
+          subject: "Hello World",
+          from: [{ name: "Alice", address: "alice@example.com" }],
+          to: [{ name: "Bob", address: "bob@example.com" }],
+          cc: [{ name: "Carol", address: "carol@example.com" }],
+          date: new Date("2024-06-01T10:00:00Z"),
+        },
+        flags: ["Seen"],
+      };
+      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      expect(result).toMatchObject({
+        id: "msg-42",
+        uid: 42,
+        subject: "Hello World",
+        from: [{ name: "Alice", address: "alice@example.com" }],
+        to: [{ name: "Bob", address: "bob@example.com" }],
+        cc: [{ name: "Carol", address: "carol@example.com" }],
+        date: new Date("2024-06-01T10:00:00Z"),
+        flags: ["Seen"],
+        folder: "INBOX",
+      });
+    });
+
+    it("should return null if envelope is missing", () => {
+      const message = { uid: 1 };
+      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      expect(result).toBeNull();
+    });
+
+    it("should handle missing optional fields", () => {
+      const message = {
+        uid: 2,
+        envelope: {
+          messageId: "msg-2",
+          subject: undefined,
+          from: undefined,
+          to: undefined,
+          cc: undefined,
+          date: undefined,
+        },
+        flags: undefined,
+      };
+      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      expect(result).toMatchObject({
+        id: "msg-2",
+        uid: 2,
+        subject: "",
+        from: [],
+        to: [],
+        cc: [],
+        date: expect.any(Date),
+        flags: [],
+        folder: "INBOX",
+      });
+    });
+  });
+
+  describe("parseAddressesFromEnvelope", () => {
+    const parseAddresses = (addresses: any) => (emailService as any).parseAddressesFromEnvelope(addresses);
+
+    it("should handle array of addresses", () => {
+      const input = [
+        { name: "Alice", address: "alice@example.com" },
+        { name: "Bob", address: "bob@example.com" },
+      ];
+      expect(parseAddresses(input)).toEqual(input);
+    });
+
+    it("should handle single address object", () => {
+      const input = { name: "Carol", address: "carol@example.com" };
+      expect(parseAddresses(input)).toEqual([input]);
+    });
+
+    it("should handle null/undefined addresses", () => {
+      expect(parseAddresses(null)).toEqual([]);
+      expect(parseAddresses(undefined)).toEqual([]);
     });
   });
 });
