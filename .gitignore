@@ -26,5 +26,8 @@ dist/
 .idea/
 *.swp
 
+# Test coverage
+coverage/
+
 # macOS
 .DS_Store
