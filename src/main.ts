@@ -91,6 +91,14 @@ class MailboxMcpServer {
     }
   }
 
+  private isEmailTool(toolName: string): boolean {
+    return ["search_emails", "get_email", "get_email_thread"].includes(toolName);
+  }
+
+  private isCalendarTool(toolName: string): boolean {
+    return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(toolName);
+  }
+
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const emailTools = createEmailTools(this.emailService);
@@ -109,17 +117,11 @@ class MailboxMcpServer {
       }
 
       try {
-        // Handle email tools
-        if (["search_emails", "get_email", "get_email_thread"].includes(name)) {
+        if (this.isEmailTool(name)) {
           return await handleEmailTool(name, args, this.emailService);
         }
 
-        // Handle calendar tools
-        if (
-          ["get_calendar_events", "search_calendar", "get_free_busy"].includes(
-            name,
-          )
-        ) {
+        if (this.isCalendarTool(name)) {
           return await handleCalendarTool(name, args, this.calendarService);
         }
 
