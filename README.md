@@ -35,8 +35,8 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    ```bash
    git clone <repository-url>
    cd mailbox-mcp-server
-   npm install
-   npm run build
+   pnpm install
+   pnpm run build
    ```
 
 2. Copy the example environment file and update it with your credentials:
@@ -155,27 +155,89 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 2. Install dependencies:
 
    ```bash
-   npm install
+   pnpm install
    ```
+
+   > **Note**: This project uses pnpm as the package manager. Make sure you have pnpm installed (version 8.x or later recommended).
 
 3. Create environment configuration:
 
    ```bash
    cp .env.example .env
    # Edit .env with your mailbox.org credentials
+
+### Debugging with Inspector
+
+The MCP Inspector is a powerful tool for debugging and monitoring your MCP server. It provides real-time insights into errors, request/response cycles, and server state.
+
+#### Enabling the Inspector
+
+1. Start the server with inspector enabled:
+
+   ```bash
+   MCP_INSPECTOR=true pnpm start
    ```
+
+2. Access the web UI at `http://localhost:3000/inspector` (port may vary based on your configuration)
+
+#### Key Features
+
+- **Real-time Error Monitoring**
+  - View errors as they occur
+  - See detailed stack traces and context
+  - Filter errors by type and severity
+
+- **Request/Response Inspection**
+  - Monitor all MCP protocol messages
+  - Inspect request/response payloads
+  - View timing information
+
+- **Tool Validation**
+  - Validate tool definitions against MCP specifications
+  - Get warnings about potential issues
+
+#### Common Debugging Workflow
+
+1. **Reproduce the Issue**
+   - Perform the action that causes the error
+   - Note any error messages or unexpected behavior
+
+2. **Inspect the Error**
+   - Look for red indicators in the Inspector UI
+   - Expand error entries for detailed information
+   - Check the network tab for failed requests
+
+3. **View Context**
+   - Examine the server state at the time of the error
+   - Check the request payload and headers
+   - Look at previous successful requests for comparison
+
+#### Enabling Verbose Logging
+
+For more detailed debugging information, enable debug mode:
+
+```bash
+MCP_DEBUG=true MCP_INSPECTOR=true pnpm start
+```
+
+#### Best Practices
+
+- Keep the Inspector open during development
+- Use the search/filter functionality to find specific errors
+- Take advantage of the "Resend" feature to retry failed requests
+- Use the "Copy as cURL" feature to share reproducible test cases
 
 ### **Available Scripts**
 
-- **`npm run dev`** - Start development server with hot reloading
-- **`npm run build`** - Build for production
-- **`npm run start`** - Start production server
-- **`npm test`** - Run test suite
-- **`npm run test:unit`** - Run unit tests only
-- **`npm run test:integration`** - Run integration tests only
-- **`npm run format`** - Format code with Biome
-- **`npm run lint`** - Lint code with Biome
-- **`npm run check`** - Run both linting and formatting
+- **`pnpm dev`** - Start development server with hot reloading
+- **`pnpm build`** - Build for production
+- **`pnpm start`** - Start production server
+- **`pnpm test`** - Run test suite
+- **`pnpm test:unit`** - Run unit tests only
+- **`pnpm test:integration`** - Run integration tests only
+- **`pnpm format`** - Format code with Biome
+- **`pnpm lint`** - Lint code with Biome
+- **`pnpm typecheck`** - Run both linting and formatting
 
 ### **Testing**
 
@@ -187,14 +249,72 @@ The project includes comprehensive test coverage:
 
 ```bash
 # Run all tests
-npm test
+pnpm test
 
 # Run with coverage
-npm run test -- --coverage
+pnpm test --coverage
 
 # Test specific service
-npm run test ImapService
+pnpm test ImapService
 ```
+
+## Dependencies
+
+This project relies on the following key dependencies:
+
+- **Runtime Dependencies**
+  - `@modelcontext/server-sdk` - MCP server implementation
+  - `node-imap` - IMAP client for email access
+  - `dav` - CalDAV client for calendar access
+  - `zod` - Runtime type validation
+
+- **Development Dependencies**
+  - `typescript` - TypeScript compiler
+  - `vitest` - Testing framework
+  - `biome` - Code formatting and linting
+  - `@types/*` - TypeScript type definitions
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Issues**
+   - Verify your mailbox.org credentials in `.env`
+   - Check if your account has IMAP and CalDAV access enabled
+   - Ensure your network allows outbound connections to mailbox.org servers
+
+2. **Authentication Failures**
+   - Use an App Password instead of your main password
+   - Make sure 2FA is properly configured if enabled
+
+3. **Missing Dependencies**
+
+   ```bash
+   # If you encounter module not found errors:
+   pnpm install
+   ```
+
+4. **Debugging**
+
+   - Enable debug mode for more detailed logs:
+
+     ```bash
+     DEBUG=true pnpm start
+     ```
+
+   - Check the [Debugging with Inspector](#debugging-with-inspector) section for advanced troubleshooting
+
+## Contributing
+
+Contributions are welcome! Here's how you can help:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Please make sure to update tests as appropriate and follow the project's code style.
 
 ## License
 
