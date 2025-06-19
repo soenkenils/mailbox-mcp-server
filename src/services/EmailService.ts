@@ -1,4 +1,3 @@
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
 import type { LocalCache } from "../types/cache.types.js";
@@ -13,12 +12,10 @@ export class EmailService {
   private connection: ImapConnection;
   private cache: LocalCache;
   private client?: ImapFlow;
-  private server: Server;
 
-  constructor(connection: ImapConnection, cache: LocalCache, server: Server) {
+  constructor(connection: ImapConnection, cache: LocalCache) {
     this.connection = connection;
     this.cache = cache;
-    this.server = server;
   }
 
   async connect(): Promise<void> {
@@ -85,23 +82,11 @@ export class EmailService {
         await this.connect();
       }
 
-      await this.server.sendLoggingMessage({
-        level: "info",
-        logger: "EmailService",
-        data: `Fetching email with UID ${uid} from folder ${folder}`,
-      });
-
       const message = await this.fetchEmailByUid(uid, folder);
 
       if (message) {
         this.cache.set(cacheKey, message, 600000); // 10 minutes TTL
       }
-
-      await this.server.sendLoggingMessage({
-        level: "info",
-        logger: "EmailService",
-        data: `Fetched email with UID ${uid} from folder ${folder}`,
-      });
 
       return message;
     } catch (error) {
@@ -161,7 +146,7 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<number[] | null> {
     const searchCriteria = this.buildSearchCriteria(options);
-    return await this.client!.search(searchCriteria);
+    return await this.client?.search(searchCriteria);
   }
 
   private applyPagination(
@@ -180,7 +165,7 @@ export class EmailService {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      for await (const message of this.client!.fetch(uids, {
+      for await (const message of this.client?.fetch(uids, {
         envelope: true,
         uid: true,
         flags: true,
@@ -225,7 +210,7 @@ export class EmailService {
     uid: number,
     folder: string,
   ): Promise<any | null> {
-    for await (const msg of this.client!.fetch(
+    for await (const msg of this.client?.fetch(
       `${uid}:${uid}`,
       {
         source: true,
@@ -388,12 +373,12 @@ export class EmailService {
       message.from.some(
         (from) =>
           from.address.toLowerCase().includes(searchText) ||
-          (from.name && from.name.toLowerCase().includes(searchText)),
+          from.name?.toLowerCase().includes(searchText),
       ) ||
       message.to.some(
         (to) =>
           to.address.toLowerCase().includes(searchText) ||
-          (to.name && to.name.toLowerCase().includes(searchText)),
+          to.name?.toLowerCase().includes(searchText),
       )
     );
   }
