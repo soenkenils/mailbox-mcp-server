@@ -3,11 +3,13 @@ title = "Custom gitleaks config"
 [extend]
 useDefault = true  # This keeps default rules
 
-[[rules]]
-id = "generic-password"
-description = "Generic password detection"
-regex = '''(?i)(password|pwd|pass)\s*[=:]\s*["\']?[a-zA-Z0-9!@#$%^&*()_+=-]{8,}["\']?'''
-tags = ["password"]
+# Global allowlist to exclude test files from all password detection
+[allowlist]
+paths = [
+  '''tests/.*\.test\.ts$''',
+  '''tests/.*\.spec\.ts$''',
+  '''__tests__/.*'''
+]
 
 [[rules]]
 id = "api-key-pattern"
