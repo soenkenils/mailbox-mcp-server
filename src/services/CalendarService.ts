@@ -282,9 +282,7 @@ export class CalendarService {
     };
   }
 
-  private parseAttendees(
-    attendees: any[],
-  ): Attendee[] {
+  private parseAttendees(attendees: any[]): Attendee[] {
     // Früher Return mit leerem Array wenn attendees falsy ist
     if (!attendees || !Array.isArray(attendees)) {
       return [];
@@ -326,11 +324,13 @@ export class CalendarService {
       : email.replace("mailto:", "").split("@")[0];
   }
 
-  private extractStatus(attendee: any): "needs-action" | "accepted" | "declined" | "tentative" {
+  private extractStatus(
+    attendee: any,
+  ): "needs-action" | "accepted" | "declined" | "tentative" {
     const status = attendee.getParameter
       ? attendee.getParameter("partstat") || "needs-action"
       : "needs-action";
-    
+
     // Map iCal status values to our expected types
     switch (status.toLowerCase()) {
       case "accepted":

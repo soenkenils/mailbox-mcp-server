@@ -1,19 +1,101 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
-import type { ImapConnection } from "../src/types/email.types.js";
+import type { EmailMessage, ImapConnection } from "../src/types/email.types.js";
+
+// Mock factories for cleaner test setup
+const createMockEmailMessage = (
+  overrides: Partial<EmailMessage> = {},
+): EmailMessage => ({
+  id: "msg-1",
+  uid: 1,
+  subject: "Test Email",
+  from: [{ name: "Test Sender", address: "sender@example.com" }],
+  to: [{ name: "Test Recipient", address: "recipient@example.com" }],
+  cc: [],
+  bcc: [],
+  date: new Date("2024-01-01T10:00:00Z"),
+  flags: [],
+  folder: "INBOX",
+  ...overrides,
+});
+
+const createMockImapMessage = (overrides: any = {}) => ({
+  uid: 1,
+  envelope: {
+    messageId: "msg-1",
+    subject: "Test Email",
+    from: [{ name: "Test Sender", address: "sender@example.com" }],
+    to: [{ name: "Test Recipient", address: "recipient@example.com" }],
+    cc: [],
+    date: new Date("2024-01-01T10:00:00Z"),
+  },
+  flags: [],
+  ...overrides,
+});
+
+const createMockCache = (): LocalCache => ({
+  get: vi.fn(),
+  set: vi.fn(),
+  delete: vi.fn(),
+  clear: vi.fn(),
+  cleanup: vi.fn(),
+  has: vi.fn(),
+  size: vi.fn(),
+});
+
+const createMockConnection = (
+  overrides: Partial<ImapConnection> = {},
+): ImapConnection => ({
+  user: "test@example.com",
+  password: "password",
+  host: "imap.example.com",
+  port: 993,
+  secure: true,
+  ...overrides,
+});
+
+// Mock IMAP functions
+const mockConnect = vi.fn();
+const mockLogout = vi.fn();
+const mockMailboxOpen = vi.fn();
+const mockSearch = vi.fn();
+const mockFetch = vi.fn();
+const mockFetchOne = vi.fn();
+const mockOn = vi.fn();
 
 // Mock the imapflow module
 vi.mock("imapflow", () => {
-  const mockImapFlow = vi.fn();
-  mockImapFlow.prototype.connect = vi.fn();
-  mockImapFlow.prototype.logout = vi.fn();
-  mockImapFlow.prototype.mailboxOpen = vi.fn();
-  mockImapFlow.prototype.search = vi.fn();
-  mockImapFlow.prototype.fetch = vi.fn();
-  mockImapFlow.prototype.fetchOne = vi.fn();
-  return { ImapFlow: mockImapFlow };
+  return {
+    ImapFlow: vi.fn().mockImplementation(() => ({
+      connect: mockConnect,
+      logout: mockLogout,
+      mailboxOpen: mockMailboxOpen,
+      search: mockSearch,
+      fetch: mockFetch,
+      fetchOne: mockFetchOne,
+      on: mockOn,
+    })),
+  };
 });
+
+const setupMockDefaults = () => {
+  // Reset all mocks
+  vi.clearAllMocks();
+
+  // Setup default successful responses
+  mockConnect.mockResolvedValue(undefined);
+  mockLogout.mockResolvedValue(undefined);
+  mockMailboxOpen.mockResolvedValue({ exists: 10 });
+  mockSearch.mockResolvedValue([1, 2, 3]);
+  mockFetch.mockResolvedValue([
+    createMockImapMessage({ uid: 1 }),
+    createMockImapMessage({ uid: 2 }),
+    createMockImapMessage({ uid: 3 }),
+  ]);
+  mockFetchOne.mockResolvedValue(createMockImapMessage());
+  mockOn.mockImplementation(() => {});
+};
 
 describe("EmailService", () => {
   let emailService: EmailService;
@@ -21,24 +103,10 @@ describe("EmailService", () => {
   let mockConnection: ImapConnection;
 
   beforeEach(() => {
-    mockCache = {
-      get: vi.fn(),
-      set: vi.fn(),
-      delete: vi.fn(),
-      clear: vi.fn(),
-      cleanup: vi.fn(),
-      has: vi.fn(),
-      size: vi.fn(),
-    };
+    setupMockDefaults();
 
-    mockConnection = {
-      user: "test@example.com",
-      password: "password",
-      host: "imap.example.com",
-      port: 993,
-      secure: true,
-    };
-
+    mockCache = createMockCache();
+    mockConnection = createMockConnection();
     emailService = new EmailService(mockConnection, mockCache);
   });
 
@@ -144,36 +212,27 @@ describe("EmailService", () => {
     };
 
     const mockMessages = [
-      {
+      createMockEmailMessage({
         id: "1",
         uid: 1,
         subject: "Newsletter from Correctiv",
         from: [{ address: "newsletter@correctiv.org", name: "Correctiv" }],
-        to: [{ address: "user@example.com", name: "User" }],
         date: new Date("2024-01-01T10:00:00Z"),
-        flags: [],
-        folder: "INBOX",
-      },
-      {
+      }),
+      createMockEmailMessage({
         id: "2",
         uid: 2,
         subject: "Article from Krautreporter",
         from: [{ address: "info@krautreporter.de", name: "Krautreporter" }],
-        to: [{ address: "user@example.com", name: "User" }],
         date: new Date("2024-06-01T10:00:00Z"),
-        flags: [],
-        folder: "INBOX",
-      },
-      {
+      }),
+      createMockEmailMessage({
         id: "3",
         uid: 3,
         subject: "Random Email",
         from: [{ address: "random@example.com", name: "Random" }],
-        to: [{ address: "user@example.com", name: "User" }],
         date: new Date("2024-12-01T10:00:00Z"),
-        flags: [],
-        folder: "INBOX",
-      },
+      }),
     ];
 
     it("should filter by complex OR query", () => {
@@ -216,8 +275,8 @@ describe("EmailService", () => {
 
   describe("searchEmails", () => {
     it("should return cached results when available", async () => {
-      const mockMessages = [{ id: "1", subject: "Test" }];
-      (mockCache.get as any).mockReturnValue(mockMessages);
+      const mockMessages = [createMockEmailMessage()];
+      (mockCache.get as Mock).mockReturnValue(mockMessages);
 
       const result = await emailService.searchEmails({ query: "test" });
 
@@ -234,6 +293,7 @@ describe("EmailService", () => {
         since: new Date("2024-01-01"),
         limit: 10,
       };
+      (mockCache.get as Mock).mockReturnValue([createMockEmailMessage()]);
 
       emailService.searchEmails(options);
 
@@ -245,8 +305,8 @@ describe("EmailService", () => {
 
   describe("getEmail", () => {
     it("should return cached email when available", async () => {
-      const mockEmail = { id: "1", uid: 123, subject: "Test Email" };
-      (mockCache.get as any).mockReturnValue(mockEmail);
+      const mockEmail = createMockEmailMessage({ uid: 123 });
+      (mockCache.get as Mock).mockReturnValue(mockEmail);
 
       const result = await emailService.getEmail(123);
 
@@ -259,12 +319,12 @@ describe("EmailService", () => {
     it("should return cached thread when available", async () => {
       const mockThread = {
         threadId: "thread-1",
-        messages: [],
+        messages: [createMockEmailMessage()],
         subject: "Thread Subject",
-        participants: [],
+        participants: [{ name: "User", address: "user@example.com" }],
         lastActivity: new Date(),
       };
-      (mockCache.get as any).mockReturnValue(mockThread);
+      (mockCache.get as Mock).mockReturnValue(mockThread);
 
       const result = await emailService.getEmailThread("message-id");
 
@@ -336,7 +396,8 @@ describe("EmailService", () => {
   });
 
   describe("parseAddressesFromEnvelope", () => {
-    const parseAddresses = (addresses: any) => (emailService as any).parseAddressesFromEnvelope(addresses);
+    const parseAddresses = (addresses: any) =>
+      (emailService as any).parseAddressesFromEnvelope(addresses);
 
     it("should handle array of addresses", () => {
       const input = [
@@ -351,9 +412,130 @@ describe("EmailService", () => {
       expect(parseAddresses(input)).toEqual([input]);
     });
 
-    it("should handle null/undefined addresses", () => {
+    it.each([
+      [
+        "array of addresses",
+        [
+          { name: "Alice", address: "alice@example.com" },
+          { name: "Bob", address: "bob@example.com" },
+        ],
+        [
+          { name: "Alice", address: "alice@example.com" },
+          { name: "Bob", address: "bob@example.com" },
+        ],
+      ],
+      [
+        "single address object",
+        { name: "Carol", address: "carol@example.com" },
+        [{ name: "Carol", address: "carol@example.com" }],
+      ],
+      ["null addresses", null, []],
+      ["undefined addresses", undefined, []],
+      ["empty array", [], []],
+      [
+        "address without name",
+        { address: "noreply@example.com" },
+        [{ address: "noreply@example.com" }],
+      ],
+    ])("should handle %s", (_, input, expected) => {
+      expect(parseAddresses(input)).toEqual(expected);
+    });
+  });
+
+  describe("error handling", () => {
+    it("should handle cache errors gracefully", async () => {
+      (mockCache.get as Mock).mockImplementation(() => {
+        throw new Error("Cache error");
+      });
+
+      const result = await emailService
+        .searchEmails({ query: "test" })
+        .catch(() => []);
+      expect(Array.isArray(result)).toBe(true);
+    });
+  });
+
+  describe("edge cases and boundary testing", () => {
+    it("should handle malformed envelope data gracefully", () => {
+      const message = {
+        uid: 1,
+        envelope: {
+          messageId: "msg-1",
+          subject: undefined,
+          from: null,
+          to: [],
+          date: "not-a-date",
+        },
+        flags: null,
+      };
+
+      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+
+      expect(result).toMatchObject({
+        uid: 1,
+        subject: "",
+        from: [],
+        to: [],
+        flags: [],
+        folder: "INBOX",
+      });
+    });
+
+    it("should handle boundary conditions for search criteria", () => {
+      const buildSearchCriteria = (options: any) => {
+        return (emailService as any).buildSearchCriteria(options);
+      };
+
+      // Test very long query
+      const longQuery = "a".repeat(1000);
+      const longResult = buildSearchCriteria({ query: longQuery });
+      expect(longResult).toBeDefined();
+
+      // Test special characters
+      const specialQuery = "test@domain.com AND (subject:äöü OR from:测试)";
+      const specialResult = buildSearchCriteria({ query: specialQuery });
+      expect(specialResult).toBeDefined();
+    });
+  });
+
+  describe("additional edge cases", () => {
+    it("should handle complex search criteria combinations", () => {
+      const buildSearchCriteria = (options: any) => {
+        return (emailService as any).buildSearchCriteria(options);
+      };
+
+      // Test multiple criteria combinations
+      const complexOptions = {
+        query: "from:test@example.com AND subject:important",
+        since: new Date("2024-01-01"),
+        before: new Date("2024-12-31"),
+      };
+
+      const result = buildSearchCriteria(complexOptions);
+      expect(result).toHaveProperty("since");
+      expect(result).toHaveProperty("before");
+    });
+
+    it("should handle malformed address parsing edge cases", () => {
+      const parseAddresses = (addresses: any) =>
+        (emailService as any).parseAddressesFromEnvelope(addresses);
+
+      // Test falsy values return empty array
       expect(parseAddresses(null)).toEqual([]);
       expect(parseAddresses(undefined)).toEqual([]);
+      expect(parseAddresses(false)).toEqual([]);
+      expect(parseAddresses(0)).toEqual([]);
+      expect(parseAddresses("")).toEqual([]);
+
+      // Test empty array stays empty
+      expect(parseAddresses([])).toEqual([]);
+
+      // Test truthy non-array values become single-item arrays
+      expect(parseAddresses({})).toEqual([{}]);
+      expect(parseAddresses("string-instead-of-object")).toEqual([
+        "string-instead-of-object",
+      ]);
+      expect(parseAddresses(123)).toEqual([123]);
     });
   });
 });

@@ -90,11 +90,15 @@ class MailboxMcpServer {
   }
 
   private isEmailTool(toolName: string): boolean {
-    return ["search_emails", "get_email", "get_email_thread"].includes(toolName);
+    return ["search_emails", "get_email", "get_email_thread"].includes(
+      toolName,
+    );
   }
 
   private isCalendarTool(toolName: string): boolean {
-    return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(toolName);
+    return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(
+      toolName,
+    );
   }
 
   private setupToolHandlers(): void {
