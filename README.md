@@ -263,10 +263,12 @@ pnpm test ImapService
 This project relies on the following key dependencies:
 
 - **Runtime Dependencies**
-  - `@modelcontext/server-sdk` - MCP server implementation
-  - `node-imap` - IMAP client for email access
-  - `dav` - CalDAV client for calendar access
-  - `zod` - Runtime type validation
+  - `@modelcontextprotocol/sdk` - MCP server implementation
+  - `imapflow` - IMAP client for email access
+  - `tsdav` - CalDAV client for calendar access
+  - `ical.js` - iCalendar parsing library
+  - `mailparser` - Email message parsing
+  - `dayjs` - Date manipulation library
 
 - **Development Dependencies**
   - `typescript` - TypeScript compiler
