@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { CalDavConnection } from "../src/types/calendar.types.js";
 
@@ -185,6 +185,15 @@ const setupMockDefaults = () => {
     },
   ]);
 };
+
+let errorSpy: ReturnType<typeof vi.spyOn>;
+
+beforeAll(() => {
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+});
+afterAll(() => {
+  errorSpy.mockRestore();
+});
 
 describe("CalendarService", () => {
   let calendarService: CalendarService;
