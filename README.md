@@ -4,13 +4,23 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ## Features
 
-### **Email Integration (IMAP)**
+### **Email Integration (IMAP & SMTP)**
 
+**Reading & Search:**
 - ✅ **Search emails** by text content, sender, subject, and date range
 - ✅ **Retrieve complete email content** including headers, body, and attachments
 - ✅ **Email thread management** with conversation grouping
-- ✅ **Multiple mailbox folder support** (INBOX, Sent, Drafts, etc.)
+- ✅ **Folder browsing** and navigation (INBOX, Sent, Drafts, etc.)
 - ✅ **Attachment detection** and metadata extraction
+
+**Composition & Management:**
+- ✅ **Send emails** with rich content (HTML/text) and attachments
+- ✅ **Draft management** - save and edit email drafts
+- ✅ **Email organization** - move emails between folders
+- ✅ **Flag management** - mark as read/unread, important, etc.
+- ✅ **Email deletion** - trash or permanent removal
+
+**Performance:**
 - ✅ **Session-based caching** for improved performance
 
 ### **Calendar Integration (CalDAV)**
@@ -59,6 +69,11 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    MAILBOX_IMAP_PORT=993
    MAILBOX_IMAP_SECURE=true
    
+   # Optional: SMTP configuration (defaults shown)
+   MAILBOX_SMTP_HOST=smtp.mailbox.org
+   MAILBOX_SMTP_PORT=587
+   MAILBOX_SMTP_SECURE=true
+   
    # Optional: CalDAV configuration (defaults shown) 
    MAILBOX_CALDAV_URL=https://dav.mailbox.org/
    
@@ -85,9 +100,20 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ### **Email Tools**
 
+#### **Reading & Search**
 - **`search_emails`** - Search your mailbox by text, sender, date, etc.
 - **`get_email`** - Retrieve complete email content by UID
 - **`get_email_thread`** - Get conversation threads by message ID
+- **`get_folders`** - List all available email folders
+
+#### **Composition & Sending**
+- **`send_email`** - Compose and send emails with attachments
+- **`create_draft`** - Save email drafts for later editing
+
+#### **Email Management**
+- **`move_email`** - Move emails between folders
+- **`mark_email`** - Mark emails as read/unread, flag as important
+- **`delete_email`** - Delete emails (move to trash or permanent)
 
 ### **Calendar Tools**
 
@@ -106,9 +132,15 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 #### **Optional Email Configuration**
 
+**IMAP (Reading Emails):**
 - `MAILBOX_IMAP_HOST`: IMAP server host (default: `imap.mailbox.org`)
 - `MAILBOX_IMAP_PORT`: IMAP server port (default: `993`)
 - `MAILBOX_IMAP_SECURE`: Use TLS encryption (default: `true`)
+
+**SMTP (Sending Emails):**
+- `MAILBOX_SMTP_HOST`: SMTP server host (default: `smtp.mailbox.org`)
+- `MAILBOX_SMTP_PORT`: SMTP server port (default: `587`)
+- `MAILBOX_SMTP_SECURE`: Use TLS encryption (default: `true`)
 
 #### **Optional Calendar Configuration**
 

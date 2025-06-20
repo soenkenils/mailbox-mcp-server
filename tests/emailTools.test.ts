@@ -22,11 +22,17 @@ describe("Email Tools", () => {
     it("should create all email tools", () => {
       const tools = createEmailTools(mockEmailService);
 
-      expect(tools).toHaveLength(3);
+      expect(tools).toHaveLength(9);
       expect(tools.map((t) => t.name)).toEqual([
         "search_emails",
         "get_email",
         "get_email_thread",
+        "send_email",
+        "create_draft",
+        "move_email",
+        "mark_email",
+        "delete_email",
+        "get_folders",
       ]);
     });
 

@@ -9,6 +9,7 @@ import { type ServerConfig, loadConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";
+import { SmtpService } from "./services/SmtpService.js";
 import {
   createCalendarTools,
   handleCalendarTool,
@@ -18,6 +19,7 @@ import { createEmailTools, handleEmailTool } from "./tools/emailTools.js";
 class MailboxMcpServer {
   private server: Server;
   private emailService!: EmailService;
+  private smtpService!: SmtpService;
   private calendarService!: CalendarService;
   private cache!: MemoryCache;
   private config!: ServerConfig;
@@ -75,6 +77,7 @@ class MailboxMcpServer {
     try {
       this.cache = new MemoryCache(this.config.cache);
       this.emailService = new EmailService(this.config.email, this.cache);
+      this.smtpService = new SmtpService(this.config.smtp);
       this.calendarService = new CalendarService(
         this.config.calendar,
         this.cache,
@@ -90,9 +93,17 @@ class MailboxMcpServer {
   }
 
   private isEmailTool(toolName: string): boolean {
-    return ["search_emails", "get_email", "get_email_thread"].includes(
-      toolName,
-    );
+    return [
+      "search_emails",
+      "get_email",
+      "get_email_thread",
+      "send_email",
+      "create_draft",
+      "move_email",
+      "mark_email",
+      "delete_email",
+      "get_folders",
+    ].includes(toolName);
   }
 
   private isCalendarTool(toolName: string): boolean {
@@ -103,7 +114,7 @@ class MailboxMcpServer {
 
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const emailTools = createEmailTools(this.emailService);
+      const emailTools = createEmailTools(this.emailService, this.smtpService);
       const calendarTools = createCalendarTools(this.calendarService);
 
       return {
@@ -120,7 +131,12 @@ class MailboxMcpServer {
 
       try {
         if (this.isEmailTool(name)) {
-          return await handleEmailTool(name, args, this.emailService);
+          return await handleEmailTool(
+            name,
+            args,
+            this.emailService,
+            this.smtpService,
+          );
         }
 
         if (this.isCalendarTool(name)) {
@@ -163,6 +179,7 @@ class MailboxMcpServer {
   private async cleanup(): Promise<void> {
     try {
       await this.emailService.disconnect();
+      await this.smtpService.close();
       this.cache.destroy();
 
       if (this.config.debug) {

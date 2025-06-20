@@ -1,9 +1,10 @@
 import type { CacheConfig } from "../types/cache.types.js";
 import type { CalDavConnection } from "../types/calendar.types.js";
-import type { ImapConnection } from "../types/email.types.js";
+import type { ImapConnection, SmtpConnection } from "../types/email.types.js";
 
 export interface ServerConfig {
   email: ImapConnection;
+  smtp: SmtpConnection;
   calendar: CalDavConnection;
   cache: CacheConfig;
   debug: boolean;
@@ -23,6 +24,13 @@ export function loadConfig(): ServerConfig {
       host: process.env.MAILBOX_IMAP_HOST || "imap.mailbox.org",
       port: Number.parseInt(process.env.MAILBOX_IMAP_PORT || "993", 10),
       secure: process.env.MAILBOX_IMAP_SECURE !== "false",
+      user: process.env.MAILBOX_EMAIL!,
+      password: process.env.MAILBOX_PASSWORD!,
+    },
+    smtp: {
+      host: process.env.MAILBOX_SMTP_HOST || "smtp.mailbox.org",
+      port: Number.parseInt(process.env.MAILBOX_SMTP_PORT || "587", 10),
+      secure: process.env.MAILBOX_SMTP_SECURE !== "false",
       user: process.env.MAILBOX_EMAIL!,
       password: process.env.MAILBOX_PASSWORD!,
     },

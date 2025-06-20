@@ -58,3 +58,40 @@ export interface ImapConnection {
   user: string;
   password: string;
 }
+
+export interface SmtpConnection {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password: string;
+}
+
+export interface EmailComposition {
+  to: Array<{ name?: string; address: string }>;
+  cc?: Array<{ name?: string; address: string }>;
+  bcc?: Array<{ name?: string; address: string }>;
+  subject: string;
+  text?: string;
+  html?: string;
+  attachments?: Array<{
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+  }>;
+}
+
+export interface EmailFolder {
+  name: string;
+  path: string;
+  delimiter: string;
+  flags: string[];
+  specialUse?: string;
+}
+
+export interface EmailOperationResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  uid?: number;
+}

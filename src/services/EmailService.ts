@@ -2,7 +2,10 @@ import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
+  EmailComposition,
+  EmailFolder,
   EmailMessage,
+  EmailOperationResult,
   EmailSearchOptions,
   EmailThread,
   ImapConnection,
@@ -480,5 +483,257 @@ export class EmailService {
       participants: [...baseMessage.from, ...baseMessage.to],
       lastActivity: baseMessage.date,
     };
+  }
+
+  async getFolders(): Promise<EmailFolder[]> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      const folders = await this.client!.list();
+
+      return folders.map((folder) => ({
+        name: folder.name,
+        path: folder.path,
+        delimiter: folder.delimiter || "/",
+        flags: folder.flags || [],
+        specialUse: folder.specialUse,
+      }));
+    } catch (error) {
+      console.error("Error fetching folders:", error);
+      throw error;
+    }
+  }
+
+  async moveEmail(
+    uid: number,
+    fromFolder: string,
+    toFolder: string,
+  ): Promise<EmailOperationResult> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      await this.client!.mailboxOpen(fromFolder);
+      await this.client!.messageMove(`${uid}:${uid}`, toFolder, { uid: true });
+
+      // Clear cache for both folders
+      this.clearFolderCache(fromFolder);
+      this.clearFolderCache(toFolder);
+
+      return {
+        success: true,
+        message: `Email moved from ${fromFolder} to ${toFolder}`,
+      };
+    } catch (error) {
+      console.error(`Error moving email UID ${uid}:`, error);
+      return {
+        success: false,
+        message: `Failed to move email: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  async markEmail(
+    uid: number,
+    folder: string,
+    flags: string[],
+    action: "add" | "remove",
+  ): Promise<EmailOperationResult> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      await this.client!.mailboxOpen(folder);
+
+      if (action === "add") {
+        await this.client!.messageFlagsAdd(`${uid}:${uid}`, flags, {
+          uid: true,
+        });
+      } else {
+        await this.client!.messageFlagsRemove(`${uid}:${uid}`, flags, {
+          uid: true,
+        });
+      }
+
+      // Clear cache for the folder
+      this.clearFolderCache(folder);
+
+      return {
+        success: true,
+        message: `Email flags ${action === "add" ? "added" : "removed"} successfully`,
+      };
+    } catch (error) {
+      console.error(`Error marking email UID ${uid}:`, error);
+      return {
+        success: false,
+        message: `Failed to mark email: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  async deleteEmail(
+    uid: number,
+    folder: string,
+    permanent = false,
+  ): Promise<EmailOperationResult> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      await this.client!.mailboxOpen(folder);
+
+      if (permanent) {
+        // Add deleted flag and expunge
+        await this.client!.messageFlagsAdd(`${uid}:${uid}`, ["\\Deleted"], {
+          uid: true,
+        });
+        await this.client!.expunge();
+      } else {
+        // Move to Trash folder
+        try {
+          await this.client!.messageMove(`${uid}:${uid}`, "Trash", {
+            uid: true,
+          });
+        } catch (moveError) {
+          // If Trash folder doesn't exist, try other common names
+          const trashFolders = ["Deleted Items", "Deleted", "INBOX.Trash"];
+          let moved = false;
+
+          for (const trashFolder of trashFolders) {
+            try {
+              await this.client!.messageMove(`${uid}:${uid}`, trashFolder, {
+                uid: true,
+              });
+              moved = true;
+              break;
+            } catch (error) {
+              // Continue to next folder
+            }
+          }
+
+          if (!moved) {
+            // If no trash folder found, mark as deleted
+            await this.client!.messageFlagsAdd(`${uid}:${uid}`, ["\\Deleted"], {
+              uid: true,
+            });
+          }
+        }
+      }
+
+      // Clear cache for the folder
+      this.clearFolderCache(folder);
+
+      return {
+        success: true,
+        message: permanent
+          ? "Email permanently deleted"
+          : "Email moved to trash",
+      };
+    } catch (error) {
+      console.error(`Error deleting email UID ${uid}:`, error);
+      return {
+        success: false,
+        message: `Failed to delete email: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  async createDraft(
+    composition: EmailComposition,
+    folder = "Drafts",
+  ): Promise<EmailOperationResult> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      // Create email content
+      const emailContent = this.buildEmailContent(composition);
+
+      // Append to drafts folder
+      const result = await this.client!.append(folder, emailContent, [
+        "\\Draft",
+      ]);
+
+      // Clear cache for the drafts folder
+      this.clearFolderCache(folder);
+
+      return {
+        success: true,
+        message: "Draft saved successfully",
+        uid: result.uid,
+      };
+    } catch (error) {
+      console.error("Error creating draft:", error);
+      return {
+        success: false,
+        message: `Failed to create draft: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  private buildEmailContent(composition: EmailComposition): string {
+    const headers: string[] = [];
+
+    // Add recipients
+    headers.push(`To: ${this.formatAddressesForHeader(composition.to)}`);
+
+    if (composition.cc && composition.cc.length > 0) {
+      headers.push(`CC: ${this.formatAddressesForHeader(composition.cc)}`);
+    }
+
+    if (composition.bcc && composition.bcc.length > 0) {
+      headers.push(`BCC: ${this.formatAddressesForHeader(composition.bcc)}`);
+    }
+
+    headers.push(`Subject: ${composition.subject}`);
+    headers.push(`Date: ${new Date().toUTCString()}`);
+    headers.push(
+      `Message-ID: <${Date.now()}.${Math.random()}@${this.connection.host}>`,
+    );
+
+    if (composition.html) {
+      headers.push("Content-Type: text/html; charset=utf-8");
+    } else {
+      headers.push("Content-Type: text/plain; charset=utf-8");
+    }
+
+    const content = composition.html || composition.text || "";
+
+    return `${headers.join("\r\n")}\r\n\r\n${content}`;
+  }
+
+  private formatAddressesForHeader(
+    addresses: Array<{ name?: string; address: string }>,
+  ): string {
+    return addresses
+      .map((addr) => {
+        if (addr.name) {
+          return `"${addr.name}" <${addr.address}>`;
+        }
+        return addr.address;
+      })
+      .join(", ");
+  }
+
+  private clearFolderCache(folder: string): void {
+    // Clear all cache entries that might be affected by folder changes
+    const keysToDelete: string[] = [];
+
+    // This is a simple implementation - in a more sophisticated cache,
+    // you'd want to track keys by folder
+    for (let i = 0; i < 1000; i++) {
+      const searchKey = `email_search:${JSON.stringify({ folder })}`;
+      if (this.cache.has && this.cache.has(searchKey)) {
+        keysToDelete.push(searchKey);
+      }
+    }
+
+    keysToDelete.forEach((key) => this.cache.delete(key));
   }
 }
