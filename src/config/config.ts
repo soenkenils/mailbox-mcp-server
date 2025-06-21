@@ -29,7 +29,7 @@ export function loadConfig(): ServerConfig {
     },
     smtp: {
       host: process.env.MAILBOX_SMTP_HOST || "smtp.mailbox.org",
-      port: Number.parseInt(process.env.MAILBOX_SMTP_PORT || "587", 10),
+      port: Number.parseInt(process.env.MAILBOX_SMTP_PORT || "465", 10),
       secure: process.env.MAILBOX_SMTP_SECURE !== "false",
       user: process.env.MAILBOX_EMAIL!,
       password: process.env.MAILBOX_PASSWORD!,
