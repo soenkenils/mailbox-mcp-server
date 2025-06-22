@@ -1,4 +1,13 @@
-import { type Mock, beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
+import {
+  type Mock,
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { CalDavConnection } from "../src/types/calendar.types.js";
 

@@ -1,6 +1,9 @@
 import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import { SmtpService } from "../src/services/SmtpService.js";
-import type { EmailComposition, SmtpConnection } from "../src/types/email.types.js";
+import type {
+  EmailComposition,
+  SmtpConnection,
+} from "../src/types/email.types.js";
 
 // Mock factories for cleaner test setup
 const createMockSmtpConnection = (
@@ -42,24 +45,24 @@ describe("SmtpService", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     // Setup mock functions
     mockSendMail = vi.fn();
     mockVerify = vi.fn();
     mockClose = vi.fn();
-    
+
     // Setup mock transporter
     const mockTransporter = {
       sendMail: mockSendMail,
       verify: mockVerify,
       close: mockClose,
     };
-    
+
     (nodemailer.createTransport as Mock).mockReturnValue(mockTransporter);
-    
+
     mockConnection = createMockSmtpConnection();
     smtpService = new SmtpService(mockConnection);
-    
+
     // Setup default successful responses
     mockSendMail.mockResolvedValue({
       messageId: "test-message-id-123",
@@ -77,13 +80,13 @@ describe("SmtpService", () => {
   describe("sendEmail", () => {
     it("should send email successfully", async () => {
       const composition = createMockEmailComposition();
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe("Email sent successfully");
       expect(result.messageId).toBe("test-message-id-123");
-      
+
       expect(nodemailer.createTransport).toHaveBeenCalledWith({
         host: "smtp.example.com",
         port: 587,
@@ -102,7 +105,7 @@ describe("SmtpService", () => {
           name: "Test",
           address: "test@example.com",
         },
-        to: "\"John Doe\" <john@example.com>",
+        to: '"John Doe" <john@example.com>',
         cc: undefined,
         bcc: undefined,
         subject: "Test Subject",
@@ -117,14 +120,14 @@ describe("SmtpService", () => {
         cc: [{ name: "Jane Smith", address: "jane@example.com" }],
         bcc: [{ address: "secret@example.com" }],
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          cc: "\"Jane Smith\" <jane@example.com>",
+          cc: '"Jane Smith" <jane@example.com>',
           bcc: "secret@example.com",
-        })
+        }),
       );
     });
 
@@ -132,13 +135,13 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition({
         html: "<h1>Test HTML Email</h1>",
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
           html: "<h1>Test HTML Email</h1>",
-        })
+        }),
       );
     });
 
@@ -152,7 +155,7 @@ describe("SmtpService", () => {
           },
         ],
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
@@ -164,7 +167,7 @@ describe("SmtpService", () => {
               contentType: "text/plain",
             },
           ],
-        })
+        }),
       );
     });
 
@@ -175,13 +178,13 @@ describe("SmtpService", () => {
           { address: "jane@example.com" },
         ],
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: "\"John Doe\" <john@example.com>, jane@example.com",
-        })
+          to: '"John Doe" <john@example.com>, jane@example.com',
+        }),
       );
     });
 
@@ -189,18 +192,20 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition();
       const error = new Error("SMTP connection failed");
       mockSendMail.mockRejectedValue(error);
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe("Failed to send email: SMTP connection failed");
+      expect(result.message).toBe(
+        "Failed to send email: SMTP connection failed",
+      );
       expect(result.messageId).toBeUndefined();
     });
 
     it("should handle non-Error exceptions", async () => {
       const composition = createMockEmailComposition();
       mockSendMail.mockRejectedValue("String error");
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(false);
@@ -213,7 +218,7 @@ describe("SmtpService", () => {
       });
       const service = new SmtpService(connection);
       const composition = createMockEmailComposition();
-      
+
       await service.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
@@ -222,7 +227,7 @@ describe("SmtpService", () => {
             name: "John Doe",
             address: "john.doe@example.com",
           },
-        })
+        }),
       );
     });
 
@@ -232,7 +237,7 @@ describe("SmtpService", () => {
       });
       const service = new SmtpService(connection);
       const composition = createMockEmailComposition();
-      
+
       await service.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
@@ -241,7 +246,7 @@ describe("SmtpService", () => {
             name: "First Last Name",
             address: "first_last-name@example.com",
           },
-        })
+        }),
       );
     });
   });
@@ -256,7 +261,7 @@ describe("SmtpService", () => {
 
     it("should handle verification failure", async () => {
       mockVerify.mockRejectedValue(new Error("Connection failed"));
-      
+
       const result = await smtpService.verifyConnection();
 
       expect(result).toBe(false);
@@ -271,30 +276,27 @@ describe("SmtpService", () => {
           { name: "Jane Smith", address: "jane@example.com" },
         ],
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: "\"John Doe\" <john@example.com>, \"Jane Smith\" <jane@example.com>",
-        })
+          to: '"John Doe" <john@example.com>, "Jane Smith" <jane@example.com>',
+        }),
       );
     });
 
     it("should format addresses without names correctly", async () => {
       const composition = createMockEmailComposition({
-        to: [
-          { address: "john@example.com" },
-          { address: "jane@example.com" },
-        ],
+        to: [{ address: "john@example.com" }, { address: "jane@example.com" }],
       });
-      
+
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: "john@example.com, jane@example.com",
-        })
+        }),
       );
     });
   });
@@ -303,7 +305,7 @@ describe("SmtpService", () => {
     it("should reuse transporter for multiple emails", async () => {
       const composition1 = createMockEmailComposition({ subject: "Email 1" });
       const composition2 = createMockEmailComposition({ subject: "Email 2" });
-      
+
       await smtpService.sendEmail(composition1);
       await smtpService.sendEmail(composition2);
 
@@ -317,7 +319,7 @@ describe("SmtpService", () => {
     it("should close transporter connection", async () => {
       // First create a transporter by sending an email
       await smtpService.sendEmail(createMockEmailComposition());
-      
+
       await smtpService.close();
 
       expect(mockClose).toHaveBeenCalled();
@@ -333,10 +335,10 @@ describe("SmtpService", () => {
       // Send email to create transporter
       await smtpService.sendEmail(createMockEmailComposition());
       expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
-      
+
       // Close connection
       await smtpService.close();
-      
+
       // Send another email - should create new transporter
       await smtpService.sendEmail(createMockEmailComposition());
       expect(nodemailer.createTransport).toHaveBeenCalledTimes(2);
@@ -348,7 +350,7 @@ describe("SmtpService", () => {
       (nodemailer.createTransport as Mock).mockImplementationOnce(() => {
         throw new Error("Failed to create transporter");
       });
-      
+
       const composition = createMockEmailComposition();
       const result = await smtpService.sendEmail(composition);
 
@@ -358,17 +360,19 @@ describe("SmtpService", () => {
 
     it("should handle authentication errors", async () => {
       mockSendMail.mockRejectedValue(new Error("535 Authentication failed"));
-      
+
       const composition = createMockEmailComposition();
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe("Failed to send email: 535 Authentication failed");
+      expect(result.message).toBe(
+        "Failed to send email: 535 Authentication failed",
+      );
     });
 
     it("should handle network timeouts", async () => {
       mockSendMail.mockRejectedValue(new Error("Connection timeout"));
-      
+
       const composition = createMockEmailComposition();
       const result = await smtpService.sendEmail(composition);
 
@@ -384,7 +388,7 @@ describe("SmtpService", () => {
         subject: "",
         text: "",
       };
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(true);
@@ -393,7 +397,7 @@ describe("SmtpService", () => {
           to: "",
           subject: "",
           text: "",
-        })
+        }),
       );
     });
 
@@ -402,14 +406,14 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition({
         text: longContent,
       });
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(true);
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
           text: longContent,
-        })
+        }),
       );
     });
 
@@ -418,7 +422,7 @@ describe("SmtpService", () => {
         subject: "Test with émojis 🎉 and spécial chäractërs",
         text: "Content with unicode: 你好世界",
       });
-      
+
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(true);
