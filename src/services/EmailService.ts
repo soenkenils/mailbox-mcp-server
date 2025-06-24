@@ -497,7 +497,7 @@ export class EmailService {
         name: folder.name,
         path: folder.path,
         delimiter: folder.delimiter || "/",
-        flags: folder.flags || [],
+        flags: Array.isArray(folder.flags) ? folder.flags : [],
         specialUse: folder.specialUse,
       }));
     } catch (error) {

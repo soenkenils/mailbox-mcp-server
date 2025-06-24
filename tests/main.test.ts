@@ -18,12 +18,12 @@ describe("main.ts module structure and logic", () => {
 
       // Verify all tools are present
       expect(expectedEmailTools).toHaveLength(9);
-      
+
       // Verify specific tools exist
       expect(expectedEmailTools).toContain("search_emails");
       expect(expectedEmailTools).toContain("send_email");
       expect(expectedEmailTools).toContain("get_folders");
-      
+
       // Verify calendar tools are not included
       expect(expectedEmailTools).not.toContain("get_calendar_events");
       expect(expectedEmailTools).not.toContain("search_calendar");
@@ -33,18 +33,18 @@ describe("main.ts module structure and logic", () => {
       // Test the hardcoded calendar tool list from main.ts isCalendarTool method
       const expectedCalendarTools = [
         "get_calendar_events",
-        "search_calendar", 
-        "get_free_busy"
+        "search_calendar",
+        "get_free_busy",
       ];
 
       // Verify all tools are present
       expect(expectedCalendarTools).toHaveLength(3);
-      
+
       // Verify specific tools exist
       expect(expectedCalendarTools).toContain("get_calendar_events");
       expect(expectedCalendarTools).toContain("search_calendar");
       expect(expectedCalendarTools).toContain("get_free_busy");
-      
+
       // Verify email tools are not included
       expect(expectedCalendarTools).not.toContain("search_emails");
       expect(expectedCalendarTools).not.toContain("send_email");
@@ -82,7 +82,7 @@ describe("main.ts module structure and logic", () => {
       ];
 
       // Test that these messages follow consistent patterns
-      expectedErrorMessages.forEach(message => {
+      expectedErrorMessages.forEach((message) => {
         expect(typeof message).toBe("string");
         expect(message.length).toBeGreaterThan(0);
       });
@@ -93,13 +93,13 @@ describe("main.ts module structure and logic", () => {
     it("should define consistent debug message formats", () => {
       const expectedDebugMessages = [
         "Configuration loaded successfully",
-        "Services initialized successfully", 
+        "Services initialized successfully",
         "Mailbox MCP Server started successfully",
         "Cleanup completed",
       ];
 
       // Test that these messages follow consistent patterns
-      expectedDebugMessages.forEach(message => {
+      expectedDebugMessages.forEach((message) => {
         expect(typeof message).toBe("string");
         expect(message.length).toBeGreaterThan(0);
       });
@@ -110,7 +110,7 @@ describe("main.ts module structure and logic", () => {
     it("should handle expected process signals", () => {
       const expectedSignals = ["SIGINT", "SIGTERM"];
 
-      expectedSignals.forEach(signal => {
+      expectedSignals.forEach((signal) => {
         expect(typeof signal).toBe("string");
         expect(signal.startsWith("SIG")).toBe(true);
       });
@@ -125,7 +125,7 @@ describe("main.ts module structure and logic", () => {
         "@modelcontextprotocol/sdk/types.js",
       ];
 
-      requiredSDKModules.forEach(module => {
+      requiredSDKModules.forEach((module) => {
         expect(typeof module).toBe("string");
         expect(module.includes("@modelcontextprotocol")).toBe(true);
       });
@@ -142,7 +142,7 @@ describe("main.ts module structure and logic", () => {
         "./tools/emailTools.js",
       ];
 
-      requiredLocalModules.forEach(module => {
+      requiredLocalModules.forEach((module) => {
         expect(typeof module).toBe("string");
         expect(module.startsWith("./")).toBe(true);
         expect(module.endsWith(".js")).toBe(true);
@@ -155,7 +155,7 @@ describe("main.ts module structure and logic", () => {
       const emailTools = [
         "search_emails",
         "get_email",
-        "get_email_thread", 
+        "get_email_thread",
         "send_email",
         "create_draft",
         "move_email",
@@ -181,7 +181,11 @@ describe("main.ts module structure and logic", () => {
     });
 
     it("should route calendar tools correctly", () => {
-      const calendarTools = ["get_calendar_events", "search_calendar", "get_free_busy"];
+      const calendarTools = [
+        "get_calendar_events",
+        "search_calendar",
+        "get_free_busy",
+      ];
 
       // Simulate the isCalendarTool logic
       const isCalendarTool = (toolName: string): boolean => {
@@ -201,13 +205,26 @@ describe("main.ts module structure and logic", () => {
 
     it("should handle unknown tools", () => {
       const emailTools = [
-        "search_emails", "get_email", "get_email_thread", "send_email",
-        "create_draft", "move_email", "mark_email", "delete_email", "get_folders",
+        "search_emails",
+        "get_email",
+        "get_email_thread",
+        "send_email",
+        "create_draft",
+        "move_email",
+        "mark_email",
+        "delete_email",
+        "get_folders",
       ];
-      const calendarTools = ["get_calendar_events", "search_calendar", "get_free_busy"];
+      const calendarTools = [
+        "get_calendar_events",
+        "search_calendar",
+        "get_free_busy",
+      ];
 
       const isKnownTool = (toolName: string): boolean => {
-        return emailTools.includes(toolName) || calendarTools.includes(toolName);
+        return (
+          emailTools.includes(toolName) || calendarTools.includes(toolName)
+        );
       };
 
       // Test unknown tools return false
@@ -236,11 +253,16 @@ describe("main.ts module structure and logic", () => {
         };
       };
 
-      const errorResponse = formatErrorResponse("test_tool", "Something went wrong");
-      
+      const errorResponse = formatErrorResponse(
+        "test_tool",
+        "Something went wrong",
+      );
+
       expect(errorResponse.content).toHaveLength(1);
       expect(errorResponse.content[0].type).toBe("text");
-      expect(errorResponse.content[0].text).toBe("Error executing test_tool: Something went wrong");
+      expect(errorResponse.content[0].text).toBe(
+        "Error executing test_tool: Something went wrong",
+      );
       expect(errorResponse.isError).toBe(true);
     });
   });
@@ -258,7 +280,7 @@ describe("main.ts module structure and logic", () => {
       expect(exitCodes.configError).toBe(1);
       expect(exitCodes.serviceInitError).toBe(1);
       expect(exitCodes.serverStartError).toBe(1);
-      
+
       // Normal exit should be 0
       expect(exitCodes.normalExit).toBe(0);
     });
