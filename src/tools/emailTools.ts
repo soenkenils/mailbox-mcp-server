@@ -304,6 +304,26 @@ export function createEmailTools(
         additionalProperties: false,
       },
     },
+    {
+      name: "create_directory",
+      description: "Create a new email folder/directory",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Name of the folder to create",
+          },
+          parentPath: {
+            type: "string",
+            description: "Parent folder path (optional, defaults to root)",
+            default: "",
+          },
+        },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -597,6 +617,25 @@ export async function handleEmailTool(
                 .join("\n---\n")}`,
             },
           ],
+        };
+      }
+
+      case "create_directory": {
+        const result = await emailService.createDirectory(
+          args.name,
+          args.parentPath || "",
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: result.success
+                ? `✅ Directory created successfully!\n\n**Name:** ${args.name}\n**Parent:** ${args.parentPath || "Root"}`
+                : `❌ Failed to create directory: ${result.message}`,
+            },
+          ],
+          isError: !result.success,
         };
       }
 

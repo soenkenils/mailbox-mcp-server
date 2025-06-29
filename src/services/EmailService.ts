@@ -756,4 +756,38 @@ export class EmailService {
       return false;
     }
   }
+
+  async createDirectory(
+    name: string,
+    parentPath = "",
+  ): Promise<EmailOperationResult> {
+    let wrapper: ImapConnectionWrapper | null = null;
+
+    try {
+      wrapper = await this.pool.acquire();
+
+      // Construct the full folder path
+      const folderPath = parentPath
+        ? `${parentPath}${wrapper.connection.delimiter || "/"}${name}`
+        : name;
+
+      // Create the folder using IMAP CREATE command
+      await wrapper.connection.mailboxCreate(folderPath);
+
+      return {
+        success: true,
+        message: `Directory '${name}' created successfully`,
+      };
+    } catch (error) {
+      console.error(`Error creating directory '${name}':`, error);
+      return {
+        success: false,
+        message: `Failed to create directory: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    } finally {
+      if (wrapper) {
+        await this.pool.release(wrapper);
+      }
+    }
+  }
 }

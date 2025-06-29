@@ -60,7 +60,7 @@ describe("Integration Tests", () => {
       const emailTools = createEmailTools(mockEmailService);
       const calendarTools = createCalendarTools(mockCalendarService);
 
-      expect(emailTools).toHaveLength(9);
+      expect(emailTools).toHaveLength(10);
       expect(calendarTools).toHaveLength(3);
 
       const allToolNames = [...emailTools, ...calendarTools].map((t) => t.name);
@@ -74,6 +74,7 @@ describe("Integration Tests", () => {
         "mark_email",
         "delete_email",
         "get_folders",
+        "create_directory",
         "get_calendar_events",
         "search_calendar",
         "get_free_busy",

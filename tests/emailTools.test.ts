@@ -22,7 +22,7 @@ describe("Email Tools", () => {
     it("should create all email tools", () => {
       const tools = createEmailTools(mockEmailService);
 
-      expect(tools).toHaveLength(9);
+      expect(tools).toHaveLength(10);
       expect(tools.map((t) => t.name)).toEqual([
         "search_emails",
         "get_email",
@@ -33,6 +33,7 @@ describe("Email Tools", () => {
         "mark_email",
         "delete_email",
         "get_folders",
+        "create_directory",
       ]);
     });
 
@@ -183,6 +184,79 @@ describe("Email Tools", () => {
         );
         expect(result.content[0].text).toContain("Test Subject");
         expect(result.content[0].text).toContain("**Messages:** 1");
+      });
+    });
+
+    describe("create_directory", () => {
+      beforeEach(() => {
+        mockEmailService.createDirectory = vi.fn();
+      });
+
+      it("should handle create_directory tool", async () => {
+        vi.mocked(mockEmailService.createDirectory).mockResolvedValue({
+          success: true,
+          message: "Directory created successfully",
+        });
+
+        const result = await handleEmailTool(
+          "create_directory",
+          {
+            name: "MyNewFolder",
+            parentPath: "INBOX",
+          },
+          mockEmailService,
+        );
+
+        expect(mockEmailService.createDirectory).toHaveBeenCalledWith(
+          "MyNewFolder",
+          "INBOX",
+        );
+        expect(result.content[0].text).toContain(
+          "✅ Directory created successfully!",
+        );
+        expect(result.content[0].text).toContain("MyNewFolder");
+        expect(result.isError).toBe(false);
+      });
+
+      it("should handle create_directory with default parent", async () => {
+        vi.mocked(mockEmailService.createDirectory).mockResolvedValue({
+          success: true,
+          message: "Directory created successfully",
+        });
+
+        const result = await handleEmailTool(
+          "create_directory",
+          {
+            name: "MyNewFolder",
+          },
+          mockEmailService,
+        );
+
+        expect(mockEmailService.createDirectory).toHaveBeenCalledWith(
+          "MyNewFolder",
+          "",
+        );
+      });
+
+      it("should handle create_directory failure", async () => {
+        vi.mocked(mockEmailService.createDirectory).mockResolvedValue({
+          success: false,
+          message: "Folder already exists",
+        });
+
+        const result = await handleEmailTool(
+          "create_directory",
+          {
+            name: "ExistingFolder",
+          },
+          mockEmailService,
+        );
+
+        expect(result.content[0].text).toContain(
+          "❌ Failed to create directory",
+        );
+        expect(result.content[0].text).toContain("Folder already exists");
+        expect(result.isError).toBe(true);
       });
     });
 
