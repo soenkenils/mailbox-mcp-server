@@ -153,9 +153,14 @@ class MailboxMcpServer {
 
 #### Connection Efficiency
 
-**Smart API usage**:
+**Robust Connection Pooling Architecture**:
 
-- Connection pooling for IMAP/CalDAV
+- **Multi-Protocol Support**: Dedicated pools for SMTP, IMAP, and CalDAV connections
+- **Health Monitoring**: Continuous validation and automatic recovery from failed connections
+- **Intelligent Reuse**: Connection-specific optimizations (folder awareness for IMAP, verification timing for SMTP)
+- **Configurable Scaling**: Min/max connection limits with automatic scaling based on demand
+- **Retry Logic**: Exponential backoff and automatic retry for failed connection attempts
+- **Performance Metrics**: Real-time monitoring of pool status, failures, and resource utilization
 - Cache to reduce redundant requests
 - Basic rate limiting protection
 
@@ -293,7 +298,8 @@ The development environment leverages modern tooling for optimal developer exper
 **Core Dependencies (Implemented)**:
 
 - **@modelcontextprotocol/sdk**: MCP protocol implementation
-- **imapflow**: IMAP client for email access
+- **imapflow**: IMAP client for email access with connection pooling support
+- **nodemailer**: SMTP client for email sending with connection pooling
 - **mailparser**: Email message parsing and content extraction
 - **tsdav**: CalDAV client for calendar access
 - **dayjs**: Date manipulation and timezone handling
@@ -323,6 +329,37 @@ The session cache provides temporary storage for API responses to improve perfor
 **Service Integration**:
 Each service (Email, Calendar, Contacts) integrates with the session cache using service-specific cache keys and TTL values. The cache provides transparent performance improvements without affecting the real-time nature of data access.
 
+### Connection Pooling Architecture
+
+**Enterprise-Grade Connection Management**:
+
+The system implements a sophisticated three-tier connection pooling architecture designed for performance, reliability, and resource efficiency.
+
+**Base ConnectionPool Class**:
+- **Generic Pool Management**: Type-safe connection wrapper management for any connection type
+- **Health Monitoring**: Continuous background validation with configurable intervals
+- **Retry Logic**: Exponential backoff with configurable max attempts and delay intervals
+- **Metrics Collection**: Real-time monitoring of pool status, errors, and resource utilization
+- **Graceful Lifecycle**: Proper connection cleanup on shutdown with timeout handling
+
+**SMTP Connection Pool Specialization**:
+- **Verification Timing Control**: Intelligent verification scheduling based on last verified timestamp
+- **Failure Tracking**: Per-connection failure count with automatic destruction after threshold
+- **Transport Optimization**: Nodemailer transport configuration optimized for pooling
+- **Performance Metrics**: SMTP-specific metrics including verification failures and timing
+
+**IMAP Connection Pool Specialization**:
+- **Folder-Aware Pooling**: Connections maintain selected folder state for optimization
+- **Smart Folder Switching**: Automatic folder selection with connection reuse
+- **State Management**: Automatic cleanup of folder state for unhealthy connections
+- **Invalidation Patterns**: Folder-specific connection invalidation for cache coherency
+
+**Configuration Management**:
+- **Environment-Based Config**: All pool settings configurable via environment variables
+- **Sensible Defaults**: Production-ready defaults with development-friendly overrides
+- **Resource Limits**: Configurable min/max connections, timeouts, and resource bounds
+- **Monitoring Integration**: Built-in metrics collection for operational visibility
+
 **No Database Dependencies**:
 
 - No schema files, migrations, or database setup required
@@ -337,14 +374,15 @@ This simplified MCP server provides secure, real-time access to mailbox.org emai
 
 **Key Design Principles**:
 
-- **Simple Architecture**: Direct API access without complex persistence layers
-- **Real-time Data**: Always current information from mailbox.org
+- **Simple Architecture**: Direct API access with intelligent connection pooling for performance
+- **Real-time Data**: Always current information from mailbox.org with connection reuse optimization
+- **Enterprise Reliability**: Robust connection management with health monitoring and automatic recovery
 - **Session-only Caching**: Performance benefits without storage complexity  
 - **Privacy-first**: All processing local, no persistent data storage
 - **Easy Deployment**: Standard npm package with minimal setup requirements
-- **Maintainable Code**: Clean, focused implementation without over-engineering
+- **Maintainable Code**: Clean, focused implementation with production-grade connection management
 
-The solution eliminates common complexity sources like database management, synchronization logic, and complex caching strategies while providing all essential email and calendar functionality needed for Claude Desktop integration.
+The solution eliminates common complexity sources like database management and synchronization logic while providing enterprise-grade connection management and all essential email and calendar functionality needed for Claude Desktop integration.
 
 ---
 

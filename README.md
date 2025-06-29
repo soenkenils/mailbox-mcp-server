@@ -21,6 +21,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Email deletion** - trash or permanent removal
 
 **Performance:**
+- ✅ **Connection pooling** for SMTP and IMAP with health monitoring
 - ✅ **Session-based caching** for improved performance
 
 ### **Calendar Integration (CalDAV)**
@@ -30,6 +31,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Free/busy time checking** for scheduling
 - ✅ **Multi-calendar support** and aggregation
 - ✅ **Recurring events** and exception handling
+- ✅ **Connection pooling** for CalDAV with automatic retry logic
 - ✅ **Session-based caching** for improved performance
 
 ## Requirements
@@ -150,9 +152,30 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 #### **Optional Cache Configuration**
 
 - `CACHE_EMAIL_SEARCH_TTL`: Email search cache TTL in ms (default: `300000`)
-- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`)
+- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`) 
 - `CACHE_CALENDAR_EVENTS_TTL`: Calendar events cache TTL in ms (default: `900000`)
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
+
+#### **Optional Connection Pool Configuration**
+
+**SMTP Connection Pool:**
+- `SMTP_POOL_MIN_CONNECTIONS`: Minimum SMTP connections (default: `1`)
+- `SMTP_POOL_MAX_CONNECTIONS`: Maximum SMTP connections (default: `3`)
+- `SMTP_POOL_ACQUIRE_TIMEOUT_MS`: Connection acquire timeout (default: `5000`)
+- `SMTP_POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
+- `SMTP_POOL_VERIFICATION_INTERVAL_MS`: Verification interval (default: `300000`)
+- `SMTP_POOL_MAX_VERIFICATION_FAILURES`: Max verification failures (default: `3`)
+
+**IMAP Connection Pool:**
+- `IMAP_POOL_MIN_CONNECTIONS`: Minimum IMAP connections (default: `1`)
+- `IMAP_POOL_MAX_CONNECTIONS`: Maximum IMAP connections (default: `5`)
+- `IMAP_POOL_ACQUIRE_TIMEOUT_MS`: Connection acquire timeout (default: `5000`)
+- `IMAP_POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
+
+**General Pool Settings:**
+- `POOL_MAX_RETRIES`: Connection creation retry attempts (default: `3`)
+- `POOL_RETRY_DELAY_MS`: Delay between retry attempts (default: `1000`)
+- `POOL_HEALTH_CHECK_INTERVAL_MS`: Health check frequency (default: `60000`)
 
 #### **Optional Debug Configuration**
 
@@ -167,11 +190,42 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ## Security Features
 
 - ✅ **TLS encryption** for all IMAP, SMTP, CalDAV, and CardDAV connections
+- ✅ **Connection pooling with health monitoring** - automatic detection and recovery from failed connections
 - ✅ **Local-only processing** - no data sent to third parties
 - ✅ **Environment-based credentials** - no persistent storage of passwords
 - ✅ **App-specific password support** for enhanced security
 - ✅ **Session-only caching** - all data cleared on restart
 - ✅ **Privacy-first architecture** - your data stays on your machine
+
+## Architecture
+
+### **Connection Pooling**
+
+The server implements robust connection pooling for optimal performance and reliability:
+
+#### **SMTP Connection Pool**
+- **Verification Timing**: Connections are verified based on configurable intervals to avoid unnecessary overhead
+- **Failure Tracking**: Monitors connection health and automatically destroys connections after repeated failures
+- **Retry Logic**: Automatic retry with exponential backoff for failed connection attempts
+- **Metrics**: Real-time monitoring of pool status, verification failures, and connection distribution
+
+#### **IMAP Connection Pool**
+- **Folder-Aware Pooling**: Connections remember selected folders to minimize folder switching overhead
+- **Health Monitoring**: Periodic validation using IMAP NOOP commands
+- **Connection Reuse**: Intelligent reuse of connections for the same folder operations
+- **State Management**: Automatic cleanup of folder state for unhealthy connections
+
+#### **Base Pool Features**
+- **Configurable Limits**: Min/max connections, timeouts, and retry policies
+- **Health Checks**: Background monitoring and cleanup of idle/unhealthy connections
+- **Graceful Shutdown**: Proper cleanup of all connections on server termination
+- **Error Recovery**: Automatic recreation of failed connections with retry logic
+
+#### **Performance Benefits**
+- **Reduced Latency**: Connection reuse eliminates costly connection establishment overhead
+- **Better Throughput**: Multiple concurrent operations through connection pooling
+- **Resource Efficiency**: Automatic scaling based on demand within configured limits
+- **Reliability**: Health monitoring ensures only working connections are used
 
 ## Development
 
