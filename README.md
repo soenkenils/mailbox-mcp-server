@@ -158,24 +158,10 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 #### **Optional Connection Pool Configuration**
 
-**SMTP Connection Pool:**
-- `SMTP_POOL_MIN_CONNECTIONS`: Minimum SMTP connections (default: `1`)
-- `SMTP_POOL_MAX_CONNECTIONS`: Maximum SMTP connections (default: `3`)
-- `SMTP_POOL_ACQUIRE_TIMEOUT_MS`: Connection acquire timeout (default: `5000`)
-- `SMTP_POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
-- `SMTP_POOL_VERIFICATION_INTERVAL_MS`: Verification interval (default: `300000`)
-- `SMTP_POOL_MAX_VERIFICATION_FAILURES`: Max verification failures (default: `3`)
-
-**IMAP Connection Pool:**
-- `IMAP_POOL_MIN_CONNECTIONS`: Minimum IMAP connections (default: `1`)
-- `IMAP_POOL_MAX_CONNECTIONS`: Maximum IMAP connections (default: `5`)
-- `IMAP_POOL_ACQUIRE_TIMEOUT_MS`: Connection acquire timeout (default: `5000`)
-- `IMAP_POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
-
-**General Pool Settings:**
-- `POOL_MAX_RETRIES`: Connection creation retry attempts (default: `3`)
-- `POOL_RETRY_DELAY_MS`: Delay between retry attempts (default: `1000`)
-- `POOL_HEALTH_CHECK_INTERVAL_MS`: Health check frequency (default: `60000`)
+- `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `8`)
+- `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `30000`)
+- `POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
+- `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `60000`)
 
 #### **Optional Debug Configuration**
 
@@ -216,10 +202,11 @@ The server implements robust connection pooling for optimal performance and reli
 - **State Management**: Automatic cleanup of folder state for unhealthy connections
 
 #### **Base Pool Features**
-- **Configurable Limits**: Min/max connections, timeouts, and retry policies
+- **Sensible Defaults**: Production-ready configuration that works out of the box
+- **Simple Tuning**: Only 4 configuration variables for essential performance tuning
 - **Health Checks**: Background monitoring and cleanup of idle/unhealthy connections
 - **Graceful Shutdown**: Proper cleanup of all connections on server termination
-- **Error Recovery**: Automatic recreation of failed connections with retry logic
+- **Error Recovery**: Automatic recreation of failed connections with hardcoded retry logic
 
 #### **Performance Benefits**
 - **Reduced Latency**: Connection reuse eliminates costly connection establishment overhead

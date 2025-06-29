@@ -80,64 +80,46 @@ export function loadConfig(): ServerConfig {
     },
     pools: {
       imap: {
-        minConnections: Number.parseInt(
-          process.env.IMAP_POOL_MIN_CONNECTIONS || "1",
-          10,
-        ),
+        minConnections: 1, // Always 1 - no need to configure
         maxConnections: Number.parseInt(
-          process.env.IMAP_POOL_MAX_CONNECTIONS || "5",
+          process.env.POOL_MAX_CONNECTIONS || "8",
           10,
         ),
         acquireTimeoutMs: Number.parseInt(
-          process.env.IMAP_POOL_ACQUIRE_TIMEOUT || "30000",
-          10,
-        ), // 30 seconds
-        idleTimeoutMs: Number.parseInt(
-          process.env.IMAP_POOL_IDLE_TIMEOUT || "300000",
-          10,
-        ), // 5 minutes
-        maxRetries: Number.parseInt(
-          process.env.IMAP_POOL_MAX_RETRIES || "3",
+          process.env.POOL_TIMEOUT_MS || "30000",
           10,
         ),
-        retryDelayMs: Number.parseInt(
-          process.env.IMAP_POOL_RETRY_DELAY || "1000",
+        idleTimeoutMs: Number.parseInt(
+          process.env.POOL_IDLE_TIMEOUT_MS || "300000",
           10,
-        ), // 1 second
+        ),
+        maxRetries: 3, // Hardcoded - sensible default
+        retryDelayMs: 1000, // Hardcoded - sensible default
         healthCheckIntervalMs: Number.parseInt(
-          process.env.IMAP_POOL_HEALTH_CHECK_INTERVAL || "60000",
+          process.env.POOL_HEALTH_CHECK_MS || "60000",
           10,
-        ), // 1 minute
+        ),
       },
       smtp: {
-        minConnections: Number.parseInt(
-          process.env.SMTP_POOL_MIN_CONNECTIONS || "1",
-          10,
-        ),
-        maxConnections: Number.parseInt(
-          process.env.SMTP_POOL_MAX_CONNECTIONS || "3",
-          10,
-        ),
+        minConnections: 1, // Always 1 - no need to configure
+        maxConnections: Math.min(
+          3,
+          Number.parseInt(process.env.POOL_MAX_CONNECTIONS || "8", 10),
+        ), // SMTP needs fewer connections
         acquireTimeoutMs: Number.parseInt(
-          process.env.SMTP_POOL_ACQUIRE_TIMEOUT || "30000",
-          10,
-        ), // 30 seconds
-        idleTimeoutMs: Number.parseInt(
-          process.env.SMTP_POOL_IDLE_TIMEOUT || "180000",
-          10,
-        ), // 3 minutes
-        maxRetries: Number.parseInt(
-          process.env.SMTP_POOL_MAX_RETRIES || "3",
+          process.env.POOL_TIMEOUT_MS || "30000",
           10,
         ),
-        retryDelayMs: Number.parseInt(
-          process.env.SMTP_POOL_RETRY_DELAY || "1000",
+        idleTimeoutMs: Number.parseInt(
+          process.env.POOL_IDLE_TIMEOUT_MS || "300000",
           10,
-        ), // 1 second
+        ),
+        maxRetries: 3, // Hardcoded - sensible default
+        retryDelayMs: 1000, // Hardcoded - sensible default
         healthCheckIntervalMs: Number.parseInt(
-          process.env.SMTP_POOL_HEALTH_CHECK_INTERVAL || "120000",
+          process.env.POOL_HEALTH_CHECK_MS || "60000",
           10,
-        ), // 2 minutes
+        ),
       },
     },
     debug: process.env.DEBUG === "true",
