@@ -118,6 +118,7 @@ class MailboxMcpServer {
       "mark_email",
       "delete_email",
       "get_folders",
+      "create_directory",
     ].includes(toolName);
   }
 
