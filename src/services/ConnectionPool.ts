@@ -199,7 +199,7 @@ export abstract class ConnectionPool<T> {
     );
   }
 
-  private async activateConnection(
+  protected async activateConnection(
     wrapper: ConnectionWrapper<T>,
   ): Promise<ConnectionWrapper<T>> {
     // Validate connection health before activation
