@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createEmailTools } from "../src/tools/emailTools.js";
+import { createCalendarTools } from "../src/tools/calendarTools.js";
 
 describe("main.ts module structure and logic", () => {
   describe("Tool Classification Arrays", () => {
@@ -162,6 +164,7 @@ describe("main.ts module structure and logic", () => {
         "mark_email",
         "delete_email",
         "get_folders",
+        "create_directory",
       ];
 
       // Simulate the isEmailTool logic
@@ -214,6 +217,7 @@ describe("main.ts module structure and logic", () => {
         "mark_email",
         "delete_email",
         "get_folders",
+        "create_directory",
       ];
       const calendarTools = [
         "get_calendar_events",
@@ -283,6 +287,63 @@ describe("main.ts module structure and logic", () => {
 
       // Normal exit should be 0
       expect(exitCodes.normalExit).toBe(0);
+    });
+  });
+
+  describe("Tool Registration Integrity", () => {
+    it("should ensure all implemented email tools are registered in routing logic", () => {
+      const mockEmailService = {} as any;
+      const mockSmtpService = {} as any;
+      
+      // Get all implemented email tools
+      const implementedEmailTools = createEmailTools(mockEmailService, mockSmtpService);
+      const implementedEmailToolNames = implementedEmailTools.map(tool => tool.name);
+
+      // Simulate the server's isEmailTool function
+      const isEmailTool = (toolName: string): boolean => {
+        return [
+          "search_emails",
+          "get_email",
+          "get_email_thread",
+          "send_email",
+          "create_draft",
+          "move_email",
+          "mark_email",
+          "delete_email",
+          "get_folders",
+          "create_directory",
+        ].includes(toolName);
+      };
+
+      // Check that every implemented tool is registered in routing logic
+      for (const toolName of implementedEmailToolNames) {
+        expect(isEmailTool(toolName)).toBe(true);
+      }
+
+      // Verify we have the expected number of tools
+      expect(implementedEmailToolNames).toHaveLength(10);
+      expect(implementedEmailToolNames).toContain("create_directory");
+    });
+
+    it("should ensure all implemented calendar tools are registered in routing logic", () => {
+      const mockCalendarService = {} as any;
+      
+      // Get all implemented calendar tools
+      const implementedCalendarTools = createCalendarTools(mockCalendarService);
+      const implementedCalendarToolNames = implementedCalendarTools.map(tool => tool.name);
+
+      // Simulate the server's isCalendarTool function
+      const isCalendarTool = (toolName: string): boolean => {
+        return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(toolName);
+      };
+
+      // Check that every implemented tool is registered in routing logic
+      for (const toolName of implementedCalendarToolNames) {
+        expect(isCalendarTool(toolName)).toBe(true);
+      }
+
+      // Verify we have the expected number of tools
+      expect(implementedCalendarToolNames).toHaveLength(3);
     });
   });
 });
