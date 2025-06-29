@@ -1,4 +1,3 @@
-import { ImapFlow } from "imapflow";
 import { type ParsedMail, simpleParser } from "mailparser";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
@@ -10,47 +9,30 @@ import type {
   EmailThread,
   ImapConnection,
 } from "../types/email.types.js";
+import {
+  ImapConnectionPool,
+  type ImapConnectionWrapper,
+  type ImapPoolConfig,
+} from "./ImapConnectionPool.js";
 
 export class EmailService {
-  private connection: ImapConnection;
+  private pool: ImapConnectionPool;
   private cache: LocalCache;
-  private client?: ImapFlow;
 
-  constructor(connection: ImapConnection, cache: LocalCache) {
-    this.connection = connection;
+  constructor(
+    connection: ImapConnection,
+    cache: LocalCache,
+    poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
+  ) {
     this.cache = cache;
-  }
-
-  async connect(): Promise<void> {
-    this.client = new ImapFlow({
-      host: this.connection.host,
-      port: this.connection.port,
-      secure: this.connection.secure,
-      auth: {
-        user: this.connection.user,
-        pass: this.connection.password,
-      },
-      logger: false, // Disable logging for production
+    this.pool = new ImapConnectionPool({
+      ...poolConfig,
+      connectionConfig: connection,
     });
-
-    if (this.client.on && typeof this.client.on === "function") {
-      this.client.on("error", (error: Error) => {
-        console.error("IMAP connection error:", error);
-      });
-    }
-
-    await this.client.connect();
   }
 
   async disconnect(): Promise<void> {
-    if (this.client) {
-      try {
-        await this.client.logout();
-      } catch (error) {
-        console.warn("Error during logout:", error);
-      }
-      this.client = undefined;
-    }
+    await this.pool.destroy();
   }
 
   async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
@@ -61,15 +43,23 @@ export class EmailService {
       return cached;
     }
 
-    if (!this.client) {
-      await this.connect();
-    }
-
     const folder = options.folder || "INBOX";
-    const messages = await this.performEmailSearch(folder, options);
+    let wrapper: ImapConnectionWrapper | null = null;
 
-    this.cache.set(cacheKey, messages, 300000); // 5 minutes TTL
-    return messages;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const messages = await this.performEmailSearch(wrapper, options);
+
+      this.cache.set(cacheKey, messages, 300000); // 5 minutes TTL
+      return messages;
+    } catch (error) {
+      console.error("Error searching emails:", error);
+      throw error;
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
   }
 
   async getEmail(uid: number, folder = "INBOX"): Promise<EmailMessage | null> {
@@ -80,12 +70,11 @@ export class EmailService {
       return cached;
     }
 
-    try {
-      if (!this.client) {
-        await this.connect();
-      }
+    let wrapper: ImapConnectionWrapper | null = null;
 
-      const message = await this.fetchEmailByUid(uid, folder);
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const message = await this.fetchEmailByUid(wrapper, uid, folder);
 
       if (message) {
         this.cache.set(cacheKey, message, 600000); // 10 minutes TTL
@@ -94,9 +83,11 @@ export class EmailService {
       return message;
     } catch (error) {
       console.error(`Error fetching email UID ${uid}:`, error);
-      // Reset connection on error
-      this.client = undefined;
       throw error;
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
     }
   }
 
@@ -121,35 +112,31 @@ export class EmailService {
   }
 
   private async performEmailSearch(
-    folder: string,
+    wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
-    await this.ensureConnectionAndSelectFolder(folder);
-
-    const searchResult = await this.executeSearch(options);
+    const searchResult = await this.executeSearch(wrapper, options);
     if (!searchResult || searchResult.length === 0) {
       return [];
     }
 
     const paginatedResults = this.applyPagination(searchResult, options);
-    const messages = await this.fetchMessageHeaders(paginatedResults, folder);
+    const messages = await this.fetchMessageHeaders(
+      wrapper,
+      paginatedResults,
+      options.folder || "INBOX",
+    );
     const filteredMessages = this.applyInMemoryFilters(messages, options);
 
     return this.sortMessagesByDate(filteredMessages);
   }
 
-  private async ensureConnectionAndSelectFolder(folder: string): Promise<void> {
-    if (!this.client) {
-      throw new Error("IMAP connection not established");
-    }
-    await this.client.mailboxOpen(folder);
-  }
-
   private async executeSearch(
+    wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
   ): Promise<number[] | null> {
     const searchCriteria = this.buildSearchCriteria(options);
-    return await this.client?.search(searchCriteria);
+    return await wrapper.connection.search(searchCriteria);
   }
 
   private applyPagination(
@@ -162,13 +149,14 @@ export class EmailService {
   }
 
   private async fetchMessageHeaders(
+    wrapper: ImapConnectionWrapper,
     uids: number[],
     folder: string,
   ): Promise<EmailMessage[]> {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      for await (const message of this.client?.fetch(uids, {
+      for await (const message of wrapper.connection.fetch(uids, {
         envelope: true,
         uid: true,
         flags: true,
@@ -188,12 +176,12 @@ export class EmailService {
   }
 
   private async fetchEmailByUid(
+    wrapper: ImapConnectionWrapper,
     uid: number,
     folder: string,
   ): Promise<EmailMessage | null> {
     try {
-      await this.ensureConnectionAndSelectFolder(folder);
-      const rawMessage = await this.fetchRawMessageByUid(uid, folder);
+      const rawMessage = await this.fetchRawMessageByUid(wrapper, uid, folder);
 
       if (!rawMessage) {
         return null;
@@ -202,7 +190,6 @@ export class EmailService {
       const parsed = await simpleParser(rawMessage.source as Buffer);
       return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
-      this.handleFetchError(error, uid, folder);
       throw new Error(
         `Failed to fetch email with UID ${uid} from folder ${folder}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -210,10 +197,11 @@ export class EmailService {
   }
 
   private async fetchRawMessageByUid(
+    wrapper: ImapConnectionWrapper,
     uid: number,
     folder: string,
   ): Promise<any | null> {
-    for await (const msg of this.client?.fetch(
+    for await (const msg of wrapper.connection.fetch(
       `${uid}:${uid}`,
       {
         source: true,
@@ -230,21 +218,6 @@ export class EmailService {
       `Failed to fetch email with UID ${uid} from folder ${folder}`,
     );
     return null;
-  }
-
-  private handleFetchError(error: unknown, uid: number, folder: string): void {
-    if (error instanceof Error) {
-      const errorWithCode = error as Error & { code?: string };
-      if (
-        errorWithCode.code === "ECONNRESET" ||
-        errorWithCode.code === "EPIPE"
-      ) {
-        console.error(
-          `Connection error while fetching UID ${uid}: ${error.message}`,
-        );
-        this.client = undefined;
-      }
-    }
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): any {
@@ -486,12 +459,11 @@ export class EmailService {
   }
 
   async getFolders(): Promise<EmailFolder[]> {
-    try {
-      if (!this.client) {
-        await this.connect();
-      }
+    let wrapper: ImapConnectionWrapper | null = null;
 
-      const folders = await this.client!.list();
+    try {
+      wrapper = await this.pool.acquire();
+      const folders = await wrapper.connection.list();
 
       return folders.map((folder) => ({
         name: folder.name,
@@ -503,6 +475,10 @@ export class EmailService {
     } catch (error) {
       console.error("Error fetching folders:", error);
       throw error;
+    } finally {
+      if (wrapper) {
+        await this.pool.release(wrapper);
+      }
     }
   }
 
@@ -511,17 +487,21 @@ export class EmailService {
     fromFolder: string,
     toFolder: string,
   ): Promise<EmailOperationResult> {
-    try {
-      if (!this.client) {
-        await this.connect();
-      }
+    let wrapper: ImapConnectionWrapper | null = null;
 
-      await this.client!.mailboxOpen(fromFolder);
-      await this.client!.messageMove(`${uid}:${uid}`, toFolder, { uid: true });
+    try {
+      wrapper = await this.pool.acquireForFolder(fromFolder);
+      await wrapper.connection.messageMove(`${uid}:${uid}`, toFolder, {
+        uid: true,
+      });
 
       // Clear cache for both folders
       this.clearFolderCache(fromFolder);
       this.clearFolderCache(toFolder);
+
+      // Invalidate connections for the affected folders
+      await this.pool.invalidateFolderConnections(fromFolder);
+      await this.pool.invalidateFolderConnections(toFolder);
 
       return {
         success: true,
@@ -533,6 +513,10 @@ export class EmailService {
         success: false,
         message: `Failed to move email: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
     }
   }
 
@@ -542,19 +526,17 @@ export class EmailService {
     flags: string[],
     action: "add" | "remove",
   ): Promise<EmailOperationResult> {
-    try {
-      if (!this.client) {
-        await this.connect();
-      }
+    let wrapper: ImapConnectionWrapper | null = null;
 
-      await this.client!.mailboxOpen(folder);
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
 
       if (action === "add") {
-        await this.client!.messageFlagsAdd(`${uid}:${uid}`, flags, {
+        await wrapper.connection.messageFlagsAdd(`${uid}:${uid}`, flags, {
           uid: true,
         });
       } else {
-        await this.client!.messageFlagsRemove(`${uid}:${uid}`, flags, {
+        await wrapper.connection.messageFlagsRemove(`${uid}:${uid}`, flags, {
           uid: true,
         });
       }
@@ -572,6 +554,10 @@ export class EmailService {
         success: false,
         message: `Failed to mark email: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
     }
   }
 
@@ -580,23 +566,25 @@ export class EmailService {
     folder: string,
     permanent = false,
   ): Promise<EmailOperationResult> {
-    try {
-      if (!this.client) {
-        await this.connect();
-      }
+    let wrapper: ImapConnectionWrapper | null = null;
 
-      await this.client!.mailboxOpen(folder);
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
         // Add deleted flag and expunge
-        await this.client!.messageFlagsAdd(`${uid}:${uid}`, ["\\Deleted"], {
-          uid: true,
-        });
-        await this.client!.expunge();
+        await wrapper.connection.messageFlagsAdd(
+          `${uid}:${uid}`,
+          ["\\Deleted"],
+          {
+            uid: true,
+          },
+        );
+        await wrapper.connection.expunge();
       } else {
         // Move to Trash folder
         try {
-          await this.client!.messageMove(`${uid}:${uid}`, "Trash", {
+          await wrapper.connection.messageMove(`${uid}:${uid}`, "Trash", {
             uid: true,
           });
         } catch (moveError) {
@@ -606,9 +594,13 @@ export class EmailService {
 
           for (const trashFolder of trashFolders) {
             try {
-              await this.client!.messageMove(`${uid}:${uid}`, trashFolder, {
-                uid: true,
-              });
+              await wrapper.connection.messageMove(
+                `${uid}:${uid}`,
+                trashFolder,
+                {
+                  uid: true,
+                },
+              );
               moved = true;
               break;
             } catch (error) {
@@ -618,9 +610,13 @@ export class EmailService {
 
           if (!moved) {
             // If no trash folder found, mark as deleted
-            await this.client!.messageFlagsAdd(`${uid}:${uid}`, ["\\Deleted"], {
-              uid: true,
-            });
+            await wrapper.connection.messageFlagsAdd(
+              `${uid}:${uid}`,
+              ["\\Deleted"],
+              {
+                uid: true,
+              },
+            );
           }
         }
       }
@@ -640,6 +636,10 @@ export class EmailService {
         success: false,
         message: `Failed to delete email: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
     }
   }
 
@@ -647,16 +647,16 @@ export class EmailService {
     composition: EmailComposition,
     folder = "Drafts",
   ): Promise<EmailOperationResult> {
+    let wrapper: ImapConnectionWrapper | null = null;
+
     try {
-      if (!this.client) {
-        await this.connect();
-      }
+      wrapper = await this.pool.acquireForFolder(folder);
 
       // Create email content
       const emailContent = this.buildEmailContent(composition);
 
       // Append to drafts folder
-      const result = await this.client!.append(folder, emailContent, [
+      const result = await wrapper.connection.append(folder, emailContent, [
         "\\Draft",
       ]);
 
@@ -674,6 +674,10 @@ export class EmailService {
         success: false,
         message: `Failed to create draft: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
     }
   }
 
@@ -693,9 +697,7 @@ export class EmailService {
 
     headers.push(`Subject: ${composition.subject}`);
     headers.push(`Date: ${new Date().toUTCString()}`);
-    headers.push(
-      `Message-ID: <${Date.now()}.${Math.random()}@${this.connection.host}>`,
-    );
+    headers.push(`Message-ID: <${Date.now()}.${Math.random()}@mailbox.org>`);
 
     if (composition.html) {
       headers.push("Content-Type: text/html; charset=utf-8");
@@ -735,5 +737,23 @@ export class EmailService {
     }
 
     keysToDelete.forEach((key) => this.cache.delete(key));
+  }
+
+  // Pool management methods
+  getPoolMetrics() {
+    return this.pool.getImapMetrics();
+  }
+
+  async validatePoolHealth(): Promise<boolean> {
+    try {
+      const metrics = this.pool.getMetrics();
+      return (
+        metrics.totalConnections > 0 &&
+        metrics.totalErrors < metrics.totalConnections
+      );
+    } catch (error) {
+      console.error("Error checking pool health:", error);
+      return false;
+    }
   }
 }

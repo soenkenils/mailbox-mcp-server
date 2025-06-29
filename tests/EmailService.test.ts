@@ -1,4 +1,5 @@
 import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { EmailMessage, ImapConnection } from "../src/types/email.types.js";
@@ -107,7 +108,19 @@ describe("EmailService", () => {
 
     mockCache = createMockCache();
     mockConnection = createMockConnection();
-    emailService = new EmailService(mockConnection, mockCache);
+
+    // Create mock pool config
+    const mockPoolConfig: ConnectionPoolConfig = {
+      minConnections: 1,
+      maxConnections: 5,
+      acquireTimeoutMs: 30000,
+      idleTimeoutMs: 300000,
+      maxRetries: 3,
+      retryDelayMs: 1000,
+      healthCheckIntervalMs: 60000,
+    };
+
+    emailService = new EmailService(mockConnection, mockCache, mockPoolConfig);
   });
 
   describe("buildSearchCriteria", () => {

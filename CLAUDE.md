@@ -11,5 +11,6 @@
 - `pnpm run test:imap` - IMAP integration test
 
 ## Workflow
+- Try to use a TDD approach first
 - Run tests and formatting after code changes
 - Use single tests for performance

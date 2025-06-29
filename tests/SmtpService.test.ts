@@ -1,4 +1,6 @@
 import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
+import type { SmtpPoolConfig } from "../src/services/SmtpConnectionPool.js";
 import { SmtpService } from "../src/services/SmtpService.js";
 import type {
   EmailComposition,
@@ -26,19 +28,21 @@ const createMockEmailComposition = (
   ...overrides,
 });
 
-// Mock nodemailer
-vi.mock("nodemailer", () => ({
-  default: {
-    createTransport: vi.fn(),
-  },
-}));
+// Mock the SmtpConnectionPool
+vi.mock("../src/services/SmtpConnectionPool.js", () => {
+  return {
+    SmtpConnectionPool: vi.fn(),
+  };
+});
 
-// Import after mock setup
-import nodemailer from "nodemailer";
+// Import the mocked class
+import { SmtpConnectionPool } from "../src/services/SmtpConnectionPool.js";
 
 describe("SmtpService", () => {
   let smtpService: SmtpService;
   let mockConnection: SmtpConnection;
+  let mockPool: any;
+  let mockWrapper: any;
   let mockSendMail: Mock;
   let mockVerify: Mock;
   let mockClose: Mock;
@@ -51,17 +55,73 @@ describe("SmtpService", () => {
     mockVerify = vi.fn();
     mockClose = vi.fn();
 
-    // Setup mock transporter
-    const mockTransporter = {
-      sendMail: mockSendMail,
-      verify: mockVerify,
-      close: mockClose,
+    // Setup mock wrapper
+    mockWrapper = {
+      connection: {
+        sendMail: mockSendMail,
+        verify: mockVerify,
+        close: mockClose,
+      },
+      id: "mock-wrapper-id",
+      inUse: false,
+      isHealthy: true,
+      createdAt: new Date(),
+      lastUsed: new Date(),
+      verificationFailures: 0,
+      lastVerified: new Date(),
     };
 
-    (nodemailer.createTransport as Mock).mockReturnValue(mockTransporter);
-
     mockConnection = createMockSmtpConnection();
-    smtpService = new SmtpService(mockConnection);
+
+    // Create mock pool config
+    const mockPoolConfig: SmtpPoolConfig = {
+      minConnections: 1,
+      maxConnections: 3,
+      acquireTimeoutMs: 30000,
+      idleTimeoutMs: 180000,
+      maxRetries: 3,
+      retryDelayMs: 1000,
+      healthCheckIntervalMs: 120000,
+      connectionConfig: mockConnection,
+      verificationIntervalMs: 1000,
+      maxVerificationFailures: 2,
+    };
+
+    // Set up the mock pool implementation
+    (SmtpConnectionPool as any).mockImplementation(() => ({
+      acquire: vi.fn().mockResolvedValue(mockWrapper),
+      release: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      getSmtpMetrics: vi.fn().mockReturnValue({
+        totalVerificationFailures: 0,
+        connectionsNeedingVerification: 0,
+        verificationIntervalMs: 1000,
+        maxVerificationFailures: 2,
+        totalConnections: 1,
+        activeConnections: 0,
+        idleConnections: 1,
+      }),
+      getMetrics: vi.fn().mockReturnValue({
+        totalConnections: 1,
+        activeConnections: 0,
+        idleConnections: 1,
+        totalErrors: 0,
+        totalCreated: 1,
+        totalDestroyed: 0,
+        totalAcquired: 1,
+        totalReleased: 1,
+      }),
+      verifyAllConnections: vi.fn().mockResolvedValue({
+        verified: 1,
+        failed: 0,
+      }),
+      connectionConfig: mockConnection,
+    }));
+
+    smtpService = new SmtpService(mockConnection, mockPoolConfig);
+
+    // Get the mock pool instance
+    mockPool = (smtpService as any).pool;
 
     // Setup default successful responses
     mockSendMail.mockResolvedValue({
@@ -87,18 +147,9 @@ describe("SmtpService", () => {
       expect(result.message).toBe("Email sent successfully");
       expect(result.messageId).toBe("test-message-id-123");
 
-      expect(nodemailer.createTransport).toHaveBeenCalledWith({
-        host: "smtp.example.com",
-        port: 587,
-        secure: true,
-        auth: {
-          user: "test@example.com",
-          pass: "password123",
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-      });
+      // Verify pool operations
+      expect(mockPool.acquire).toHaveBeenCalled();
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
 
       expect(mockSendMail).toHaveBeenCalledWith({
         from: {
@@ -216,8 +267,26 @@ describe("SmtpService", () => {
       const connection = createMockSmtpConnection({
         user: "john.doe@example.com",
       });
-      const service = new SmtpService(connection);
+      const poolConfig: SmtpPoolConfig = {
+        minConnections: 1,
+        maxConnections: 3,
+        acquireTimeoutMs: 30000,
+        idleTimeoutMs: 180000,
+        maxRetries: 3,
+        retryDelayMs: 1000,
+        healthCheckIntervalMs: 120000,
+        connectionConfig: connection,
+        verificationIntervalMs: 1000,
+        maxVerificationFailures: 2,
+      };
+      const service = new SmtpService(connection, poolConfig);
       const composition = createMockEmailComposition();
+
+      // Setup the mock pool for this service instance
+      const servicePool = (service as any).pool;
+      servicePool.acquire.mockResolvedValue(mockWrapper);
+      servicePool.release.mockResolvedValue(undefined);
+      servicePool.connectionConfig = connection;
 
       await service.sendEmail(composition);
 
@@ -235,8 +304,26 @@ describe("SmtpService", () => {
       const connection = createMockSmtpConnection({
         user: "first_last-name@example.com",
       });
-      const service = new SmtpService(connection);
+      const poolConfig: SmtpPoolConfig = {
+        minConnections: 1,
+        maxConnections: 3,
+        acquireTimeoutMs: 30000,
+        idleTimeoutMs: 180000,
+        maxRetries: 3,
+        retryDelayMs: 1000,
+        healthCheckIntervalMs: 120000,
+        connectionConfig: connection,
+        verificationIntervalMs: 1000,
+        maxVerificationFailures: 2,
+      };
+      const service = new SmtpService(connection, poolConfig);
       const composition = createMockEmailComposition();
+
+      // Setup the mock pool for this service instance
+      const servicePool = (service as any).pool;
+      servicePool.acquire.mockResolvedValue(mockWrapper);
+      servicePool.release.mockResolvedValue(undefined);
+      servicePool.connectionConfig = connection;
 
       await service.sendEmail(composition);
 
@@ -256,6 +343,8 @@ describe("SmtpService", () => {
       const result = await smtpService.verifyConnection();
 
       expect(result).toBe(true);
+      expect(mockPool.acquire).toHaveBeenCalled();
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
       expect(mockVerify).toHaveBeenCalled();
     });
 
@@ -265,6 +354,8 @@ describe("SmtpService", () => {
       const result = await smtpService.verifyConnection();
 
       expect(result).toBe(false);
+      expect(mockPool.acquire).toHaveBeenCalled();
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
     });
   });
 
@@ -301,61 +392,40 @@ describe("SmtpService", () => {
     });
   });
 
-  describe("transporter reuse", () => {
-    it("should reuse transporter for multiple emails", async () => {
+  describe("connection pooling", () => {
+    it("should use connection pool for multiple emails", async () => {
       const composition1 = createMockEmailComposition({ subject: "Email 1" });
       const composition2 = createMockEmailComposition({ subject: "Email 2" });
 
       await smtpService.sendEmail(composition1);
       await smtpService.sendEmail(composition2);
 
-      // Should only create transporter once
-      expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
+      // Should acquire and release connections for each email
+      expect(mockPool.acquire).toHaveBeenCalledTimes(2);
+      expect(mockPool.release).toHaveBeenCalledTimes(2);
       expect(mockSendMail).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("close", () => {
-    it("should close transporter connection", async () => {
-      // First create a transporter by sending an email
-      await smtpService.sendEmail(createMockEmailComposition());
-
+    it("should close connection pool", async () => {
       await smtpService.close();
 
-      expect(mockClose).toHaveBeenCalled();
-    });
-
-    it("should handle close when no transporter exists", async () => {
-      await smtpService.close();
-
-      expect(mockClose).not.toHaveBeenCalled();
-    });
-
-    it("should allow creating new transporter after close", async () => {
-      // Send email to create transporter
-      await smtpService.sendEmail(createMockEmailComposition());
-      expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
-
-      // Close connection
-      await smtpService.close();
-
-      // Send another email - should create new transporter
-      await smtpService.sendEmail(createMockEmailComposition());
-      expect(nodemailer.createTransport).toHaveBeenCalledTimes(2);
+      expect(mockPool.destroy).toHaveBeenCalled();
     });
   });
 
   describe("error scenarios", () => {
-    it("should handle transporter creation failure", async () => {
-      (nodemailer.createTransport as Mock).mockImplementationOnce(() => {
-        throw new Error("Failed to create transporter");
-      });
+    it("should handle connection pool acquisition failure", async () => {
+      mockPool.acquire.mockRejectedValue(
+        new Error("Failed to acquire connection"),
+      );
 
       const composition = createMockEmailComposition();
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain("Failed to create transporter");
+      expect(result.message).toContain("Failed to acquire connection");
     });
 
     it("should handle authentication errors", async () => {
@@ -426,6 +496,29 @@ describe("SmtpService", () => {
       const result = await smtpService.sendEmail(composition);
 
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe("pool management methods", () => {
+    it("should return pool metrics", () => {
+      const metrics = smtpService.getPoolMetrics();
+
+      expect(mockPool.getSmtpMetrics).toHaveBeenCalled();
+      expect(metrics).toBeDefined();
+    });
+
+    it("should validate pool health", async () => {
+      const isHealthy = await smtpService.validatePoolHealth();
+
+      expect(mockPool.getMetrics).toHaveBeenCalled();
+      expect(isHealthy).toBe(true);
+    });
+
+    it("should verify all pool connections", async () => {
+      const result = await smtpService.verifyAllPoolConnections();
+
+      expect(mockPool.verifyAllConnections).toHaveBeenCalled();
+      expect(result).toEqual({ verified: 1, failed: 0 });
     });
   });
 });

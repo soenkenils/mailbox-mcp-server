@@ -76,8 +76,15 @@ class MailboxMcpServer {
   private initializeServices(): void {
     try {
       this.cache = new MemoryCache(this.config.cache);
-      this.emailService = new EmailService(this.config.email, this.cache);
-      this.smtpService = new SmtpService(this.config.smtp);
+      this.emailService = new EmailService(
+        this.config.email,
+        this.cache,
+        this.config.pools.imap,
+      );
+      this.smtpService = new SmtpService(
+        this.config.smtp,
+        this.config.pools.smtp,
+      );
       this.calendarService = new CalendarService(
         this.config.calendar,
         this.cache,
@@ -85,6 +92,14 @@ class MailboxMcpServer {
 
       if (this.config.debug) {
         console.log("Services initialized successfully");
+        console.log("IMAP Pool Config:", {
+          min: this.config.pools.imap.minConnections,
+          max: this.config.pools.imap.maxConnections,
+        });
+        console.log("SMTP Pool Config:", {
+          min: this.config.pools.smtp.minConnections,
+          max: this.config.pools.smtp.maxConnections,
+        });
       }
     } catch (error) {
       console.error("Failed to initialize services:", error);
@@ -178,12 +193,38 @@ class MailboxMcpServer {
 
   private async cleanup(): Promise<void> {
     try {
+      if (this.config.debug) {
+        console.log("Starting cleanup...");
+
+        // Log pool metrics before cleanup
+        const emailMetrics = this.emailService.getPoolMetrics();
+        const smtpMetrics = this.smtpService.getPoolMetrics();
+
+        console.log("Final IMAP Pool Metrics:", {
+          total: emailMetrics.totalConnections,
+          active: emailMetrics.activeConnections,
+          idle: emailMetrics.idleConnections,
+          acquired: emailMetrics.totalAcquired,
+          released: emailMetrics.totalReleased,
+          errors: emailMetrics.totalErrors,
+        });
+
+        console.log("Final SMTP Pool Metrics:", {
+          total: smtpMetrics.totalConnections,
+          active: smtpMetrics.activeConnections,
+          idle: smtpMetrics.idleConnections,
+          acquired: smtpMetrics.totalAcquired,
+          released: smtpMetrics.totalReleased,
+          errors: smtpMetrics.totalErrors,
+        });
+      }
+
       await this.emailService.disconnect();
       await this.smtpService.close();
       this.cache.destroy();
 
       if (this.config.debug) {
-        console.log("Cleanup completed");
+        console.log("Cleanup completed successfully");
       }
     } catch (error) {
       console.error("Error during cleanup:", error);

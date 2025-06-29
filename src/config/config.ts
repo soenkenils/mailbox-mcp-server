@@ -1,12 +1,19 @@
+import type { ConnectionPoolConfig } from "../services/ConnectionPool.js";
 import type { CacheConfig } from "../types/cache.types.js";
 import type { CalDavConnection } from "../types/calendar.types.js";
 import type { ImapConnection, SmtpConnection } from "../types/email.types.js";
+
+export interface PoolsConfig {
+  imap: ConnectionPoolConfig;
+  smtp: ConnectionPoolConfig;
+}
 
 export interface ServerConfig {
   email: ImapConnection;
   smtp: SmtpConnection;
   calendar: CalDavConnection;
   cache: CacheConfig;
+  pools: PoolsConfig;
   debug: boolean;
 }
 
@@ -70,6 +77,68 @@ export function loadConfig(): ServerConfig {
         process.env.CACHE_CLEANUP_INTERVAL || "300000",
         10,
       ), // 5 minutes
+    },
+    pools: {
+      imap: {
+        minConnections: Number.parseInt(
+          process.env.IMAP_POOL_MIN_CONNECTIONS || "1",
+          10,
+        ),
+        maxConnections: Number.parseInt(
+          process.env.IMAP_POOL_MAX_CONNECTIONS || "5",
+          10,
+        ),
+        acquireTimeoutMs: Number.parseInt(
+          process.env.IMAP_POOL_ACQUIRE_TIMEOUT || "30000",
+          10,
+        ), // 30 seconds
+        idleTimeoutMs: Number.parseInt(
+          process.env.IMAP_POOL_IDLE_TIMEOUT || "300000",
+          10,
+        ), // 5 minutes
+        maxRetries: Number.parseInt(
+          process.env.IMAP_POOL_MAX_RETRIES || "3",
+          10,
+        ),
+        retryDelayMs: Number.parseInt(
+          process.env.IMAP_POOL_RETRY_DELAY || "1000",
+          10,
+        ), // 1 second
+        healthCheckIntervalMs: Number.parseInt(
+          process.env.IMAP_POOL_HEALTH_CHECK_INTERVAL || "60000",
+          10,
+        ), // 1 minute
+      },
+      smtp: {
+        minConnections: Number.parseInt(
+          process.env.SMTP_POOL_MIN_CONNECTIONS || "1",
+          10,
+        ),
+        maxConnections: Number.parseInt(
+          process.env.SMTP_POOL_MAX_CONNECTIONS || "3",
+          10,
+        ),
+        acquireTimeoutMs: Number.parseInt(
+          process.env.SMTP_POOL_ACQUIRE_TIMEOUT || "30000",
+          10,
+        ), // 30 seconds
+        idleTimeoutMs: Number.parseInt(
+          process.env.SMTP_POOL_IDLE_TIMEOUT || "180000",
+          10,
+        ), // 3 minutes
+        maxRetries: Number.parseInt(
+          process.env.SMTP_POOL_MAX_RETRIES || "3",
+          10,
+        ),
+        retryDelayMs: Number.parseInt(
+          process.env.SMTP_POOL_RETRY_DELAY || "1000",
+          10,
+        ), // 1 second
+        healthCheckIntervalMs: Number.parseInt(
+          process.env.SMTP_POOL_HEALTH_CHECK_INTERVAL || "120000",
+          10,
+        ), // 2 minutes
+      },
     },
     debug: process.env.DEBUG === "true",
   };

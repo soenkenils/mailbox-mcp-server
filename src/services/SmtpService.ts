@@ -1,47 +1,41 @@
-import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import type {
   EmailComposition,
   EmailOperationResult,
   SmtpConnection,
 } from "../types/email.types.js";
+import {
+  SmtpConnectionPool,
+  type SmtpConnectionWrapper,
+  type SmtpPoolConfig,
+} from "./SmtpConnectionPool.js";
 
 export class SmtpService {
-  private connection: SmtpConnection;
-  private transporter?: Transporter;
+  private pool: SmtpConnectionPool;
 
-  constructor(connection: SmtpConnection) {
-    this.connection = connection;
-  }
-
-  private async getTransporter(): Promise<Transporter> {
-    if (!this.transporter) {
-      this.transporter = nodemailer.createTransport({
-        host: this.connection.host,
-        port: this.connection.port,
-        secure: this.connection.secure,
-        auth: {
-          user: this.connection.user,
-          pass: this.connection.password,
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-      });
-    }
-    return this.transporter!;
+  constructor(
+    connection: SmtpConnection,
+    poolConfig: Omit<SmtpPoolConfig, "connectionConfig">,
+  ) {
+    this.pool = new SmtpConnectionPool({
+      ...poolConfig,
+      connectionConfig: connection,
+    });
   }
 
   async sendEmail(
     composition: EmailComposition,
   ): Promise<EmailOperationResult> {
+    let wrapper: SmtpConnectionWrapper | null = null;
+
     try {
-      const transporter = await this.getTransporter();
+      wrapper = await this.pool.acquire();
+      const transporter = wrapper.connection;
 
       const mailOptions = {
         from: {
-          name: this.extractNameFromEmail(this.connection.user),
-          address: this.connection.user,
+          name: this.extractNameFromEmail(this.pool.connectionConfig.user),
+          address: this.pool.connectionConfig.user,
         },
         to: this.formatAddresses(composition.to),
         cc: composition.cc ? this.formatAddresses(composition.cc) : undefined,
@@ -71,17 +65,27 @@ export class SmtpService {
         success: false,
         message: `Failed to send email: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      if (wrapper) {
+        await this.pool.release(wrapper);
+      }
     }
   }
 
   async verifyConnection(): Promise<boolean> {
+    let wrapper: SmtpConnectionWrapper | null = null;
+
     try {
-      const transporter = await this.getTransporter();
-      await transporter.verify();
+      wrapper = await this.pool.acquire();
+      await wrapper.connection.verify();
       return true;
     } catch (error) {
       console.error("SMTP connection verification failed:", error);
       return false;
+    } finally {
+      if (wrapper) {
+        await this.pool.release(wrapper);
+      }
     }
   }
 
@@ -107,9 +111,31 @@ export class SmtpService {
   }
 
   async close(): Promise<void> {
-    if (this.transporter) {
-      this.transporter.close();
-      this.transporter = undefined;
+    await this.pool.destroy();
+  }
+
+  // Pool management methods
+  getPoolMetrics() {
+    return this.pool.getSmtpMetrics();
+  }
+
+  async validatePoolHealth(): Promise<boolean> {
+    try {
+      const metrics = this.pool.getMetrics();
+      return (
+        metrics.totalConnections > 0 &&
+        metrics.totalErrors < metrics.totalConnections
+      );
+    } catch (error) {
+      console.error("Error checking SMTP pool health:", error);
+      return false;
     }
+  }
+
+  async verifyAllPoolConnections(): Promise<{
+    verified: number;
+    failed: number;
+  }> {
+    return await this.pool.verifyAllConnections();
   }
 }
