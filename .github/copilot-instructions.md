@@ -1,31 +1,21 @@
 # Copilot Instructions
 
-## Coding style
+## Style
 
-- Use ES modules (import/export) syntax, not CommonJS (require)
-- Destructure imports when possible (eg. import { foo } from 'bar')
-- Write JavaScript and TypeScript code with double quotes
-- Use 2 spaces for indentation
-- Use semicolons at the end of statements
-- Use destructuring for objects and arrays
-- Use arrow functions for callbacks
-- Use async/await for asynchronous code
+- ES modules, destructured imports, double quotes, 2 spaces, semicolons
+- Arrow functions, async/await, object/array destructuring
 
-## Tools
+## Commands
 
-- Use Biom for formatting and linting JavaScript and TypeScript code
-- Use vitest for testing JavaScript and TypeScript code
-- Use pnpm as package manager
-- Use Git for version control
-- Use GitHub for hosting the code repository
-
-## Bash commands
-
-- pnpm build: Build the project
-- pnpm test: Run the test suite
-- pnpm run check: Run both linting and formatting
+- `bun dev` - development server
+- `bun run test` - run tests (using vitest)
+- `bun run test:watch` - run tests in watch mode
+- `bun run test:coverage` - run tests with coverage
+- `bun run check` - lint and format
+- `bun run test:imap` - IMAP integration test
 
 ## Workflow
 
-- Be sure to run tests and formatting when you’re done making a series of code changes
-- Prefer running single tests, and not the whole test suite, for performance
+- Try to use a TDD approach first
+- Run tests and formatting after code changes
+- Use single tests for performance
