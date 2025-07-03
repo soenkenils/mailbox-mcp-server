@@ -668,7 +668,10 @@ export class EmailService {
       return {
         success: true,
         message: "Draft saved successfully",
-        uid: result && typeof result === 'object' && 'uid' in result ? result.uid : undefined,
+        uid:
+          result && typeof result === "object" && "uid" in result
+            ? result.uid
+            : undefined,
       };
     } catch (error) {
       console.error("Error creating draft:", error);
@@ -771,9 +774,7 @@ export class EmailService {
       // Construct the full folder path
       // Use standard IMAP delimiter
       const delimiter = "/"; // Standard IMAP delimiter
-      const folderPath = parentPath
-        ? `${parentPath}${delimiter}${name}`
-        : name;
+      const folderPath = parentPath ? `${parentPath}${delimiter}${name}` : name;
 
       // Create the folder using IMAP CREATE command
       await wrapper.connection.mailboxCreate(folderPath);
