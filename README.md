@@ -47,8 +47,8 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    ```bash
    git clone <repository-url>
    cd mailbox-mcp-server
-   pnpm install
-   pnpm run build
+   bun install
+   bun run build
    ```
 
 2. Copy the example environment file and update it with your credentials:
@@ -228,10 +228,10 @@ The server implements robust connection pooling for optimal performance and reli
 2. Install dependencies:
 
    ```bash
-   pnpm install
+   bun install
    ```
 
-   > **Note**: This project uses pnpm as the package manager. Make sure you have pnpm installed (version 8.x or later recommended).
+   > **Note**: This project uses bun as the package manager. Make sure you have bun installed (version 1.0 or later recommended).
 
 3. Create environment configuration:
 
@@ -248,7 +248,7 @@ The MCP Inspector is a powerful tool for debugging and monitoring your MCP serve
 1. Start the server with inspector enabled:
 
    ```bash
-   MCP_INSPECTOR=true pnpm start
+   MCP_INSPECTOR=true bun start
    ```
 
 2. Access the web UI at `http://localhost:3000/inspector` (port may vary based on your configuration)
@@ -290,7 +290,7 @@ The MCP Inspector is a powerful tool for debugging and monitoring your MCP serve
 For more detailed debugging information, enable debug mode:
 
 ```bash
-MCP_DEBUG=true MCP_INSPECTOR=true pnpm start
+MCP_DEBUG=true MCP_INSPECTOR=true bun start
 ```
 
 #### Best Practices
@@ -302,15 +302,15 @@ MCP_DEBUG=true MCP_INSPECTOR=true pnpm start
 
 ### **Available Scripts**
 
-- **`pnpm dev`** - Start development server with hot reloading
-- **`pnpm build`** - Build for production
-- **`pnpm start`** - Start production server
-- **`pnpm test`** - Run test suite
-- **`pnpm test:unit`** - Run unit tests only
-- **`pnpm test:integration`** - Run integration tests only
-- **`pnpm format`** - Format code with Biome
-- **`pnpm lint`** - Lint code with Biome
-- **`pnpm typecheck`** - Run both linting and formatting
+- **`bun dev`** - Start development server with hot reloading
+- **`bun run build`** - Build for production
+- **`bun start`** - Start production server
+- **`bun test`** - Run test suite
+- **`bun test:unit`** - Run unit tests only
+- **`bun test:integration`** - Run integration tests only
+- **`bun format`** - Format code with Biome
+- **`bun lint`** - Lint code with Biome
+- **`bun check`** - Run both linting and formatting
 
 ### **Testing**
 
@@ -322,13 +322,13 @@ The project includes comprehensive test coverage:
 
 ```bash
 # Run all tests
-pnpm test
+bun test
 
 # Run with coverage
-pnpm test --coverage
+bun test --coverage
 
 # Test specific service
-pnpm test ImapService
+bun test ImapService
 ```
 
 ## Dependencies
@@ -366,7 +366,7 @@ This project relies on the following key dependencies:
 
    ```bash
    # If you encounter module not found errors:
-   pnpm install
+   bun install
    ```
 
 4. **Debugging**
@@ -374,7 +374,7 @@ This project relies on the following key dependencies:
    - Enable debug mode for more detailed logs:
 
      ```bash
-     DEBUG=true pnpm start
+     DEBUG=true bun start
      ```
 
    - Check the [Debugging with Inspector](#debugging-with-inspector) section for advanced troubleshooting

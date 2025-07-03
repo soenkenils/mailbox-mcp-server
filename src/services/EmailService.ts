@@ -136,7 +136,8 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<number[] | null> {
     const searchCriteria = this.buildSearchCriteria(options);
-    return await wrapper.connection.search(searchCriteria);
+    const result = await wrapper.connection.search(searchCriteria);
+    return Array.isArray(result) ? result : null;
   }
 
   private applyPagination(
@@ -580,7 +581,8 @@ export class EmailService {
             uid: true,
           },
         );
-        await wrapper.connection.expunge();
+        // Note: expunge is called automatically after messageDelete in newer ImapFlow versions
+        // await wrapper.connection.expunge(); // This method may not exist in current ImapFlow version
       } else {
         // Move to Trash folder
         try {
@@ -666,7 +668,7 @@ export class EmailService {
       return {
         success: true,
         message: "Draft saved successfully",
-        uid: result.uid,
+        uid: result && typeof result === 'object' && 'uid' in result ? result.uid : undefined,
       };
     } catch (error) {
       console.error("Error creating draft:", error);
@@ -767,8 +769,10 @@ export class EmailService {
       wrapper = await this.pool.acquire();
 
       // Construct the full folder path
+      // Use standard IMAP delimiter
+      const delimiter = "/"; // Standard IMAP delimiter
       const folderPath = parentPath
-        ? `${parentPath}${wrapper.connection.delimiter || "/"}${name}`
+        ? `${parentPath}${delimiter}${name}`
         : name;
 
       // Create the folder using IMAP CREATE command

@@ -5,7 +5,6 @@ describe("Configuration", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    vi.resetModules();
     process.env = { ...originalEnv };
   });
 
@@ -30,6 +29,9 @@ describe("Configuration", () => {
     it("should use default values when optional environment variables are not set", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
       process.env.MAILBOX_PASSWORD = "testpassword";
+      delete process.env.MAILBOX_CALDAV_URL;
+      delete process.env.MAILBOX_IMAP_HOST;
+      delete process.env.DEBUG;
 
       const config = loadConfig();
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createEmailTools } from "../src/tools/emailTools.js";
 import { createCalendarTools } from "../src/tools/calendarTools.js";
+import { createEmailTools } from "../src/tools/emailTools.js";
 
 describe("main.ts module structure and logic", () => {
   describe("Tool Classification Arrays", () => {
@@ -294,10 +294,15 @@ describe("main.ts module structure and logic", () => {
     it("should ensure all implemented email tools are registered in routing logic", () => {
       const mockEmailService = {} as any;
       const mockSmtpService = {} as any;
-      
+
       // Get all implemented email tools
-      const implementedEmailTools = createEmailTools(mockEmailService, mockSmtpService);
-      const implementedEmailToolNames = implementedEmailTools.map(tool => tool.name);
+      const implementedEmailTools = createEmailTools(
+        mockEmailService,
+        mockSmtpService,
+      );
+      const implementedEmailToolNames = implementedEmailTools.map(
+        (tool) => tool.name,
+      );
 
       // Simulate the server's isEmailTool function
       const isEmailTool = (toolName: string): boolean => {
@@ -327,14 +332,20 @@ describe("main.ts module structure and logic", () => {
 
     it("should ensure all implemented calendar tools are registered in routing logic", () => {
       const mockCalendarService = {} as any;
-      
+
       // Get all implemented calendar tools
       const implementedCalendarTools = createCalendarTools(mockCalendarService);
-      const implementedCalendarToolNames = implementedCalendarTools.map(tool => tool.name);
+      const implementedCalendarToolNames = implementedCalendarTools.map(
+        (tool) => tool.name,
+      );
 
       // Simulate the server's isCalendarTool function
       const isCalendarTool = (toolName: string): boolean => {
-        return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(toolName);
+        return [
+          "get_calendar_events",
+          "search_calendar",
+          "get_free_busy",
+        ].includes(toolName);
       };
 
       // Check that every implemented tool is registered in routing logic

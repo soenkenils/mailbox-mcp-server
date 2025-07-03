@@ -5,10 +5,12 @@
 - Arrow functions, async/await, object/array destructuring
 
 ## Commands
-- `pnpm run dev` - development server
-- `pnpm test` - run tests  
-- `pnpm run check` - lint and format
-- `pnpm run test:imap` - IMAP integration test
+- `bun dev` - development server
+- `bun test` - run tests (using vitest)
+- `bun run test:watch` - run tests in watch mode
+- `bun run test:coverage` - run tests with coverage
+- `bun run check` - lint and format
+- `bun run test:imap` - IMAP integration test
 
 ## Workflow
 - Try to use a TDD approach first

@@ -5,6 +5,13 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    pool: 'forks', // Most compatible with Bun runtime
+    poolOptions: {
+      forks: {
+        isolate: true,      // Ensure test isolation
+        singleFork: false,  // Allow parallel execution
+      },
+    },
     include: ['tests/**/*.{test,spec}.{js,ts}'],
     exclude: [
       '**/node_modules/**',
