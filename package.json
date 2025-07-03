@@ -21,8 +21,7 @@
     "test:coverage": "bun run vitest --coverage",
     "format": "bun run biome format --write src/ tests/",
     "lint": "bun run biome lint src/ tests/",
-    "check": "bun run biome check --write src/ tests/",
-    "test:imap": "bun run tsx scripts/test-imap.ts"
+    "check": "bun run biome check --write src/ tests/"
   },
   "keywords": [
     "mcp",
