@@ -305,9 +305,9 @@ MCP_DEBUG=true MCP_INSPECTOR=true bun start
 - **`bun dev`** - Start development server with hot reloading
 - **`bun run build`** - Build for production
 - **`bun start`** - Start production server
-- **`bun test`** - Run test suite
-- **`bun test:unit`** - Run unit tests only
-- **`bun test:integration`** - Run integration tests only
+- **`bun run test`** - Run test suite
+- **`bun run test:unit`** - Run unit tests only
+- **`bun run test:integration`** - Run integration tests only
 - **`bun format`** - Format code with Biome
 - **`bun lint`** - Lint code with Biome
 - **`bun check`** - Run both linting and formatting
@@ -322,13 +322,13 @@ The project includes comprehensive test coverage:
 
 ```bash
 # Run all tests
-bun test
+bun run test
 
 # Run with coverage
-bun test --coverage
+bun run test:coverage
 
 # Test specific service
-bun test ImapService
+bun run test ImapService
 ```
 
 ## Dependencies

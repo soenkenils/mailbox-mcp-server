@@ -6,7 +6,7 @@
 
 ## Commands
 - `bun dev` - development server
-- `bun test` - run tests (using vitest)
+- `bun run test` - run tests (using vitest)
 - `bun run test:watch` - run tests in watch mode
 - `bun run test:coverage` - run tests with coverage
 - `bun run check` - lint and format
