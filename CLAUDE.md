@@ -12,7 +12,6 @@
 - `bun run test:watch` - run tests in watch mode
 - `bun run test:coverage` - run tests with coverage
 - `bun run check` - lint and format
-- `bun run test:imap` - IMAP integration test
 
 ## Workflow
 
