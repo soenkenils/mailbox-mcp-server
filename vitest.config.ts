@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    silent: false, // Keep test names visible
+    reporters: ['verbose'],
     pool: 'forks', // Most compatible with Bun runtime
     poolOptions: {
       forks: {
@@ -26,6 +28,8 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     mockReset: true,
+    // Override console methods to reduce noise from expected errors
+    setupFiles: ['./tests/suppress-console.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov', 'clover'],

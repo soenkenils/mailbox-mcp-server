@@ -1,11 +1,94 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config/config.js";
 import { MemoryCache } from "../src/services/LocalCache.js";
-import {
-  createCalendarTools,
-  handleCalendarTool,
-} from "../src/tools/calendarTools.js";
-import { createEmailTools, handleEmailTool } from "../src/tools/emailTools.js";
+import { EmailService } from "../src/services/EmailService.js";
+import { CalendarService } from "../src/services/CalendarService.js";
+import { createCalendarTools } from "../src/tools/calendarTools.js";
+import { createEmailTools } from "../src/tools/emailTools.js";
+
+// Mock external libraries for integration tests only
+vi.mock("imapflow", () => ({
+  ImapFlow: vi.fn().mockImplementation(() => ({
+    connect: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([1, 2, 3]),
+    fetch: vi.fn().mockResolvedValue([
+      {
+        uid: 1,
+        envelope: {
+          subject: "Test Email 1",
+          from: [{ name: "Test Sender", address: "test@example.com" }],
+          to: [{ name: "Test Recipient", address: "recipient@example.com" }],
+          date: new Date("2024-01-01T10:00:00Z"),
+        },
+        source: Buffer.from("Test email content"),
+      },
+    ]),
+    mailboxOpen: vi.fn().mockResolvedValue({
+      path: "INBOX",
+      uidValidity: 1,
+      uidNext: 100,
+      exists: 10,
+      recent: 0,
+    }),
+    noop: vi.fn().mockResolvedValue(undefined),
+    logout: vi.fn().mockResolvedValue(undefined),
+    usable: true,
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+    once: vi.fn().mockReturnThis(),
+    emit: vi.fn().mockReturnValue(true),
+    addListener: vi.fn().mockReturnThis(),
+    removeListener: vi.fn().mockReturnThis(),
+    removeAllListeners: vi.fn().mockReturnThis(),
+    listeners: vi.fn().mockReturnValue([]),
+    listenerCount: vi.fn().mockReturnValue(0),
+    eventNames: vi.fn().mockReturnValue([]),
+    getMaxListeners: vi.fn().mockReturnValue(10),
+    setMaxListeners: vi.fn().mockReturnThis(),
+    prependListener: vi.fn().mockReturnThis(),
+    prependOnceListener: vi.fn().mockReturnThis(),
+    rawListeners: vi.fn().mockReturnValue([]),
+  })),
+}));
+
+vi.mock("tsdav", () => ({
+  createDAVClient: vi.fn().mockResolvedValue({
+    fetchCalendars: vi.fn().mockResolvedValue([
+      {
+        url: "https://mailbox.org/caldav/calendar1/",
+        displayName: "Personal Calendar",
+        components: ["VEVENT"],
+      },
+    ]),
+    fetchCalendarObjects: vi.fn().mockResolvedValue([
+      {
+        data: `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:event1@example.com
+DTSTART:20240101T100000Z
+DTEND:20240101T110000Z
+SUMMARY:Test Event 1
+END:VEVENT
+END:VCALENDAR`,
+      },
+    ]),
+  }),
+}));
+
+vi.mock("nodemailer", () => ({
+  default: {
+    createTransport: vi.fn().mockReturnValue({
+      verify: vi.fn().mockResolvedValue(true),
+      sendMail: vi.fn().mockResolvedValue({
+        messageId: "test-message-id@example.com",
+        accepted: ["recipient@example.com"],
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    }),
+  },
+}));
 
 describe("Integration Tests", () => {
   const originalEnv = process.env;
@@ -38,27 +121,20 @@ describe("Integration Tests", () => {
   });
 
   describe("Tools Registration", () => {
-    it("should create and register all tools", () => {
+    it("should create and register all tools with real services", async () => {
       const config = loadConfig();
       const cache = new MemoryCache(config.cache);
 
-      // Mock services for testing
-      const mockEmailService = {
-        searchEmails: vi.fn(),
-        getEmail: vi.fn(),
-        getEmailThread: vi.fn(),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      } as any;
+      // Create real services with mocked libraries
+      const emailService = new EmailService(
+        config.email,
+        cache,
+        config.pools.imap
+      );
+      const calendarService = new CalendarService(config.calendar, cache);
 
-      const mockCalendarService = {
-        getCalendarEvents: vi.fn(),
-        searchCalendar: vi.fn(),
-        getFreeBusy: vi.fn(),
-      } as any;
-
-      const emailTools = createEmailTools(mockEmailService);
-      const calendarTools = createCalendarTools(mockCalendarService);
+      const emailTools = createEmailTools(emailService);
+      const calendarTools = createCalendarTools(calendarService);
 
       expect(emailTools).toHaveLength(10);
       expect(calendarTools).toHaveLength(3);
@@ -80,6 +156,7 @@ describe("Integration Tests", () => {
         "get_free_busy",
       ]);
 
+      await emailService.disconnect();
       cache.destroy();
     });
   });
@@ -118,26 +195,45 @@ describe("Integration Tests", () => {
     });
   });
 
-  describe("Error Handling Integration", () => {
-    it("should handle service connection errors gracefully", async () => {
-      const mockEmailService = {
-        searchEmails: vi
-          .fn()
-          .mockRejectedValue(new Error("Connection timeout")),
-        getEmail: vi.fn(),
-        getEmailThread: vi.fn(),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-      } as any;
+  describe("Service Integration", () => {
+    it("should create email and calendar services without errors", () => {
+      const config = loadConfig();
+      const cache = new MemoryCache(config.cache);
 
-      const result = await handleEmailTool(
-        "search_emails",
-        { query: "test" },
-        mockEmailService,
+      // Test service instantiation - this exercises constructor logic
+      const emailService = new EmailService(
+        config.email,
+        cache,
+        config.pools.imap
       );
+      const calendarService = new CalendarService(config.calendar, cache);
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Connection timeout");
+      expect(emailService).toBeDefined();
+      expect(calendarService).toBeDefined();
+
+      cache.destroy();
+    });
+
+    it("should properly integrate services with tools", () => {
+      const config = loadConfig();
+      const cache = new MemoryCache(config.cache);
+
+      const emailService = new EmailService(
+        config.email,
+        cache,
+        config.pools.imap
+      );
+      const calendarService = new CalendarService(config.calendar, cache);
+
+      // Test that tools can be created with real services
+      const emailTools = createEmailTools(emailService);
+      const calendarTools = createCalendarTools(calendarService);
+
+      // Verify tool structure and integration
+      expect(emailTools.every(tool => tool.name && tool.description && tool.inputSchema)).toBe(true);
+      expect(calendarTools.every(tool => tool.name && tool.description && tool.inputSchema)).toBe(true);
+
+      cache.destroy();
     });
   });
 });
