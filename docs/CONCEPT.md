@@ -43,8 +43,7 @@ Claude Desktop ←→ MCP Server (stdio) ←→ mailbox.org (IMAP/CalDAV)
 **Temporary in-memory storage** to avoid redundant API calls:
 
 - Email searches cached for 5 minutes
-- Calendar events cached for 15 minutes  
-- Contacts cached for 30 minutes
+- Calendar events cached for 15 minutes
 - Cache clears completely on application restart
 
 #### Direct API Philosophy
@@ -75,7 +74,7 @@ class MailboxMcpServer {
   private services: {
     email: EmailService;
     calendar: CalendarService;
-    contacts: ContactService;
+    smtp?: SmtpService;
   };
   private cache: LocalCache;
   private config: ServerConfig;
@@ -84,20 +83,26 @@ class MailboxMcpServer {
     this.initializeServer();
     this.initializeServices();
     this.setupToolHandlers();
-    this.setupResourceHandlers();
   }
 }
 ```
 
 #### Tool Definition and Schema Validation
 
-**Email Tools (Current Implementation Status)**:
+**Email Tools (Implemented)**:
 
 - `search_emails`: Full-text search with folder filter and time range limitation
 - `get_email`: Complete email content with attachment references
 - `get_email_thread`: Conversation threading with chronological sorting
+- `send_email`: Compose and send emails via SMTP
+- `create_draft`: Save emails as drafts
+- `move_email`: Move emails between folders
+- `mark_email`: Add/remove flags (read, important, etc.)
+- `delete_email`: Delete emails (trash or permanent)
+- `get_folders`: List all available email folders
+- `create_directory`: Create new email folders
 
-**Calendar Tools (Current Implementation Status)**:
+**Calendar Tools (Implemented)**:
 
 - `get_calendar_events`: Time-based event queries with recurrence resolution
 - `search_calendar`: Full-text search in event titles, descriptions, and locations
@@ -178,10 +183,10 @@ class MailboxMcpServer {
 
 #### Credential Storage
 
-**Basic secure storage**:
+**Environment variable storage**:
 
-- OS keychain for credentials when available
-- Environment variables for development
+- Environment variables for all credentials
+- App-specific passwords for mailbox.org
 - No credential transmission to third parties
 
 #### Data Protection
@@ -253,32 +258,32 @@ The development environment leverages modern tooling for optimal developer exper
 
 #### Claude Desktop Integration
 
-**Automated Setup Processes**:
+**Manual Setup Process**:
 
-- Post-install script for Claude Desktop configuration
-- Interactive setup wizard for credential configuration
-- Validation tests for mailbox.org connectivity
-- Documentation generation for available tools
+- Manual Claude Desktop configuration via claude_desktop_config.json
+- Environment variable configuration for credentials
+- Validation available via connection testing
+- Documentation available in README and code comments
 
 ### Maintenance and Updates
 
-#### Automatic Update Mechanisms
+#### Manual Update Process
 
-**Self-Update Capabilities**:
+**Standard NPM Updates**:
 
-- NPM-based update checks
-- Backward-compatible configuration migration
-- Rollback functionality for failed updates
-- Change log integration for user notifications
+- Manual NPM package updates
+- Configuration compatibility maintained
+- Version management via package.json
+- Change log available in repository
 
-#### Monitoring and Support
+#### Basic Monitoring
 
-**User Support Features**:
+**Simple Support Features**:
 
-- Detailed logging with configurable log levels
-- Health check commands for troubleshooting
-- Export functions for support requests
+- Console logging for errors and operations
+- Connection pool metrics available
 - Community support via GitHub issues
+- Error reporting through standard console output
 
 ## Technology Stack and Dependencies
 
@@ -286,12 +291,13 @@ The development environment leverages modern tooling for optimal developer exper
 
 - **Runtime**: Node.js 20+ with TypeScript 5+
 - **MCP SDK**: @modelcontextprotocol/sdk for protocol implementation
-- **Email Client**: node-imap with mailparser for message processing
-- **Calendar Client**: Custom CalDAV implementation or node-caldav
+- **Email Client**: imapflow for IMAP, nodemailer for SMTP
+- **Calendar Client**: tsdav for CalDAV implementation
+- **Calendar Parsing**: ical.js for iCalendar format processing
+- **Message Parsing**: mailparser for email content extraction
 - **Session Cache**: In-memory Map-based caching for temporary data
-- **Security**: OS-native keychain integration
-- **Testing**: Vitest with Supertest for API testing
-- **Documentation**: JSDoc with Markdown for user guides
+- **Testing**: Vitest for fast test execution
+- **Code Quality**: Biome for linting and formatting
 
 ### Current Implementation Libraries
 
@@ -302,8 +308,9 @@ The development environment leverages modern tooling for optimal developer exper
 - **nodemailer**: SMTP client for email sending with connection pooling
 - **mailparser**: Email message parsing and content extraction
 - **tsdav**: CalDAV client for calendar access
+- **ical.js**: iCalendar format parsing and processing
 - **dayjs**: Date manipulation and timezone handling
-- **node-fetch**: HTTP client for CalDAV/CardDAV
+- **node-fetch**: HTTP client for CalDAV requests
 
 **Development Dependencies (Implemented)**:
 
@@ -327,7 +334,7 @@ The session cache provides temporary storage for API responses to improve perfor
 - **Session Scope**: Cache cleared completely on application restart
 
 **Service Integration**:
-Each service (Email, Calendar, Contacts) integrates with the session cache using service-specific cache keys and TTL values. The cache provides transparent performance improvements without affecting the real-time nature of data access.
+Each service (Email, Calendar) integrates with the session cache using service-specific cache keys and TTL values. The cache provides transparent performance improvements without affecting the real-time nature of data access.
 
 ### Connection Pooling Architecture
 
@@ -386,8 +393,8 @@ The solution eliminates common complexity sources like database management and s
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2025-06-01
-**Status**: Final  
+**Document Version**: 1.1  
+**Last Updated**: 2025-07-05
+**Status**: Updated to reflect actual implementation  
 **Author**: Technical Architecture Team  
-**Review**: Completed
+**Review**: Updated to match reality
