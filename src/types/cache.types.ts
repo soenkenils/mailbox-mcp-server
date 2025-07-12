@@ -12,6 +12,7 @@ export interface CacheOptions {
 
 export interface LocalCache {
   get<T>(key: string): T | null;
+  getStale<T>(key: string): T | null;
   set<T>(key: string, data: T, ttl?: number): void;
   delete(key: string): boolean;
   clear(): void;

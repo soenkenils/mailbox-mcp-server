@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config/config.js";
-import { MemoryCache } from "../src/services/LocalCache.js";
-import { EmailService } from "../src/services/EmailService.js";
 import { CalendarService } from "../src/services/CalendarService.js";
+import { EmailService } from "../src/services/EmailService.js";
+import { MemoryCache } from "../src/services/LocalCache.js";
 import { createCalendarTools } from "../src/tools/calendarTools.js";
 import { createEmailTools } from "../src/tools/emailTools.js";
 
@@ -129,7 +129,7 @@ describe("Integration Tests", () => {
       const emailService = new EmailService(
         config.email,
         cache,
-        config.pools.imap
+        config.pools.imap,
       );
       const calendarService = new CalendarService(config.calendar, cache);
 
@@ -204,7 +204,7 @@ describe("Integration Tests", () => {
       const emailService = new EmailService(
         config.email,
         cache,
-        config.pools.imap
+        config.pools.imap,
       );
       const calendarService = new CalendarService(config.calendar, cache);
 
@@ -221,7 +221,7 @@ describe("Integration Tests", () => {
       const emailService = new EmailService(
         config.email,
         cache,
-        config.pools.imap
+        config.pools.imap,
       );
       const calendarService = new CalendarService(config.calendar, cache);
 
@@ -230,8 +230,16 @@ describe("Integration Tests", () => {
       const calendarTools = createCalendarTools(calendarService);
 
       // Verify tool structure and integration
-      expect(emailTools.every(tool => tool.name && tool.description && tool.inputSchema)).toBe(true);
-      expect(calendarTools.every(tool => tool.name && tool.description && tool.inputSchema)).toBe(true);
+      expect(
+        emailTools.every(
+          (tool) => tool.name && tool.description && tool.inputSchema,
+        ),
+      ).toBe(true);
+      expect(
+        calendarTools.every(
+          (tool) => tool.name && tool.description && tool.inputSchema,
+        ),
+      ).toBe(true);
 
       cache.destroy();
     });

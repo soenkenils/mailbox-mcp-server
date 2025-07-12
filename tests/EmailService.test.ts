@@ -37,12 +37,16 @@ const createMockImapMessage = (overrides: any = {}) => ({
 
 const createMockCache = (): LocalCache => ({
   get: vi.fn(),
+  getStale: vi.fn(),
   set: vi.fn(),
   delete: vi.fn(),
   clear: vi.fn(),
   cleanup: vi.fn(),
   has: vi.fn(),
   size: vi.fn(),
+  destroy: vi.fn(),
+  getStats: vi.fn(),
+  cleanupWithStaleRetention: vi.fn(),
 });
 
 const createMockConnection = (
@@ -549,6 +553,315 @@ describe("EmailService", () => {
         "string-instead-of-object",
       ]);
       expect(parseAddresses(123)).toEqual([123]);
+    });
+  });
+
+  describe("fallback mechanisms", () => {
+    let cache: LocalCache;
+    let mockEmail: any;
+
+    beforeEach(() => {
+      cache = createMockCache();
+      mockEmail = createMockEmailMessage({ uid: 123 });
+
+      // Add some test data to cache
+      (cache.set as any).mockImplementation((key: string, value: any) => {
+        // Mock successful cache operations
+      });
+      (cache.getStale as any) = vi.fn();
+    });
+
+    describe("searchEmails fallback", () => {
+      it("should return stale cache data on connection failure", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        // Mock pool to simulate connection failure
+        const mockPool = {
+          acquireForFolder: vi
+            .fn()
+            .mockRejectedValue(new Error("Connection timeout")),
+          releaseFromFolder: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        // Mock cache.getStale to return stale data
+        (cache.getStale as any).mockReturnValue([mockEmail]);
+
+        const result = await testService.searchEmails({ folder: "INBOX" });
+
+        expect(result).toEqual([mockEmail]);
+        expect(cache.getStale).toHaveBeenCalled();
+
+        await testService.disconnect();
+      });
+
+      it("should return empty array when no stale cache available", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquireForFolder: vi.fn().mockRejectedValue(new Error("ECONNRESET")),
+          releaseFromFolder: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        // Mock cache.getStale to return null (no stale data)
+        (cache.getStale as any).mockReturnValue(null);
+
+        const result = await testService.searchEmails({ folder: "INBOX" });
+
+        expect(result).toEqual([]);
+
+        await testService.disconnect();
+      });
+
+      it("should throw error for non-connection errors", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquireForFolder: vi
+            .fn()
+            .mockRejectedValue(new Error("Authentication failed")),
+          releaseFromFolder: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        await expect(
+          testService.searchEmails({ folder: "INBOX" }),
+        ).rejects.toThrow("Authentication failed");
+
+        await testService.disconnect();
+      });
+    });
+
+    describe("getEmail fallback", () => {
+      it("should return stale cache data on connection failure", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquireForFolder: vi
+            .fn()
+            .mockRejectedValue(new Error("Connection not available")),
+          releaseFromFolder: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        (cache.getStale as any).mockReturnValue(mockEmail);
+
+        const result = await testService.getEmail(123, "INBOX");
+
+        expect(result).toEqual(mockEmail);
+        expect(cache.getStale).toHaveBeenCalledWith("email:INBOX:123");
+
+        await testService.disconnect();
+      });
+
+      it("should return null when no stale cache available", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquireForFolder: vi.fn().mockRejectedValue(new Error("timeout")),
+          releaseFromFolder: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        (cache.getStale as any).mockReturnValue(null);
+
+        const result = await testService.getEmail(123, "INBOX");
+
+        expect(result).toBeNull();
+
+        await testService.disconnect();
+      });
+    });
+
+    describe("getFolders fallback", () => {
+      it("should return stale cache data on connection failure", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquire: vi.fn().mockRejectedValue(new Error("Connection failed")),
+          release: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        const cachedFolders = [
+          {
+            name: "INBOX",
+            path: "INBOX",
+            delimiter: "/",
+            flags: [],
+            specialUse: undefined,
+          },
+        ];
+        (cache.getStale as any).mockReturnValue(cachedFolders);
+
+        const result = await testService.getFolders();
+
+        expect(result).toEqual(cachedFolders);
+        expect(cache.getStale).toHaveBeenCalledWith("email_folders");
+
+        await testService.disconnect();
+      });
+
+      it("should return default folders when no stale cache available", async () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const mockPool = {
+          acquire: vi.fn().mockRejectedValue(new Error("ENOTFOUND")),
+          release: vi.fn(),
+          destroy: vi.fn(),
+        };
+        (testService as any).pool = mockPool;
+
+        (cache.getStale as any).mockReturnValue(null);
+
+        const result = await testService.getFolders();
+
+        expect(result).toHaveLength(4);
+        expect(result[0].name).toBe("INBOX");
+        expect(result[1].name).toBe("Sent");
+        expect(result[2].name).toBe("Drafts");
+        expect(result[3].name).toBe("Trash");
+
+        await testService.disconnect();
+      });
+    });
+
+    describe("connection error detection", () => {
+      it("should identify connection errors correctly", () => {
+        // Create fresh service with our test cache
+        const testService = new EmailService(mockConnection, cache, {
+          minConnections: 1,
+          maxConnections: 5,
+          acquireTimeoutMs: 30000,
+          idleTimeoutMs: 300000,
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          healthCheckIntervalMs: 60000,
+        });
+
+        const isConnectionError = (testService as any).isConnectionError.bind(
+          testService,
+        );
+
+        // Connection-related errors
+        expect(isConnectionError(new Error("Connection timeout"))).toBe(true);
+        expect(isConnectionError(new Error("ECONNRESET"))).toBe(true);
+        expect(isConnectionError(new Error("ENOTFOUND"))).toBe(true);
+        expect(isConnectionError(new Error("ECONNREFUSED"))).toBe(true);
+        expect(isConnectionError(new Error("Circuit breaker is OPEN"))).toBe(
+          true,
+        );
+
+        // Non-connection errors
+        expect(isConnectionError(new Error("Authentication failed"))).toBe(
+          false,
+        );
+        expect(isConnectionError(new Error("Invalid folder"))).toBe(false);
+        expect(isConnectionError("string error")).toBe(false);
+        expect(isConnectionError(null)).toBe(false);
+      });
+    });
+
+    describe("offline capabilities integration", () => {
+      it("should provide offline capabilities", () => {
+        const capabilities = emailService.getOfflineCapabilities();
+
+        expect(capabilities).toHaveProperty("canSearchEmails");
+        expect(capabilities).toHaveProperty("canGetEmail");
+        expect(capabilities).toHaveProperty("canGetFolders");
+        expect(capabilities).toHaveProperty("canAccessCachedData");
+      });
+
+      it("should search emails offline", async () => {
+        const result = await emailService.searchEmailsOffline({
+          folder: "INBOX",
+        });
+
+        expect(Array.isArray(result)).toBe(true);
+      });
+
+      it("should get email offline", async () => {
+        const result = await emailService.getEmailOffline(123, "INBOX");
+
+        expect(result).toBeDefined();
+      });
+
+      it("should get folders offline", async () => {
+        const result = await emailService.getFoldersOffline();
+
+        expect(Array.isArray(result)).toBe(true);
+        expect(result.length).toBeGreaterThan(0);
+      });
     });
   });
 });

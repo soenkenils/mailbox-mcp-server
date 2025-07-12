@@ -28,6 +28,16 @@ export class MemoryCache implements LocalCache {
     return entry.data as T;
   }
 
+  // Get data even if expired (stale cache)
+  getStale<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) {
+      return null;
+    }
+
+    return entry.data as T;
+  }
+
   set<T>(key: string, data: T, ttl?: number): void {
     const entry: CacheEntry<T> = {
       data,
@@ -80,6 +90,42 @@ export class MemoryCache implements LocalCache {
     }
   }
 
+  // Cleanup with stale data retention for fallback scenarios
+  cleanupWithStaleRetention(): void {
+    const now = Date.now();
+    const keysToDelete: string[] = [];
+    const staleThreshold = 24 * 60 * 60 * 1000; // Keep stale data for 24 hours
+
+    for (const [key, entry] of this.cache.entries()) {
+      // Only delete if data is older than TTL + stale threshold
+      if (now - entry.timestamp > entry.ttl + staleThreshold) {
+        keysToDelete.push(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      this.cache.delete(key);
+    }
+  }
+
+  // Get cache statistics
+  getStats(): {
+    size: number;
+    entries: Array<{ key: string; age: number; isExpired: boolean }>;
+  } {
+    const now = Date.now();
+    const entries = Array.from(this.cache.entries()).map(([key, entry]) => ({
+      key,
+      age: now - entry.timestamp,
+      isExpired: this.isExpired(entry, now),
+    }));
+
+    return {
+      size: this.cache.size,
+      entries,
+    };
+  }
+
   destroy(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
@@ -107,7 +153,8 @@ export class MemoryCache implements LocalCache {
 
   private startCleanupTimer(): void {
     this.cleanupTimer = setInterval(() => {
-      this.cleanup();
+      // Use stale retention cleanup for better offline capabilities
+      this.cleanupWithStaleRetention();
     }, this.config.cleanupInterval);
   }
 }

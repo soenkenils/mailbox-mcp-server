@@ -27,6 +27,17 @@ export interface PoolMetrics {
   totalAcquired: number;
   totalReleased: number;
   totalErrors: number;
+  averageConnectionAge: number;
+  averageIdleTime: number;
+  connectionUtilization: number;
+  healthyConnections: number;
+  unhealthyConnections: number;
+  lastHealthCheck?: Date;
+  connectionErrors: Array<{
+    timestamp: Date;
+    error: string;
+    context: string;
+  }>;
 }
 
 export abstract class ConnectionPool<T> {
@@ -40,6 +51,12 @@ export abstract class ConnectionPool<T> {
   protected metrics: PoolMetrics;
   private healthCheckInterval?: NodeJS.Timeout;
   private isShuttingDown = false;
+  private connectionErrors: Array<{
+    timestamp: Date;
+    error: string;
+    context: string;
+  }> = [];
+  private maxErrorHistory = 100; // Keep last 100 errors
 
   constructor(config: ConnectionPoolConfig) {
     this.config = config;
@@ -55,6 +72,12 @@ export abstract class ConnectionPool<T> {
       totalAcquired: 0,
       totalReleased: 0,
       totalErrors: 0,
+      averageConnectionAge: 0,
+      averageIdleTime: 0,
+      connectionUtilization: 0,
+      healthyConnections: 0,
+      unhealthyConnections: 0,
+      connectionErrors: [],
     };
 
     this.startHealthCheck();
@@ -120,6 +143,8 @@ export abstract class ConnectionPool<T> {
         );
       }
     }
+
+    this.updateMetrics();
   }
 
   async destroy(): Promise<void> {
@@ -147,6 +172,7 @@ export abstract class ConnectionPool<T> {
   }
 
   getMetrics(): PoolMetrics {
+    this.updateMetrics();
     return { ...this.metrics };
   }
 
@@ -179,17 +205,24 @@ export abstract class ConnectionPool<T> {
         this.metrics.activeConnections++;
         this.metrics.totalCreated++;
         this.metrics.totalAcquired++;
+        this.updateMetrics();
 
         return wrapper;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.metrics.totalErrors++;
+        this.recordError(
+          lastError.message,
+          `createConnection attempt ${attempt + 1}`,
+        );
 
-        // If this is not the last attempt, wait before retrying
+        // If this is not the last attempt, wait with exponential backoff
         if (attempt < this.config.maxRetries) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, this.config.retryDelayMs),
+          const backoffDelay = this.calculateExponentialBackoff(attempt);
+          console.log(
+            `Connection creation failed (attempt ${attempt + 1}/${this.config.maxRetries + 1}), retrying in ${backoffDelay}ms: ${lastError.message}`,
           );
+          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
         }
       }
     }
@@ -318,10 +351,12 @@ export abstract class ConnectionPool<T> {
       try {
         await this.createNewConnection();
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
         console.warn(
           "Failed to create minimum connection during health check:",
-          error,
+          errorMsg,
         );
+        this.recordError(errorMsg, "healthCheck createConnection");
         break;
       }
     }
@@ -332,18 +367,70 @@ export abstract class ConnectionPool<T> {
   private updateMetrics(): void {
     let active = 0;
     let idle = 0;
+    let healthy = 0;
+    let unhealthy = 0;
+    let totalAge = 0;
+    let totalIdleTime = 0;
+    let idleCount = 0;
+    const now = new Date();
 
     for (const wrapper of this.connections.values()) {
       if (wrapper.inUse) {
         active++;
       } else {
         idle++;
+        totalIdleTime += now.getTime() - wrapper.lastUsed.getTime();
+        idleCount++;
       }
+
+      if (wrapper.isHealthy) {
+        healthy++;
+      } else {
+        unhealthy++;
+      }
+
+      totalAge += now.getTime() - wrapper.createdAt.getTime();
     }
 
     this.metrics.totalConnections = this.connections.size;
     this.metrics.activeConnections = active;
     this.metrics.idleConnections = idle;
+    this.metrics.healthyConnections = healthy;
+    this.metrics.unhealthyConnections = unhealthy;
+    this.metrics.averageConnectionAge =
+      this.connections.size > 0 ? totalAge / this.connections.size : 0;
+    this.metrics.averageIdleTime =
+      idleCount > 0 ? totalIdleTime / idleCount : 0;
+    this.metrics.connectionUtilization =
+      this.config.maxConnections > 0
+        ? (active / this.config.maxConnections) * 100
+        : 0;
+    this.metrics.lastHealthCheck = now;
+    this.metrics.connectionErrors = [...this.connectionErrors];
+  }
+
+  private calculateExponentialBackoff(attempt: number): number {
+    // Exponential backoff: baseDelay * (2^attempt) + jitter
+    const baseDelay = this.config.retryDelayMs;
+    const exponentialDelay = baseDelay * Math.pow(2, attempt);
+    // Add jitter (±25% randomization) to avoid thundering herd
+    const jitter = exponentialDelay * 0.25 * (Math.random() - 0.5);
+    const maxDelay = 30000; // Cap at 30 seconds
+
+    return Math.min(exponentialDelay + jitter, maxDelay);
+  }
+
+  private recordError(error: string, context: string): void {
+    this.connectionErrors.push({
+      timestamp: new Date(),
+      error,
+      context,
+    });
+
+    // Keep only the last maxErrorHistory errors
+    if (this.connectionErrors.length > this.maxErrorHistory) {
+      this.connectionErrors.shift();
+    }
   }
 
   private generateConnectionId(): string {

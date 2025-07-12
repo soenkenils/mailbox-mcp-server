@@ -1,6 +1,11 @@
 import { ImapFlow } from "imapflow";
 import type { ImapConnection } from "../types/email.types.js";
 import {
+  CircuitBreaker,
+  type CircuitBreakerConfig,
+  type CircuitBreakerMetrics,
+} from "./CircuitBreaker.js";
+import {
   ConnectionPool,
   type ConnectionPoolConfig,
   type ConnectionWrapper,
@@ -12,35 +17,47 @@ export interface ImapConnectionWrapper extends ConnectionWrapper<ImapFlow> {
 
 export interface ImapPoolConfig extends ConnectionPoolConfig {
   connectionConfig: ImapConnection;
+  circuitBreaker?: CircuitBreakerConfig;
 }
 
 export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
   private connectionConfig: ImapConnection;
+  private circuitBreaker: CircuitBreaker;
 
   constructor(config: ImapPoolConfig) {
     super(config);
     this.connectionConfig = config.connectionConfig;
+
+    // Initialize circuit breaker with defaults or provided config
+    const cbConfig = config.circuitBreaker || {
+      failureThreshold: 5,
+      recoveryTimeout: 60000, // 1 minute
+      monitoringInterval: 30000, // 30 seconds
+    };
+    this.circuitBreaker = new CircuitBreaker(cbConfig);
   }
 
   async createConnection(): Promise<ImapFlow> {
-    const client = new ImapFlow({
-      host: this.connectionConfig.host,
-      port: this.connectionConfig.port,
-      secure: this.connectionConfig.secure,
-      auth: {
-        user: this.connectionConfig.user,
-        pass: this.connectionConfig.password,
-      },
-      logger: false, // Disable logging for production
-    });
+    return this.circuitBreaker.execute(async () => {
+      const client = new ImapFlow({
+        host: this.connectionConfig.host,
+        port: this.connectionConfig.port,
+        secure: this.connectionConfig.secure,
+        auth: {
+          user: this.connectionConfig.user,
+          pass: this.connectionConfig.password,
+        },
+        logger: false, // Disable logging for production
+      });
 
-    // Set up error handling
-    client.on("error", (error: Error) => {
-      console.error("IMAP connection error:", error);
-    });
+      // Set up error handling
+      client.on("error", (error: Error) => {
+        console.error("IMAP connection error:", error);
+      });
 
-    await client.connect();
-    return client;
+      await client.connect();
+      return client;
+    });
   }
 
   async validateConnection(connection: ImapFlow): Promise<boolean> {
@@ -122,7 +139,18 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
     return {
       ...baseMetrics,
       folderDistribution,
+      circuitBreaker: this.circuitBreaker.getMetrics(),
     };
+  }
+
+  // Get circuit breaker metrics
+  getCircuitBreakerMetrics(): CircuitBreakerMetrics {
+    return this.circuitBreaker.getMetrics();
+  }
+
+  // Reset circuit breaker (for administrative purposes)
+  resetCircuitBreaker(): void {
+    this.circuitBreaker.reset();
   }
 
   // Method to invalidate connections for a specific folder

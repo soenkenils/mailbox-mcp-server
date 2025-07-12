@@ -14,10 +14,12 @@ import {
   type ImapConnectionWrapper,
   type ImapPoolConfig,
 } from "./ImapConnectionPool.js";
+import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
+  private offlineService: OfflineService;
 
   constructor(
     connection: ImapConnection,
@@ -25,6 +27,7 @@ export class EmailService {
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
   ) {
     this.cache = cache;
+    this.offlineService = new OfflineService(cache);
     this.pool = new ImapConnectionPool({
       ...poolConfig,
       connectionConfig: connection,
@@ -43,22 +46,41 @@ export class EmailService {
       return cached;
     }
 
-    const folder = options.folder || "INBOX";
-    let wrapper: ImapConnectionWrapper | null = null;
-
+    // Try to get fresh data, fallback to stale cache on connection failure
     try {
-      wrapper = await this.pool.acquireForFolder(folder);
-      const messages = await this.performEmailSearch(wrapper, options);
+      const folder = options.folder || "INBOX";
+      let wrapper: ImapConnectionWrapper | null = null;
 
-      this.cache.set(cacheKey, messages, 300000); // 5 minutes TTL
-      return messages;
+      try {
+        wrapper = await this.pool.acquireForFolder(folder);
+        const messages = await this.performEmailSearch(wrapper, options);
+
+        this.cache.set(cacheKey, messages, 300000); // 5 minutes TTL
+        return messages;
+      } finally {
+        if (wrapper) {
+          await this.pool.releaseFromFolder(wrapper);
+        }
+      }
     } catch (error) {
       console.error("Error searching emails:", error);
-      throw error;
-    } finally {
-      if (wrapper) {
-        await this.pool.releaseFromFolder(wrapper);
+
+      // Fallback: Try to return stale cached data if available
+      const staleData = this.tryGetStaleCache<EmailMessage[]>(cacheKey);
+      if (staleData) {
+        console.log("Returning stale cached data due to connection failure");
+        return staleData;
       }
+
+      // Fallback: Return empty results if no cache available
+      if (this.isConnectionError(error)) {
+        console.log(
+          "No cached data available, returning empty results due to connection failure",
+        );
+        return [];
+      }
+
+      throw error;
     }
   }
 
@@ -83,6 +105,22 @@ export class EmailService {
       return message;
     } catch (error) {
       console.error(`Error fetching email UID ${uid}:`, error);
+
+      // Fallback: Try to return stale cached data if available
+      const staleData = this.tryGetStaleCache<EmailMessage>(cacheKey);
+      if (staleData) {
+        console.log(
+          `Returning stale cached email UID ${uid} due to connection failure`,
+        );
+        return staleData;
+      }
+
+      // For connection errors, return null instead of throwing
+      if (this.isConnectionError(error)) {
+        console.log(`Email UID ${uid} not available due to connection failure`);
+        return null;
+      }
+
       throw error;
     } finally {
       if (wrapper) {
@@ -460,21 +498,45 @@ export class EmailService {
   }
 
   async getFolders(): Promise<EmailFolder[]> {
+    const cacheKey = "email_folders";
+    const cached = this.cache.get<EmailFolder[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
       wrapper = await this.pool.acquire();
       const folders = await wrapper.connection.list();
 
-      return folders.map((folder) => ({
+      const result = folders.map((folder) => ({
         name: folder.name,
         path: folder.path,
         delimiter: folder.delimiter || "/",
         flags: Array.isArray(folder.flags) ? folder.flags : [],
         specialUse: folder.specialUse,
       }));
+
+      this.cache.set(cacheKey, result, 900000); // Cache for 15 minutes
+      return result;
     } catch (error) {
       console.error("Error fetching folders:", error);
+
+      // Fallback: Try to return stale cached data
+      const staleData = this.tryGetStaleCache<EmailFolder[]>(cacheKey);
+      if (staleData) {
+        console.log("Returning stale cached folders due to connection failure");
+        return staleData;
+      }
+
+      // Fallback: Return standard folder list if no cache available
+      if (this.isConnectionError(error)) {
+        console.log("Returning default folders due to connection failure");
+        return this.getDefaultFolders();
+      }
+
       throw error;
     } finally {
       if (wrapper) {
@@ -744,9 +806,86 @@ export class EmailService {
     keysToDelete.forEach((key) => this.cache.delete(key));
   }
 
+  private tryGetStaleCache<T>(key: string): T | null {
+    // Try to get data from cache even if expired
+    return this.cache.getStale<T>(key);
+  }
+
+  private isConnectionError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("connection") ||
+      message.includes("timeout") ||
+      message.includes("econnreset") ||
+      message.includes("enotfound") ||
+      message.includes("econnrefused") ||
+      message.includes("circuit breaker is open")
+    );
+  }
+
+  private getDefaultFolders(): EmailFolder[] {
+    // Return a basic set of folders when connection is not available
+    return [
+      {
+        name: "INBOX",
+        path: "INBOX",
+        delimiter: "/",
+        flags: [],
+        specialUse: undefined,
+      },
+      {
+        name: "Sent",
+        path: "Sent",
+        delimiter: "/",
+        flags: [],
+        specialUse: "\\Sent",
+      },
+      {
+        name: "Drafts",
+        path: "Drafts",
+        delimiter: "/",
+        flags: [],
+        specialUse: "\\Drafts",
+      },
+      {
+        name: "Trash",
+        path: "Trash",
+        delimiter: "/",
+        flags: [],
+        specialUse: "\\Trash",
+      },
+    ];
+  }
+
   // Pool management methods
   getPoolMetrics() {
     return this.pool.getImapMetrics();
+  }
+
+  // Offline capabilities
+  getOfflineCapabilities(): OfflineCapabilities {
+    return this.offlineService.getOfflineCapabilities();
+  }
+
+  async searchEmailsOffline(
+    options: EmailSearchOptions,
+  ): Promise<EmailMessage[]> {
+    return this.offlineService.searchEmailsOffline(options);
+  }
+
+  async getEmailOffline(
+    uid: number,
+    folder = "INBOX",
+  ): Promise<EmailMessage | null> {
+    return this.offlineService.getEmailOffline(uid, folder);
+  }
+
+  async getFoldersOffline(): Promise<EmailFolder[]> {
+    return this.offlineService.getFoldersOffline();
   }
 
   async validatePoolHealth(): Promise<boolean> {

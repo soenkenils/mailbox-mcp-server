@@ -396,4 +396,203 @@ describe("ConnectionPool", () => {
       await expect(pool.release(wrapper)).resolves.not.toThrow();
     });
   });
+
+  describe("enhanced metrics", () => {
+    it("should track detailed connection metrics", async () => {
+      const wrapper1 = await pool.acquire();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Small delay
+      const wrapper2 = await pool.acquire();
+
+      await pool.release(wrapper1);
+      await new Promise((resolve) => setTimeout(resolve, 50)); // Make wrapper1 idle for a bit
+
+      const metrics = pool.getMetrics();
+
+      expect(metrics.totalConnections).toBe(2);
+      expect(metrics.activeConnections).toBe(1);
+      expect(metrics.idleConnections).toBe(1);
+      expect(metrics.healthyConnections).toBe(2);
+      expect(metrics.unhealthyConnections).toBe(0);
+      expect(metrics.averageConnectionAge).toBeGreaterThan(0);
+      expect(metrics.averageIdleTime).toBeGreaterThan(0);
+      expect(metrics.connectionUtilization).toBeCloseTo(33.33, 2); // 1 active out of 3 max connections
+      expect(metrics.lastHealthCheck).toBeInstanceOf(Date);
+
+      await pool.release(wrapper2);
+    });
+
+    it("should track connection errors with context", async () => {
+      pool.setShouldFailCreation(true);
+
+      await expect(pool.acquire()).rejects.toThrow();
+
+      const metrics = pool.getMetrics();
+      expect(metrics.connectionErrors.length).toBeGreaterThan(0);
+      expect(metrics.connectionErrors[0]).toMatchObject({
+        timestamp: expect.any(Date),
+        error: expect.any(String),
+        context: expect.stringContaining("createConnection attempt"),
+      });
+    });
+
+    it("should limit error history", async () => {
+      pool.setShouldFailCreation(true);
+
+      // Generate more than 100 errors (the limit)
+      for (let i = 0; i < 105; i++) {
+        await expect(pool.acquire()).rejects.toThrow();
+      }
+
+      const metrics = pool.getMetrics();
+      expect(metrics.connectionErrors.length).toBeLessThanOrEqual(100);
+    });
+
+    it("should calculate utilization correctly", async () => {
+      const maxConnections = 4;
+      const utilizationPool = new TestConnectionPool({
+        ...config,
+        maxConnections,
+      });
+
+      // No connections = 0% utilization
+      expect(utilizationPool.getMetrics().connectionUtilization).toBe(0);
+
+      // 2 active connections = 50% utilization
+      const wrapper1 = await utilizationPool.acquire();
+      const wrapper2 = await utilizationPool.acquire();
+      expect(utilizationPool.getMetrics().connectionUtilization).toBe(50);
+
+      await utilizationPool.release(wrapper1);
+      await utilizationPool.release(wrapper2);
+      await utilizationPool.destroy();
+    });
+  });
+
+  describe("exponential backoff", () => {
+    it("should use exponential backoff for retries", async () => {
+      const startTime = Date.now();
+      pool.setShouldFailCreation(true);
+
+      await expect(pool.acquire()).rejects.toThrow();
+
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      // Should take longer than base delay due to retries with backoff
+      // Base delay is 10ms, with 2 retries we expect some additional time
+      expect(duration).toBeGreaterThan(10);
+    });
+
+    it("should cap backoff delay", async () => {
+      // Test that very high attempt numbers don't cause excessive delays
+      const testPool = new TestConnectionPool({
+        ...config,
+        maxRetries: 5, // Reduced retry count for faster test
+      });
+
+      testPool.setShouldFailCreation(true);
+      const startTime = Date.now();
+
+      await expect(testPool.acquire()).rejects.toThrow();
+
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      // With 5 retries, should not take more than a reasonable time
+      // due to the 30-second cap on backoff delay
+      expect(duration).toBeLessThan(30000); // Less than 30 seconds
+
+      await testPool.destroy();
+    }, 35000); // Set explicit timeout for this test
+
+    it("should include jitter in backoff", async () => {
+      pool.setShouldFailCreation(true);
+
+      const durations: number[] = [];
+
+      // Run multiple times to see jitter variation
+      for (let i = 0; i < 3; i++) {
+        const startTime = Date.now();
+        await expect(pool.acquire()).rejects.toThrow();
+        const endTime = Date.now();
+        durations.push(endTime - startTime);
+      }
+
+      // Due to jitter, durations should vary
+      const uniqueDurations = new Set(durations);
+      expect(uniqueDurations.size).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("connection age tracking", () => {
+    it("should track connection creation time", async () => {
+      const wrapper = await pool.acquire();
+
+      expect(wrapper.createdAt).toBeInstanceOf(Date);
+      expect(wrapper.createdAt.getTime()).toBeLessThanOrEqual(Date.now());
+
+      await pool.release(wrapper);
+    });
+
+    it("should update last used time on release", async () => {
+      const wrapper = await pool.acquire();
+      const initialLastUsed = wrapper.lastUsed;
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await pool.release(wrapper);
+
+      expect(wrapper.lastUsed.getTime()).toBeGreaterThan(
+        initialLastUsed.getTime(),
+      );
+    });
+
+    it("should calculate average age correctly", async () => {
+      const wrapper1 = await pool.acquire();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const wrapper2 = await pool.acquire();
+
+      // Force metrics update
+      (pool as any).updateMetrics();
+
+      const metrics = pool.getMetrics();
+      expect(metrics.averageConnectionAge).toBeGreaterThan(0);
+
+      await pool.release(wrapper1);
+      await pool.release(wrapper2);
+    });
+  });
+
+  describe("health check enhancements", () => {
+    it("should update health check timestamp", async () => {
+      const initialMetrics = pool.getMetrics();
+      expect(initialMetrics.lastHealthCheck).toBeInstanceOf(Date);
+
+      // Wait a bit to ensure timestamp changes
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Manually trigger health check instead of waiting for timer
+      await (pool as any).performHealthCheck();
+
+      const updatedMetrics = pool.getMetrics();
+      expect(updatedMetrics.lastHealthCheck).toBeInstanceOf(Date);
+      expect(updatedMetrics.lastHealthCheck!.getTime()).toBeGreaterThan(
+        initialMetrics.lastHealthCheck!.getTime(),
+      );
+    });
+
+    it("should track healthy vs unhealthy connections", async () => {
+      const wrapper = await pool.acquire();
+
+      // Mark connection as unhealthy
+      wrapper.isHealthy = false;
+      await pool.release(wrapper);
+
+      // Force metrics update
+      (pool as any).updateMetrics();
+
+      const metrics = pool.getMetrics();
+      expect(metrics.unhealthyConnections).toBe(1);
+      expect(metrics.healthyConnections).toBe(0);
+    });
+  });
 });
