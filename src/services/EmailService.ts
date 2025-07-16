@@ -68,13 +68,13 @@ export class EmailService {
       // Fallback: Try to return stale cached data if available
       const staleData = this.tryGetStaleCache<EmailMessage[]>(cacheKey);
       if (staleData) {
-        console.log("Returning stale cached data due to connection failure");
+        console.error("Returning stale cached data due to connection failure");
         return staleData;
       }
 
       // Fallback: Return empty results if no cache available
       if (this.isConnectionError(error)) {
-        console.log(
+        console.error(
           "No cached data available, returning empty results due to connection failure",
         );
         return [];
@@ -106,10 +106,16 @@ export class EmailService {
     } catch (error) {
       console.error(`Error fetching email UID ${uid}:`, error);
 
+      // Mark connection as unhealthy if fetch operation timed out
+      if (wrapper && error instanceof Error && error.message.includes('timed out')) {
+        wrapper.isHealthy = false;
+        console.error(`Marking connection as unhealthy due to timeout`);
+      }
+
       // Fallback: Try to return stale cached data if available
       const staleData = this.tryGetStaleCache<EmailMessage>(cacheKey);
       if (staleData) {
-        console.log(
+        console.error(
           `Returning stale cached email UID ${uid} due to connection failure`,
         );
         return staleData;
@@ -117,7 +123,7 @@ export class EmailService {
 
       // For connection errors, return null instead of throwing
       if (this.isConnectionError(error)) {
-        console.log(`Email UID ${uid} not available due to connection failure`);
+        console.error(`Email UID ${uid} not available due to connection failure`);
         return null;
       }
 
@@ -240,6 +246,31 @@ export class EmailService {
     uid: number,
     folder: string,
   ): Promise<any | null> {
+    // Add timeout to prevent hanging fetch operations
+    const timeoutMs = 10000; // 10 seconds timeout for fetch operation
+    const fetchPromise = this.performFetch(wrapper, uid);
+    
+    const timeoutPromise = new Promise<null>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (error) {
+      console.error(
+        `Failed to fetch email with UID ${uid} from folder ${folder}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  private async performFetch(
+    wrapper: ImapConnectionWrapper,
+    uid: number,
+  ): Promise<any | null> {
     for await (const msg of wrapper.connection.fetch(
       `${uid}:${uid}`,
       {
@@ -252,10 +283,6 @@ export class EmailService {
     )) {
       return msg;
     }
-
-    console.error(
-      `Failed to fetch email with UID ${uid} from folder ${folder}`,
-    );
     return null;
   }
 
@@ -527,13 +554,13 @@ export class EmailService {
       // Fallback: Try to return stale cached data
       const staleData = this.tryGetStaleCache<EmailFolder[]>(cacheKey);
       if (staleData) {
-        console.log("Returning stale cached folders due to connection failure");
+        console.error("Returning stale cached folders due to connection failure");
         return staleData;
       }
 
       // Fallback: Return standard folder list if no cache available
       if (this.isConnectionError(error)) {
-        console.log("Returning default folders due to connection failure");
+        console.error("Returning default folders due to connection failure");
         return this.getDefaultFolders();
       }
 

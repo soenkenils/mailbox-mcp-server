@@ -31,8 +31,8 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
     // Initialize circuit breaker with defaults or provided config
     const cbConfig = config.circuitBreaker || {
       failureThreshold: 5,
-      recoveryTimeout: 60000, // 1 minute
-      monitoringInterval: 30000, // 30 seconds
+      recoveryTimeout: 6000, // 6 seconds
+      monitoringInterval: 3000, // 3 seconds
     };
     this.circuitBreaker = new CircuitBreaker(cbConfig);
   }

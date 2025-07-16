@@ -45,7 +45,9 @@ beforeAll(() => {
       message.includes("Error during IMAP logout:") ||
       message.includes("Error closing SMTP connection:") ||
       message.includes("Connection creation failed") ||
-      message.includes("Failed to create minimum connection during health check")
+      message.includes(
+        "Failed to create minimum connection during health check",
+      )
     ) {
       return; // Suppress this warning
     }
@@ -65,11 +67,18 @@ beforeAll(() => {
       message.includes("No offline email found for UID") ||
       message.includes("Found offline folders list") ||
       message.includes("No offline folders found, returning default folders") ||
-      message.includes("Returning stale cached data due to connection failure") ||
+      message.includes(
+        "Returning stale cached data due to connection failure",
+      ) ||
       message.includes("Returning stale cached email UID") ||
-      message.includes("Returning stale cached folders due to connection failure") ||
-      message.includes("No cached data available, returning empty results due to connection failure") ||
-      message.includes("Email UID") && message.includes("not available due to connection failure") ||
+      message.includes(
+        "Returning stale cached folders due to connection failure",
+      ) ||
+      message.includes(
+        "No cached data available, returning empty results due to connection failure",
+      ) ||
+      (message.includes("Email UID") &&
+        message.includes("not available due to connection failure")) ||
       message.includes("Returning default folders due to connection failure")
     ) {
       return; // Suppress this log

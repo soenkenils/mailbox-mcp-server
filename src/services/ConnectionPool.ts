@@ -219,7 +219,7 @@ export abstract class ConnectionPool<T> {
         // If this is not the last attempt, wait with exponential backoff
         if (attempt < this.config.maxRetries) {
           const backoffDelay = this.calculateExponentialBackoff(attempt);
-          console.log(
+          console.error(
             `Connection creation failed (attempt ${attempt + 1}/${this.config.maxRetries + 1}), retrying in ${backoffDelay}ms: ${lastError.message}`,
           );
           await new Promise((resolve) => setTimeout(resolve, backoffDelay));

@@ -38,14 +38,14 @@ export class OfflineService {
     for (const key of possibleKeys) {
       const cachedResults = this.cache.getStale<EmailMessage[]>(key);
       if (cachedResults) {
-        console.log(
+        console.error(
           `Found offline search results for: ${JSON.stringify(options)}`,
         );
         return this.filterOfflineResults(cachedResults, options);
       }
     }
 
-    console.log(
+    console.error(
       `No offline search results found for: ${JSON.stringify(options)}`,
     );
     return [];
@@ -59,11 +59,11 @@ export class OfflineService {
     const cachedEmail = this.cache.getStale<EmailMessage>(cacheKey);
 
     if (cachedEmail) {
-      console.log(`Found offline email UID ${uid} in folder ${folder}`);
+      console.error(`Found offline email UID ${uid} in folder ${folder}`);
       return cachedEmail;
     }
 
-    console.log(`No offline email found for UID ${uid} in folder ${folder}`);
+    console.error(`No offline email found for UID ${uid} in folder ${folder}`);
     return null;
   }
 
@@ -72,11 +72,11 @@ export class OfflineService {
     const cachedFolders = this.cache.getStale<EmailFolder[]>(cacheKey);
 
     if (cachedFolders) {
-      console.log("Found offline folders list");
+      console.error("Found offline folders list");
       return cachedFolders;
     }
 
-    console.log("No offline folders found, returning default folders");
+    console.error("No offline folders found, returning default folders");
     return this.getDefaultFolders();
   }
 

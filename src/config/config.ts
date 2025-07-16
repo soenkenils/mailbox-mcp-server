@@ -82,21 +82,21 @@ export function loadConfig(): ServerConfig {
       imap: {
         minConnections: 1, // Always 1 - no need to configure
         maxConnections: Number.parseInt(
-          process.env.POOL_MAX_CONNECTIONS || "8",
+          process.env.POOL_MAX_CONNECTIONS || "2",
           10,
         ),
         acquireTimeoutMs: Number.parseInt(
-          process.env.POOL_TIMEOUT_MS || "30000",
+          process.env.POOL_TIMEOUT_MS || "15000",
           10,
         ),
         idleTimeoutMs: Number.parseInt(
-          process.env.POOL_IDLE_TIMEOUT_MS || "300000",
+          process.env.POOL_IDLE_TIMEOUT_MS || "30000",
           10,
         ),
         maxRetries: 3, // Hardcoded - sensible default
         retryDelayMs: 1000, // Hardcoded - sensible default
         healthCheckIntervalMs: Number.parseInt(
-          process.env.POOL_HEALTH_CHECK_MS || "60000",
+          process.env.POOL_HEALTH_CHECK_MS || "6000",
           10,
         ),
       },
@@ -107,17 +107,17 @@ export function loadConfig(): ServerConfig {
           Number.parseInt(process.env.POOL_MAX_CONNECTIONS || "8", 10),
         ), // SMTP needs fewer connections
         acquireTimeoutMs: Number.parseInt(
-          process.env.POOL_TIMEOUT_MS || "30000",
+          process.env.POOL_TIMEOUT_MS || "15000",
           10,
         ),
         idleTimeoutMs: Number.parseInt(
-          process.env.POOL_IDLE_TIMEOUT_MS || "300000",
+          process.env.POOL_IDLE_TIMEOUT_MS || "30000",
           10,
         ),
         maxRetries: 3, // Hardcoded - sensible default
         retryDelayMs: 1000, // Hardcoded - sensible default
         healthCheckIntervalMs: Number.parseInt(
-          process.env.POOL_HEALTH_CHECK_MS || "60000",
+          process.env.POOL_HEALTH_CHECK_MS || "6000",
           10,
         ),
       },

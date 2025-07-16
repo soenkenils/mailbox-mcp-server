@@ -49,13 +49,13 @@ class MailboxMcpServer {
     };
 
     process.on("SIGINT", async () => {
-      console.log("\nShutting down Mailbox MCP Server...");
+      console.error("\nShutting down Mailbox MCP Server...");
       await this.cleanup();
       process.exit(0);
     });
 
     process.on("SIGTERM", async () => {
-      console.log("\nShutting down Mailbox MCP Server...");
+      console.error("\nShutting down Mailbox MCP Server...");
       await this.cleanup();
       process.exit(0);
     });
@@ -65,7 +65,7 @@ class MailboxMcpServer {
     try {
       this.config = loadConfig();
       if (this.config.debug) {
-        console.log("Configuration loaded successfully");
+        console.error("Configuration loaded successfully");
       }
     } catch (error) {
       console.error("Failed to load configuration:", error);
@@ -91,12 +91,12 @@ class MailboxMcpServer {
       );
 
       if (this.config.debug) {
-        console.log("Services initialized successfully");
-        console.log("IMAP Pool Config:", {
+        console.error("Services initialized successfully");
+        console.error("IMAP Pool Config:", {
           min: this.config.pools.imap.minConnections,
           max: this.config.pools.imap.maxConnections,
         });
-        console.log("SMTP Pool Config:", {
+        console.error("SMTP Pool Config:", {
           min: this.config.pools.smtp.minConnections,
           max: this.config.pools.smtp.maxConnections,
         });
@@ -128,6 +128,40 @@ class MailboxMcpServer {
     );
   }
 
+  private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
+    if (!args || typeof args !== "object") {
+      return args;
+    }
+
+    const sanitized = { ...args };
+
+    // Remove invalid UUID parameters that Claude Desktop might pass
+    for (const key in sanitized) {
+      if (key.includes("uuid") && typeof sanitized[key] === "string") {
+        const value = sanitized[key];
+        // Check if the value is a valid UUID format
+        if (
+          value === "null" ||
+          value === "none" ||
+          value === "undefined" ||
+          value === "" ||
+          (value.length > 0 &&
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              value,
+            ) &&
+            !value.startsWith("urn:uuid:"))
+        ) {
+          if (this.config.debug) {
+            console.error(`Removing invalid UUID parameter: ${key}=${value}`);
+          }
+          delete sanitized[key];
+        }
+      }
+    }
+
+    return sanitized;
+  }
+
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const emailTools = createEmailTools(this.emailService, this.smtpService);
@@ -142,21 +176,28 @@ class MailboxMcpServer {
       const { name, arguments: args } = request.params;
 
       if (this.config.debug) {
-        console.log(`Executing tool: ${name} with args:`, args);
+        console.error(`Executing tool: ${name} with args:`, args);
       }
+
+      // Filter out invalid UUID parameters that Claude Desktop might pass
+      const cleanArgs = this.sanitizeArgs(args as Record<string, unknown>);
 
       try {
         if (this.isEmailTool(name)) {
           return await handleEmailTool(
             name,
-            args,
+            cleanArgs,
             this.emailService,
             this.smtpService,
           );
         }
 
         if (this.isCalendarTool(name)) {
-          return await handleCalendarTool(name, args, this.calendarService);
+          return await handleCalendarTool(
+            name,
+            cleanArgs,
+            this.calendarService,
+          );
         }
 
         throw new Error(`Unknown tool: ${name}`);
@@ -184,7 +225,7 @@ class MailboxMcpServer {
       await this.server.connect(transport);
 
       if (this.config.debug) {
-        console.log("Mailbox MCP Server started successfully");
+        console.error("Mailbox MCP Server started successfully");
       }
     } catch (error) {
       console.error("Failed to start server:", error);
@@ -195,13 +236,13 @@ class MailboxMcpServer {
   private async cleanup(): Promise<void> {
     try {
       if (this.config.debug) {
-        console.log("Starting cleanup...");
+        console.error("Starting cleanup...");
 
         // Log pool metrics before cleanup
         const emailMetrics = this.emailService.getPoolMetrics();
         const smtpMetrics = this.smtpService.getPoolMetrics();
 
-        console.log("Final IMAP Pool Metrics:", {
+        console.error("Final IMAP Pool Metrics:", {
           total: emailMetrics.totalConnections,
           active: emailMetrics.activeConnections,
           idle: emailMetrics.idleConnections,
@@ -210,7 +251,7 @@ class MailboxMcpServer {
           errors: emailMetrics.totalErrors,
         });
 
-        console.log("Final SMTP Pool Metrics:", {
+        console.error("Final SMTP Pool Metrics:", {
           total: smtpMetrics.totalConnections,
           active: smtpMetrics.activeConnections,
           idle: smtpMetrics.idleConnections,
@@ -225,7 +266,7 @@ class MailboxMcpServer {
       this.cache.destroy();
 
       if (this.config.debug) {
-        console.log("Cleanup completed successfully");
+        console.error("Cleanup completed successfully");
       }
     } catch (error) {
       console.error("Error during cleanup:", error);

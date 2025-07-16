@@ -158,10 +158,12 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 #### **Optional Connection Pool Configuration**
 
-- `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `8`)
-- `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `30000`)
-- `POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `300000`)
-- `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `60000`)
+**Note:** mailbox.org limits concurrent IMAP connections per account. Using more than 2-3 connections may cause connection issues.
+
+- `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `2` - safe for mailbox.org)
+- `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `15000`)
+- `POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `30000`)
+- `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `6000`)
 
 #### **Optional Debug Configuration**
 
