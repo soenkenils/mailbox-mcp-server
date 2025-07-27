@@ -9,7 +9,7 @@ const originalConsole = {
 
 beforeAll(() => {
   // Suppress console output during tests to reduce noise from expected errors
-  console.error = (...args: any[]) => {
+  console.error = (...args: unknown[]) => {
     const message = args.join(" ");
     // Only suppress known expected error messages
     if (
@@ -36,7 +36,7 @@ beforeAll(() => {
     originalConsole.error(...args);
   };
 
-  console.warn = (...args: any[]) => {
+  console.warn = (...args: unknown[]) => {
     const message = args.join(" ");
     // Suppress known expected warning messages
     if (
@@ -55,7 +55,7 @@ beforeAll(() => {
     originalConsole.warn(...args);
   };
 
-  console.log = (...args: any[]) => {
+  console.log = (...args: unknown[]) => {
     const message = args.join(" ");
     // Suppress known expected log messages from retry logic and service operations
     if (

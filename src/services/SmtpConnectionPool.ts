@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import type { SmtpConnection } from "../types/email.types.js";
 import {
   ConnectionPool,
@@ -34,7 +35,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   async createConnection(): Promise<Transporter> {
-    const transporter = nodemailer.createTransport({
+    const transportOptions: SMTPTransport.Options = {
       host: this.smtpConfig.host,
       port: this.smtpConfig.port,
       secure: this.smtpConfig.secure,
@@ -48,7 +49,9 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       pool: false, // We handle pooling ourselves
       maxConnections: 1,
       maxMessages: Number.POSITIVE_INFINITY,
-    } as any);
+    };
+
+    const transporter = nodemailer.createTransport(transportOptions);
 
     // Verify the connection immediately after creation
     await transporter.verify();
@@ -85,7 +88,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
           throw new Error("SMTP connection failed verification multiple times");
         }
         throw new Error(
-          `SMTP connection verification failed: Connection is not valid`,
+          "SMTP connection verification failed: Connection is not valid",
         );
       }
     }

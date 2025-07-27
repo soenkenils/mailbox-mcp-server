@@ -133,7 +133,8 @@ export abstract class ConnectionPool<T> {
 
     // Process waiting queue
     if (this.waitingQueue.length > 0) {
-      const request = this.waitingQueue.shift()!;
+      const request = this.waitingQueue.shift();
+      if (!request) return; // Safety check
       try {
         const activatedWrapper = await this.activateConnection(wrapper);
         request.resolve(activatedWrapper);
@@ -156,7 +157,8 @@ export abstract class ConnectionPool<T> {
 
     // Reject all waiting requests
     while (this.waitingQueue.length > 0) {
-      const request = this.waitingQueue.shift()!;
+      const request = this.waitingQueue.shift();
+      if (!request) break; // Safety check
       request.reject(new Error("Connection pool is shutting down"));
     }
 
@@ -412,7 +414,7 @@ export abstract class ConnectionPool<T> {
   private calculateExponentialBackoff(attempt: number): number {
     // Exponential backoff: baseDelay * (2^attempt) + jitter
     const baseDelay = this.config.retryDelayMs;
-    const exponentialDelay = baseDelay * Math.pow(2, attempt);
+    const exponentialDelay = baseDelay * 2 ** attempt;
     // Add jitter (±25% randomization) to avoid thundering herd
     const jitter = exponentialDelay * 0.25 * (Math.random() - 0.5);
     const maxDelay = 30000; // Cap at 30 seconds

@@ -107,7 +107,11 @@ export class EmailService {
       console.error(`Error fetching email UID ${uid}:`, error);
 
       // Mark connection as unhealthy if fetch operation timed out
-      if (wrapper && error instanceof Error && error.message.includes('timed out')) {
+      if (
+        wrapper &&
+        error instanceof Error &&
+        error.message.includes("timed out")
+      ) {
         wrapper.isHealthy = false;
         console.error(`Marking connection as unhealthy due to timeout`);
       }
@@ -123,7 +127,9 @@ export class EmailService {
 
       // For connection errors, return null instead of throwing
       if (this.isConnectionError(error)) {
-        console.error(`Email UID ${uid} not available due to connection failure`);
+        console.error(
+          `Email UID ${uid} not available due to connection failure`,
+        );
         return null;
       }
 
@@ -249,10 +255,12 @@ export class EmailService {
     // Add timeout to prevent hanging fetch operations
     const timeoutMs = 10000; // 10 seconds timeout for fetch operation
     const fetchPromise = this.performFetch(wrapper, uid);
-    
+
     const timeoutPromise = new Promise<null>((_, reject) => {
       setTimeout(() => {
-        reject(new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`),
+        );
       }, timeoutMs);
     });
 
@@ -554,7 +562,9 @@ export class EmailService {
       // Fallback: Try to return stale cached data
       const staleData = this.tryGetStaleCache<EmailFolder[]>(cacheKey);
       if (staleData) {
-        console.error("Returning stale cached folders due to connection failure");
+        console.error(
+          "Returning stale cached folders due to connection failure",
+        );
         return staleData;
       }
 

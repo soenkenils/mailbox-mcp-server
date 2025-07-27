@@ -1,6 +1,15 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import dayjs from "dayjs";
 import type { CalendarService } from "../services/CalendarService.js";
+
+interface CalendarToolArgs {
+  start?: string;
+  end?: string;
+  calendar?: string;
+  limit?: number;
+  offset?: number;
+  query?: string;
+}
 
 export function createCalendarTools(calendarService: CalendarService): Tool[] {
   return [
@@ -122,9 +131,9 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
 
 export async function handleCalendarTool(
   name: string,
-  args: any,
+  args: CalendarToolArgs,
   calendarService: CalendarService,
-): Promise<any> {
+): Promise<CallToolResult> {
   try {
     switch (name) {
       case "get_calendar_events": {

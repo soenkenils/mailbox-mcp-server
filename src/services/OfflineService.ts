@@ -129,9 +129,7 @@ export class OfflineService {
 
     // Try with different limit/offset combinations
     if (options.limit || options.offset) {
-      const optionsWithoutPaging = { ...options };
-      delete optionsWithoutPaging.limit;
-      delete optionsWithoutPaging.offset;
+      const { limit, offset, ...optionsWithoutPaging } = options;
       keys.push(`email_search:${JSON.stringify(optionsWithoutPaging)}`);
     }
 
@@ -152,16 +150,16 @@ export class OfflineService {
     // Apply client-side filtering since we're working with cached data
     if (options.query) {
       filtered = filtered.filter((email) =>
-        this.matchesOfflineQuery(email, options.query!),
+        this.matchesOfflineQuery(email, options.query),
       );
     }
 
     if (options.since) {
-      filtered = filtered.filter((email) => email.date >= options.since!);
+      filtered = filtered.filter((email) => email.date >= options.since);
     }
 
     if (options.before) {
-      filtered = filtered.filter((email) => email.date <= options.before!);
+      filtered = filtered.filter((email) => email.date <= options.before);
     }
 
     // Apply pagination

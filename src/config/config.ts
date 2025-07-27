@@ -26,25 +26,29 @@ export function loadConfig(): ServerConfig {
     }
   }
 
+  // We've already validated these exist above, so they're safe to use
+  const email = process.env.MAILBOX_EMAIL;
+  const password = process.env.MAILBOX_PASSWORD;
+
   return {
     email: {
       host: process.env.MAILBOX_IMAP_HOST || "imap.mailbox.org",
       port: Number.parseInt(process.env.MAILBOX_IMAP_PORT || "993", 10),
       secure: process.env.MAILBOX_IMAP_SECURE !== "false",
-      user: process.env.MAILBOX_EMAIL!,
-      password: process.env.MAILBOX_PASSWORD!,
+      user: email,
+      password: password,
     },
     smtp: {
       host: process.env.MAILBOX_SMTP_HOST || "smtp.mailbox.org",
       port: Number.parseInt(process.env.MAILBOX_SMTP_PORT || "465", 10),
       secure: process.env.MAILBOX_SMTP_SECURE !== "false",
-      user: process.env.MAILBOX_EMAIL!,
-      password: process.env.MAILBOX_PASSWORD!,
+      user: email,
+      password: password,
     },
     calendar: {
       baseUrl: process.env.MAILBOX_CALDAV_URL || "https://dav.mailbox.org/",
-      username: process.env.MAILBOX_EMAIL!,
-      password: process.env.MAILBOX_PASSWORD!,
+      username: email,
+      password: password,
       calendars: process.env.MAILBOX_CALENDARS?.split(",") || undefined,
     },
     cache: {

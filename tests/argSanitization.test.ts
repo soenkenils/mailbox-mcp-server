@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // We need to test the sanitizeArgs method, but it's private
 // So we'll create a test class that extends the main class
@@ -9,15 +9,23 @@ class TestableMailboxMcpServer {
     }
 
     const sanitized = { ...args };
-    
+
     // Remove invalid UUID parameters that Claude Desktop might pass
     for (const key in sanitized) {
       if (key.includes("uuid") && typeof sanitized[key] === "string") {
         const value = sanitized[key] as string;
         // Check if the value is a valid UUID format
-        if (value === "null" || value === "none" || value === "undefined" || value === "" ||
-            (value.length > 0 && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) && 
-             !value.startsWith("urn:uuid:"))) {
+        if (
+          value === "null" ||
+          value === "none" ||
+          value === "undefined" ||
+          value === "" ||
+          (value.length > 0 &&
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              value,
+            ) &&
+            !value.startsWith("urn:uuid:"))
+        ) {
           delete sanitized[key];
         }
       }
@@ -38,7 +46,7 @@ describe("Argument Sanitization", () => {
         parent_message_uuid: "null",
         message_uuid: "none",
         thread_uuid: "undefined",
-        normalParam: "value"
+        normalParam: "value",
       };
 
       const result = testServer.sanitizeArgs(args);
@@ -46,7 +54,7 @@ describe("Argument Sanitization", () => {
       expect(result).toEqual({
         uid: 123,
         folder: "INBOX",
-        normalParam: "value"
+        normalParam: "value",
       });
     });
 
@@ -55,7 +63,7 @@ describe("Argument Sanitization", () => {
         uid: 123,
         parent_message_uuid: "550e8400-e29b-41d4-a716-446655440000",
         message_uuid: "urn:uuid:550e8400-e29b-41d4-a716-446655440001",
-        normalParam: "value"
+        normalParam: "value",
       };
 
       const result = testServer.sanitizeArgs(args);
@@ -64,7 +72,7 @@ describe("Argument Sanitization", () => {
         uid: 123,
         parent_message_uuid: "550e8400-e29b-41d4-a716-446655440000",
         message_uuid: "urn:uuid:550e8400-e29b-41d4-a716-446655440001",
-        normalParam: "value"
+        normalParam: "value",
       });
     });
 
@@ -86,7 +94,7 @@ describe("Argument Sanitization", () => {
         folder: "INBOX",
         subject: "null", // This should not be removed
         parent_message_uuid: "null", // This should be removed
-        normalParam: "value"
+        normalParam: "value",
       };
 
       const result = testServer.sanitizeArgs(args);
@@ -95,7 +103,7 @@ describe("Argument Sanitization", () => {
         uid: 123,
         folder: "INBOX",
         subject: "null",
-        normalParam: "value"
+        normalParam: "value",
       });
     });
 
@@ -106,13 +114,13 @@ describe("Argument Sanitization", () => {
         uuid3: "123",
         uuid4: "",
         uuid5: "abc-def-ghi",
-        normalParam: "value"
+        normalParam: "value",
       };
 
       const result = testServer.sanitizeArgs(args);
 
       expect(result).toEqual({
-        normalParam: "value"
+        normalParam: "value",
       });
     });
 
@@ -121,7 +129,7 @@ describe("Argument Sanitization", () => {
         uid: 123,
         folder: "INBOX",
         parent_message_uuid: "n", // The exact error case
-        normalParam: "value"
+        normalParam: "value",
       };
 
       const result = testServer.sanitizeArgs(args);
@@ -129,7 +137,7 @@ describe("Argument Sanitization", () => {
       expect(result).toEqual({
         uid: 123,
         folder: "INBOX",
-        normalParam: "value"
+        normalParam: "value",
       });
     });
   });
