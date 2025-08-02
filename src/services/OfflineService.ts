@@ -150,16 +150,16 @@ export class OfflineService {
     // Apply client-side filtering since we're working with cached data
     if (options.query) {
       filtered = filtered.filter((email) =>
-        this.matchesOfflineQuery(email, options.query),
+        this.matchesOfflineQuery(email, options.query!),
       );
     }
 
     if (options.since) {
-      filtered = filtered.filter((email) => email.date >= options.since);
+      filtered = filtered.filter((email) => email.date >= options.since!);
     }
 
     if (options.before) {
-      filtered = filtered.filter((email) => email.date <= options.before);
+      filtered = filtered.filter((email) => email.date <= options.before!);
     }
 
     // Apply pagination

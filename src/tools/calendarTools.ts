@@ -222,8 +222,8 @@ export async function handleCalendarTool(
       }
 
       case "get_free_busy": {
-        const start = new Date(args.start);
-        const end = new Date(args.end);
+        const start = new Date(args.start!);
+        const end = new Date(args.end!);
 
         const freeBusy = await calendarService.getFreeBusy(
           start,

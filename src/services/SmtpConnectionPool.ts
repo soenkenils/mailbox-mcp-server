@@ -1,5 +1,4 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import type { SmtpConnection } from "../types/email.types.js";
 import {
   ConnectionPool,
@@ -35,7 +34,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   async createConnection(): Promise<Transporter> {
-    const transportOptions: SMTPTransport.Options = {
+    const transportOptions = {
       host: this.smtpConfig.host,
       port: this.smtpConfig.port,
       secure: this.smtpConfig.secure,

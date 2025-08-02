@@ -27,8 +27,8 @@ export function loadConfig(): ServerConfig {
   }
 
   // We've already validated these exist above, so they're safe to use
-  const email = process.env.MAILBOX_EMAIL;
-  const password = process.env.MAILBOX_PASSWORD;
+  const email = process.env.MAILBOX_EMAIL!;
+  const password = process.env.MAILBOX_PASSWORD!;
 
   return {
     email: {
