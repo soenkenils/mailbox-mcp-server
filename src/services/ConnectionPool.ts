@@ -228,14 +228,14 @@ export abstract class ConnectionPool<T> {
             `Connection creation failed, retrying`,
             {
               operation: "createNewConnection",
-              service: "ConnectionPool"
+              service: "ConnectionPool",
             },
             {
               attempt: attempt + 1,
               maxRetries: this.config.maxRetries + 1,
               backoffDelay,
-              error: lastError.message
-            }
+              error: lastError.message,
+            },
           );
           await new Promise((resolve) => setTimeout(resolve, backoffDelay));
         }

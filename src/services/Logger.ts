@@ -10,13 +10,13 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
  */
 export enum LogLevel {
   DEBUG = "debug",
-  INFO = "info", 
+  INFO = "info",
   NOTICE = "notice",
   WARNING = "warning",
   ERROR = "error",
   CRITICAL = "critical",
   ALERT = "alert",
-  EMERGENCY = "emergency"
+  EMERGENCY = "emergency",
 }
 
 /**
@@ -30,7 +30,7 @@ const LOG_LEVEL_VALUES: Record<LogLevel, number> = {
   [LogLevel.ERROR]: 4,
   [LogLevel.CRITICAL]: 5,
   [LogLevel.ALERT]: 6,
-  [LogLevel.EMERGENCY]: 7
+  [LogLevel.EMERGENCY]: 7,
 };
 
 /**
@@ -92,7 +92,7 @@ const DEFAULT_CONFIG: LoggerConfig = {
   enableMcpNotifications: true,
   includeTimestamp: true,
   includeContext: true,
-  maxContextDepth: 3
+  maxContextDepth: 3,
 };
 
 /**
@@ -149,19 +149,19 @@ export class Logger {
 
     if (this.config.includeContext && entry.context) {
       const contextParts: string[] = [];
-      
+
       if (entry.context.operation) {
         contextParts.push(`op=${entry.context.operation}`);
       }
-      
+
       if (entry.context.service) {
         contextParts.push(`svc=${entry.context.service}`);
       }
-      
+
       if (entry.context.duration !== undefined) {
         contextParts.push(`dur=${entry.context.duration}ms`);
       }
-      
+
       if (entry.context.requestId) {
         contextParts.push(`req=${entry.context.requestId}`);
       }
@@ -194,7 +194,11 @@ export class Logger {
         return String(data);
       }
 
-      if (typeof data === "string" || typeof data === "number" || typeof data === "boolean") {
+      if (
+        typeof data === "string" ||
+        typeof data === "number" ||
+        typeof data === "boolean"
+      ) {
         return String(data);
       }
 
@@ -209,19 +213,19 @@ export class Logger {
       if (Array.isArray(data)) {
         if (data.length === 0) return "[]";
         if (data.length > 5) return `[Array(${data.length})]`;
-        return `[${data.map(item => this.serializeData(item, depth + 1)).join(", ")}]`;
+        return `[${data.map((item) => this.serializeData(item, depth + 1)).join(", ")}]`;
       }
 
       if (typeof data === "object") {
         const keys = Object.keys(data);
         if (keys.length === 0) return "{}";
         if (keys.length > 10) return `{Object(${keys.length} keys)}`;
-        
-        const pairs = keys.slice(0, 5).map(key => {
+
+        const pairs = keys.slice(0, 5).map((key) => {
           const value = (data as Record<string, unknown>)[key];
           return `${key}: ${this.serializeData(value, depth + 1)}`;
         });
-        
+
         return `{${pairs.join(", ")}}`;
       }
 
@@ -236,7 +240,7 @@ export class Logger {
    */
   private writeToStderr(entry: LogEntry): void {
     if (!this.config.enableStderr) return;
-    
+
     const formatted = this.formatStderrLog(entry);
     console.error(formatted);
   }
@@ -252,7 +256,7 @@ export class Logger {
       const notificationData: Record<string, unknown> = {
         message: entry.message,
         timestamp: entry.timestamp.toISOString(),
-        ...entry.context
+        ...entry.context,
       };
 
       if (entry.data) {
@@ -263,11 +267,13 @@ export class Logger {
       await this.mcpServer.sendLoggingMessage({
         level: entry.level,
         logger: entry.logger,
-        data: notificationData
+        data: notificationData,
       });
     } catch (error) {
       // Fall back to stderr if MCP notification fails
-      console.error(`[LOGGER] Failed to send MCP notification: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `[LOGGER] Failed to send MCP notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -279,7 +285,7 @@ export class Logger {
     message: string,
     context: LogContext = {},
     logger?: string,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
   ): Promise<void> {
     if (!this.shouldLog(level)) return;
 
@@ -289,10 +295,10 @@ export class Logger {
       logger,
       context: {
         ...context,
-        timestamp: context.timestamp || new Date()
+        timestamp: context.timestamp || new Date(),
       },
       timestamp: new Date(),
-      data
+      data,
     };
 
     // Write to stderr (synchronous)
@@ -307,56 +313,96 @@ export class Logger {
   /**
    * Log at debug level
    */
-  async debug(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async debug(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.DEBUG, message, context, logger, data);
   }
 
   /**
    * Log at info level
    */
-  async info(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async info(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.INFO, message, context, logger, data);
   }
 
   /**
    * Log at notice level
    */
-  async notice(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async notice(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.NOTICE, message, context, logger, data);
   }
 
   /**
    * Log at warning level
    */
-  async warning(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async warning(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.WARNING, message, context, logger, data);
   }
 
   /**
    * Log at error level
    */
-  async error(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async error(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.ERROR, message, context, logger, data);
   }
 
   /**
    * Log at critical level
    */
-  async critical(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async critical(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.CRITICAL, message, context, logger, data);
   }
 
   /**
    * Log at alert level
    */
-  async alert(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async alert(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.ALERT, message, context, logger, data);
   }
 
   /**
    * Log at emergency level
    */
-  async emergency(message: string, context?: LogContext, logger?: string, data?: Record<string, unknown>): Promise<void> {
+  async emergency(
+    message: string,
+    context?: LogContext,
+    logger?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.log(LogLevel.EMERGENCY, message, context, logger, data);
   }
 
@@ -365,27 +411,34 @@ export class Logger {
    */
   recordPerformance(metrics: PerformanceMetrics): void {
     this.performanceMetrics.push(metrics);
-    
+
     // Keep only recent metrics
     if (this.performanceMetrics.length > this.maxMetricsHistory) {
-      this.performanceMetrics = this.performanceMetrics.slice(-this.maxMetricsHistory);
+      this.performanceMetrics = this.performanceMetrics.slice(
+        -this.maxMetricsHistory,
+      );
     }
 
     // Log performance metric
     const level = metrics.success ? LogLevel.INFO : LogLevel.WARNING;
     const message = `Performance: ${metrics.operation} ${metrics.success ? "completed" : "failed"} in ${metrics.duration}ms`;
-    
-    this.log(level, message, {
-      operation: metrics.operation,
-      duration: metrics.duration,
-      metadata: {
-        startTime: metrics.startTime.toISOString(),
-        endTime: metrics.endTime.toISOString(),
-        success: metrics.success,
-        errorType: metrics.errorType,
-        ...metrics.metadata
-      }
-    }, "performance").catch(() => {
+
+    this.log(
+      level,
+      message,
+      {
+        operation: metrics.operation,
+        duration: metrics.duration,
+        metadata: {
+          startTime: metrics.startTime.toISOString(),
+          endTime: metrics.endTime.toISOString(),
+          success: metrics.success,
+          errorType: metrics.errorType,
+          ...metrics.metadata,
+        },
+      },
+      "performance",
+    ).catch(() => {
       // Ignore logging errors for performance metrics
     });
   }
@@ -400,18 +453,20 @@ export class Logger {
     averageDuration: number;
     recentMetrics: PerformanceMetrics[];
   } {
-    const successful = this.performanceMetrics.filter(m => m.success).length;
+    const successful = this.performanceMetrics.filter((m) => m.success).length;
     const failed = this.performanceMetrics.length - successful;
-    const averageDuration = this.performanceMetrics.length > 0 
-      ? this.performanceMetrics.reduce((sum, m) => sum + m.duration, 0) / this.performanceMetrics.length
-      : 0;
+    const averageDuration =
+      this.performanceMetrics.length > 0
+        ? this.performanceMetrics.reduce((sum, m) => sum + m.duration, 0) /
+          this.performanceMetrics.length
+        : 0;
 
     return {
       total: this.performanceMetrics.length,
       successful,
       failed,
       averageDuration: Math.round(averageDuration * 100) / 100,
-      recentMetrics: this.performanceMetrics.slice(-10) // Last 10 metrics
+      recentMetrics: this.performanceMetrics.slice(-10), // Last 10 metrics
     };
   }
 
@@ -425,7 +480,10 @@ export class Logger {
   /**
    * Create a performance timer
    */
-  startTimer(operation: string, metadata?: Record<string, unknown>): PerformanceTimer {
+  startTimer(
+    operation: string,
+    metadata?: Record<string, unknown>,
+  ): PerformanceTimer {
     return new PerformanceTimer(this, operation, metadata);
   }
 }
@@ -434,41 +492,79 @@ export class Logger {
  * Child logger with a predefined logger name
  */
 export class ChildLogger {
-  constructor(private parent: Logger, private loggerName: string) {}
+  constructor(
+    private parent: Logger,
+    private loggerName: string,
+  ) {}
 
-  async debug(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async debug(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.debug(message, context, this.loggerName, data);
   }
 
-  async info(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async info(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.info(message, context, this.loggerName, data);
   }
 
-  async notice(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async notice(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.notice(message, context, this.loggerName, data);
   }
 
-  async warning(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async warning(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.warning(message, context, this.loggerName, data);
   }
 
-  async error(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async error(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.error(message, context, this.loggerName, data);
   }
 
-  async critical(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async critical(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.critical(message, context, this.loggerName, data);
   }
 
-  async alert(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async alert(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.alert(message, context, this.loggerName, data);
   }
 
-  async emergency(message: string, context?: LogContext, data?: Record<string, unknown>): Promise<void> {
+  async emergency(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     return this.parent.emergency(message, context, this.loggerName, data);
   }
 
-  startTimer(operation: string, metadata?: Record<string, unknown>): PerformanceTimer {
+  startTimer(
+    operation: string,
+    metadata?: Record<string, unknown>,
+  ): PerformanceTimer {
     return this.parent.startTimer(operation, metadata);
   }
 }
@@ -482,7 +578,7 @@ export class PerformanceTimer {
   constructor(
     private logger: Logger,
     private operation: string,
-    private metadata?: Record<string, unknown>
+    private metadata?: Record<string, unknown>,
   ) {
     this.startTime = new Date();
   }
@@ -501,7 +597,7 @@ export class PerformanceTimer {
       endTime,
       success,
       errorType,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
 
     this.logger.recordPerformance(metrics);

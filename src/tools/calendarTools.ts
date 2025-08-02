@@ -3,20 +3,17 @@ import dayjs from "dayjs";
 import type { CalendarService } from "../services/CalendarService.js";
 import {
   CalendarError,
-  ValidationError,
   ErrorCode,
-  ErrorUtils,
   type ErrorContext,
+  ErrorUtils,
+  ValidationError,
 } from "../types/errors.js";
-
-interface CalendarToolArgs {
-  start?: string;
-  end?: string;
-  calendar?: string;
-  limit?: number;
-  offset?: number;
-  query?: string;
-}
+import {
+  getCalendarEventsSchema,
+  getFreeBusySchema,
+  searchCalendarSchema,
+  validateInput,
+} from "../validation/schemas.js";
 
 export function createCalendarTools(calendarService: CalendarService): Tool[] {
   return [
@@ -138,25 +135,26 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
 
 export async function handleCalendarTool(
   name: string,
-  args: CalendarToolArgs,
+  args: any,
   calendarService: CalendarService,
 ): Promise<CallToolResult> {
   try {
     switch (name) {
       case "get_calendar_events": {
-        const start = args.start
-          ? new Date(args.start)
+        const validatedArgs = validateInput(getCalendarEventsSchema, args);
+        const start = validatedArgs.start
+          ? new Date(validatedArgs.start)
           : dayjs().startOf("day").toDate();
-        const end = args.end
-          ? new Date(args.end)
+        const end = validatedArgs.end
+          ? new Date(validatedArgs.end)
           : dayjs(start).add(30, "days").toDate();
 
         const options = {
           start,
           end,
-          calendar: args.calendar,
-          limit: args.limit || 100,
-          offset: args.offset || 0,
+          calendar: validatedArgs.calendar,
+          limit: validatedArgs.limit,
+          offset: validatedArgs.offset,
         };
 
         const events = await calendarService.getCalendarEvents(options);
@@ -188,20 +186,21 @@ export async function handleCalendarTool(
       }
 
       case "search_calendar": {
-        const start = args.start
-          ? new Date(args.start)
+        const validatedArgs = validateInput(searchCalendarSchema, args);
+        const start = validatedArgs.start
+          ? new Date(validatedArgs.start)
           : dayjs().startOf("day").toDate();
-        const end = args.end
-          ? new Date(args.end)
+        const end = validatedArgs.end
+          ? new Date(validatedArgs.end)
           : dayjs(start).add(1, "year").toDate();
 
         const options = {
-          query: args.query,
+          query: validatedArgs.query,
           start,
           end,
-          calendar: args.calendar,
-          limit: args.limit || 50,
-          offset: args.offset || 0,
+          calendar: validatedArgs.calendar,
+          limit: validatedArgs.limit,
+          offset: validatedArgs.offset,
         };
 
         const events = await calendarService.searchCalendar(options);
@@ -210,7 +209,7 @@ export async function handleCalendarTool(
           content: [
             {
               type: "text",
-              text: `Found ${events.length} events matching "${args.query}":\n\n${events
+              text: `Found ${events.length} events matching "${validatedArgs.query}":\n\n${events
                 .map(
                   (event) =>
                     `**${event.summary}**\n` +
@@ -229,13 +228,14 @@ export async function handleCalendarTool(
       }
 
       case "get_free_busy": {
-        const start = new Date(args.start!);
-        const end = new Date(args.end!);
+        const validatedArgs = validateInput(getFreeBusySchema, args);
+        const start = new Date(validatedArgs.start);
+        const end = new Date(validatedArgs.end);
 
         const freeBusy = await calendarService.getFreeBusy(
           start,
           end,
-          args.calendar,
+          validatedArgs.calendar,
         );
 
         const busySlots = freeBusy.busy.map(
@@ -264,18 +264,53 @@ export async function handleCalendarTool(
       }
 
       default:
-        throw new ValidationError(`Unknown calendar tool: ${name}`, "tool_name", name);
+        throw new ValidationError(
+          `Unknown calendar tool: ${name}`,
+          "tool_name",
+          name,
+        );
     }
   } catch (error) {
     const context: ErrorContext = {
       operation: name,
       service: "calendarTools",
-      details: { args }
+      details: { args },
     };
 
+    // Handle validation errors specifically
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Validation failed:")
+    ) {
+      const validationError = new ValidationError(
+        error.message.replace("Validation failed: ", ""),
+        "input_validation",
+        args,
+        context,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Invalid input for ${name}: ${validationError.getUserMessage()}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
     // Convert to structured error if not already
-    const mcpError = error instanceof Error ? ErrorUtils.toMCPError(error, context) : 
-      new CalendarError(String(error), ErrorCode.OPERATION_FAILED, undefined, undefined, context);
+    const mcpError =
+      error instanceof Error
+        ? ErrorUtils.toMCPError(error, context)
+        : new CalendarError(
+            String(error),
+            ErrorCode.OPERATION_FAILED,
+            undefined,
+            undefined,
+            context,
+          );
 
     return {
       content: [

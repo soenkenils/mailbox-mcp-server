@@ -58,7 +58,8 @@
     "mailparser": "^3.7.4",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.5",
-    "tsdav": "^2.1.5"
+    "tsdav": "^2.1.5",
+    "valibot": "^1.1.0"
   },
   "directories": {
     "doc": "docs",

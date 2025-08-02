@@ -16,7 +16,7 @@ export interface OfflineCapabilities {
 
 export class OfflineService {
   private logger = createLogger("OfflineService");
-  
+
   constructor(private cache: LocalCache) {}
 
   getOfflineCapabilities(): OfflineCapabilities {
@@ -45,9 +45,9 @@ export class OfflineService {
           `Found offline search results for query`,
           {
             operation: "searchOfflineEmails",
-            service: "OfflineService"
+            service: "OfflineService",
           },
-          { options }
+          { options },
         );
         return this.filterOfflineResults(cachedResults, options);
       }
@@ -57,9 +57,9 @@ export class OfflineService {
       `No offline search results found for query`,
       {
         operation: "searchOfflineEmails",
-        service: "OfflineService"
+        service: "OfflineService",
       },
-      { options }
+      { options },
     );
     return [];
   }
@@ -72,17 +72,25 @@ export class OfflineService {
     const cachedEmail = this.cache.getStale<EmailMessage>(cacheKey);
 
     if (cachedEmail) {
-      await this.logger.info(`Found offline email UID ${uid} in folder ${folder}`, {
-        operation: "getOfflineEmail",
-        service: "OfflineService"
-      }, { uid, folder });
+      await this.logger.info(
+        `Found offline email UID ${uid} in folder ${folder}`,
+        {
+          operation: "getOfflineEmail",
+          service: "OfflineService",
+        },
+        { uid, folder },
+      );
       return cachedEmail;
     }
 
-    await this.logger.info(`No offline email found for UID ${uid} in folder ${folder}`, {
-      operation: "getOfflineEmail",
-      service: "OfflineService"
-    }, { uid, folder });
+    await this.logger.info(
+      `No offline email found for UID ${uid} in folder ${folder}`,
+      {
+        operation: "getOfflineEmail",
+        service: "OfflineService",
+      },
+      { uid, folder },
+    );
     return null;
   }
 
@@ -93,15 +101,18 @@ export class OfflineService {
     if (cachedFolders) {
       await this.logger.info("Found offline folders list", {
         operation: "getOfflineFolders",
-        service: "OfflineService"
+        service: "OfflineService",
       });
       return cachedFolders;
     }
 
-    await this.logger.info("No offline folders found, returning default folders", {
-      operation: "getOfflineFolders",
-      service: "OfflineService"
-    });
+    await this.logger.info(
+      "No offline folders found, returning default folders",
+      {
+        operation: "getOfflineFolders",
+        service: "OfflineService",
+      },
+    );
     return this.getDefaultFolders();
   }
 

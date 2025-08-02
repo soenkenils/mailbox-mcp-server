@@ -10,20 +10,20 @@ import type {
   ImapConnection,
 } from "../types/email.types.js";
 import {
+  CacheError,
+  ConnectionError,
+  EmailError,
+  ErrorCode,
+  type ErrorContext,
+  ErrorUtils,
+} from "../types/errors.js";
+import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
   type ImapPoolConfig,
 } from "./ImapConnectionPool.js";
-import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
-import {
-  ConnectionError,
-  EmailError,
-  CacheError,
-  ErrorCode,
-  ErrorUtils,
-  type ErrorContext,
-} from "../types/errors.js";
 import { createLogger } from "./Logger.js";
+import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
@@ -76,13 +76,20 @@ export class EmailService {
       const context: ErrorContext = {
         operation: "searchEmails",
         service: "EmailService",
-        details: { folder: options.folder, query: options.query }
+        details: { folder: options.folder, query: options.query },
       };
 
-      await this.logger.error("Error searching emails", {
-        operation: "searchEmails",
-        service: "EmailService"
-      }, { error: error instanceof Error ? error.message : String(error), options });
+      await this.logger.error(
+        "Error searching emails",
+        {
+          operation: "searchEmails",
+          service: "EmailService",
+        },
+        {
+          error: error instanceof Error ? error.message : String(error),
+          options,
+        },
+      );
 
       // Convert to structured error
       const mcpError = ErrorUtils.toMCPError(error as Error, context);
@@ -91,10 +98,14 @@ export class EmailService {
       if (mcpError instanceof ConnectionError) {
         const staleData = this.tryGetStaleCache<EmailMessage[]>(cacheKey);
         if (staleData) {
-          await this.logger.warning("Returning stale cached data due to connection failure", {
-            operation: "searchEmails",
-            service: "EmailService"
-          }, { cacheKey });
+          await this.logger.warning(
+            "Returning stale cached data due to connection failure",
+            {
+              operation: "searchEmails",
+              service: "EmailService",
+            },
+            { cacheKey },
+          );
           return staleData;
         }
 
@@ -103,8 +114,8 @@ export class EmailService {
           "No cached data available, returning empty results due to connection failure",
           {
             operation: "searchEmails",
-            service: "EmailService"
-          }
+            service: "EmailService",
+          },
         );
         return [];
       }
@@ -136,13 +147,21 @@ export class EmailService {
       const context: ErrorContext = {
         operation: "getEmail",
         service: "EmailService",
-        details: { uid, folder }
+        details: { uid, folder },
       };
 
-      await this.logger.error(`Error fetching email UID ${uid}`, {
-        operation: "getEmail",
-        service: "EmailService"
-      }, { uid, folder, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error fetching email UID ${uid}`,
+        {
+          operation: "getEmail",
+          service: "EmailService",
+        },
+        {
+          uid,
+          folder,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
 
       // Mark connection as unhealthy if fetch operation timed out
       if (
@@ -151,10 +170,14 @@ export class EmailService {
         error.message.includes("timed out")
       ) {
         wrapper.isHealthy = false;
-        await this.logger.warning(`Marking connection as unhealthy due to timeout`, {
-          operation: "getEmail",
-          service: "EmailService"
-        }, { uid, folder });
+        await this.logger.warning(
+          `Marking connection as unhealthy due to timeout`,
+          {
+            operation: "getEmail",
+            service: "EmailService",
+          },
+          { uid, folder },
+        );
       }
 
       // Convert to structured error
@@ -168,9 +191,9 @@ export class EmailService {
             `Returning stale cached email UID ${uid} due to connection failure`,
             {
               operation: "getEmail",
-              service: "EmailService"
+              service: "EmailService",
             },
-            { uid, folder, cacheKey }
+            { uid, folder, cacheKey },
           );
           return staleData;
         }
@@ -180,9 +203,9 @@ export class EmailService {
           `Email UID ${uid} not available due to connection failure`,
           {
             operation: "getEmail",
-            service: "EmailService"
+            service: "EmailService",
           },
-          { uid, folder }
+          { uid, folder },
         );
         return null;
       }
@@ -325,9 +348,13 @@ export class EmailService {
         `Failed to fetch email with UID ${uid} from folder ${folder}`,
         {
           operation: "fetchEmailContent",
-          service: "EmailService"
+          service: "EmailService",
         },
-        { uid, folder, error: error instanceof Error ? error.message : String(error) }
+        {
+          uid,
+          folder,
+          error: error instanceof Error ? error.message : String(error),
+        },
       );
       return null;
     }
@@ -615,10 +642,14 @@ export class EmailService {
       this.cache.set(cacheKey, result, 900000); // Cache for 15 minutes
       return result;
     } catch (error) {
-      await this.logger.error("Error fetching folders", {
-        operation: "getFolders",
-        service: "EmailService"
-      }, { error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        "Error fetching folders",
+        {
+          operation: "getFolders",
+          service: "EmailService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
 
       // Fallback: Try to return stale cached data
       const staleData = this.tryGetStaleCache<EmailFolder[]>(cacheKey);
@@ -627,19 +658,22 @@ export class EmailService {
           "Returning stale cached folders due to connection failure",
           {
             operation: "getFolders",
-            service: "EmailService"
+            service: "EmailService",
           },
-          { cacheKey }
+          { cacheKey },
         );
         return staleData;
       }
 
       // Fallback: Return standard folder list if no cache available
       if (this.isConnectionError(error)) {
-        await this.logger.warning("Returning default folders due to connection failure", {
-          operation: "getFolders",
-          service: "EmailService"
-        });
+        await this.logger.warning(
+          "Returning default folders due to connection failure",
+          {
+            operation: "getFolders",
+            service: "EmailService",
+          },
+        );
         return this.getDefaultFolders();
       }
 
@@ -677,10 +711,19 @@ export class EmailService {
         message: `Email moved from ${fromFolder} to ${toFolder}`,
       };
     } catch (error) {
-      await this.logger.error(`Error moving email UID ${uid}`, {
-        operation: "moveEmail",
-        service: "EmailService"
-      }, { uid, fromFolder, toFolder, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error moving email UID ${uid}`,
+        {
+          operation: "moveEmail",
+          service: "EmailService",
+        },
+        {
+          uid,
+          fromFolder,
+          toFolder,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return {
         success: false,
         message: `Failed to move email: ${error instanceof Error ? error.message : String(error)}`,
@@ -721,10 +764,20 @@ export class EmailService {
         message: `Email flags ${action === "add" ? "added" : "removed"} successfully`,
       };
     } catch (error) {
-      await this.logger.error(`Error marking email UID ${uid}`, {
-        operation: "markEmail",
-        service: "EmailService"
-      }, { uid, folder, flags, action, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error marking email UID ${uid}`,
+        {
+          operation: "markEmail",
+          service: "EmailService",
+        },
+        {
+          uid,
+          folder,
+          flags,
+          action,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return {
         success: false,
         message: `Failed to mark email: ${error instanceof Error ? error.message : String(error)}`,
@@ -807,10 +860,19 @@ export class EmailService {
           : "Email moved to trash",
       };
     } catch (error) {
-      await this.logger.error(`Error deleting email UID ${uid}`, {
-        operation: "deleteEmail",
-        service: "EmailService"
-      }, { uid, folder, permanent, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error deleting email UID ${uid}`,
+        {
+          operation: "deleteEmail",
+          service: "EmailService",
+        },
+        {
+          uid,
+          folder,
+          permanent,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return {
         success: false,
         message: `Failed to delete email: ${error instanceof Error ? error.message : String(error)}`,
@@ -851,10 +913,17 @@ export class EmailService {
             : undefined,
       };
     } catch (error) {
-      await this.logger.error("Error creating draft", {
-        operation: "createDraft",
-        service: "EmailService"
-      }, { composition, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        "Error creating draft",
+        {
+          operation: "createDraft",
+          service: "EmailService",
+        },
+        {
+          composition,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return {
         success: false,
         message: `Failed to create draft: ${error instanceof Error ? error.message : String(error)}`,
@@ -1014,10 +1083,14 @@ export class EmailService {
         metrics.totalErrors < metrics.totalConnections
       );
     } catch (error) {
-      await this.logger.error("Error checking pool health", {
-        operation: "isHealthy",
-        service: "EmailService"
-      }, { error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        "Error checking pool health",
+        {
+          operation: "isHealthy",
+          service: "EmailService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       return false;
     }
   }
@@ -1044,10 +1117,14 @@ export class EmailService {
         message: `Directory '${name}' created successfully`,
       };
     } catch (error) {
-      await this.logger.error(`Error creating directory '${name}'`, {
-        operation: "createDirectory",
-        service: "EmailService"
-      }, { name, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error creating directory '${name}'`,
+        {
+          operation: "createDirectory",
+          service: "EmailService",
+        },
+        { name, error: error instanceof Error ? error.message : String(error) },
+      );
       return {
         success: false,
         message: `Failed to create directory: ${error instanceof Error ? error.message : String(error)}`,

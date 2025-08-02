@@ -104,8 +104,8 @@ describe("Email Tools", () => {
         await handleEmailTool(
           "search_emails",
           {
-            since: "2024-01-01T00:00:00Z",
-            before: "2024-01-31T23:59:59Z",
+            since: "2024-01-01T00:00",
+            before: "2024-01-31T23:59",
           },
           mockEmailService,
         );
@@ -115,8 +115,8 @@ describe("Email Tools", () => {
           folder: "INBOX",
           limit: 50,
           offset: 0,
-          since: new Date("2024-01-01T00:00:00Z"),
-          before: new Date("2024-01-31T23:59:59Z"),
+          since: new Date("2024-01-01T00:00"),
+          before: new Date("2024-01-31T23:59"),
         });
       });
     });
@@ -273,7 +273,9 @@ describe("Email Tools", () => {
         );
 
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain("Unable to connect to the server");
+        expect(result.content[0].text).toContain(
+          "Unable to connect to the server",
+        );
       });
 
       it("should handle unknown tool", async () => {

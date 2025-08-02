@@ -10,12 +10,12 @@ import type {
   FreeBusyInfo,
 } from "../types/calendar.types.js";
 import {
-  ConnectionError,
-  CalendarError,
   CacheError,
+  CalendarError,
+  ConnectionError,
   ErrorCode,
-  ErrorUtils,
   type ErrorContext,
+  ErrorUtils,
 } from "../types/errors.js";
 import { createLogger } from "./Logger.js";
 
@@ -125,10 +125,17 @@ export class CalendarService {
 
       return this.sortAndLimitEvents(allEvents, options);
     } catch (error) {
-      await this.logger.error("Error fetching calendar events", {
-        operation: "getEvents",
-        service: "CalendarService"
-      }, { options, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        "Error fetching calendar events",
+        {
+          operation: "getEvents",
+          service: "CalendarService",
+        },
+        {
+          options,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return [];
     }
   }
@@ -140,10 +147,14 @@ export class CalendarService {
 
       return calendars.map((cal: DAVCalendar) => cal.displayName || cal.url);
     } catch (error) {
-      await this.logger.error("Calendar discovery failed", {
-        operation: "getCalendarList",
-        service: "CalendarService"
-      }, { error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        "Calendar discovery failed",
+        {
+          operation: "getCalendarList",
+          service: "CalendarService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       return ["personal"];
     }
   }
@@ -178,10 +189,18 @@ export class CalendarService {
 
       return await this.parseCalendarObjects(calendarObjects, calendar);
     } catch (error) {
-      await this.logger.error(`Error fetching events from calendar ${calendar}`, {
-        operation: "fetchCalendarEvents",
-        service: "CalendarService"
-      }, { calendar, options, error: error instanceof Error ? error.message : String(error) });
+      await this.logger.error(
+        `Error fetching events from calendar ${calendar}`,
+        {
+          operation: "fetchCalendarEvents",
+          service: "CalendarService",
+        },
+        {
+          calendar,
+          options,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return [];
     }
   }
@@ -200,12 +219,18 @@ export class CalendarService {
         }
       }
     } catch (error) {
-      this.logger.error("Error parsing calendar objects", {
-        operation: "parseCalendarObjects",
-        service: "CalendarService"
-      }, { error: error instanceof Error ? error.message : String(error) }).catch(() => {
-        // Ignore logging errors
-      });
+      this.logger
+        .error(
+          "Error parsing calendar objects",
+          {
+            operation: "parseCalendarObjects",
+            service: "CalendarService",
+          },
+          { error: error instanceof Error ? error.message : String(error) },
+        )
+        .catch(() => {
+          // Ignore logging errors
+        });
     }
 
     return events;
@@ -226,12 +251,18 @@ export class CalendarService {
         }
       }
     } catch (error) {
-      this.logger.error("Error parsing iCal data", {
-        operation: "parseICalData",
-        service: "CalendarService"
-      }, { error: error instanceof Error ? error.message : String(error) }).catch(() => {
-        // Ignore logging errors
-      });
+      this.logger
+        .error(
+          "Error parsing iCal data",
+          {
+            operation: "parseICalData",
+            service: "CalendarService",
+          },
+          { error: error instanceof Error ? error.message : String(error) },
+        )
+        .catch(() => {
+          // Ignore logging errors
+        });
     }
 
     return events;
@@ -257,12 +288,18 @@ export class CalendarService {
         ...metadataInfo,
       };
     } catch (error) {
-      this.logger.error("Error parsing VEVENT", {
-        operation: "parseVEvent",
-        service: "CalendarService"
-      }, { error: error instanceof Error ? error.message : String(error) }).catch(() => {
-        // Ignore logging errors
-      });
+      this.logger
+        .error(
+          "Error parsing VEVENT",
+          {
+            operation: "parseVEvent",
+            service: "CalendarService",
+          },
+          { error: error instanceof Error ? error.message : String(error) },
+        )
+        .catch(() => {
+          // Ignore logging errors
+        });
       return null;
     }
   }

@@ -9,52 +9,52 @@ export enum ErrorCode {
   CONNECTION_TIMEOUT = "CONNECTION_TIMEOUT",
   CONNECTION_REFUSED = "CONNECTION_REFUSED",
   CONNECTION_LOST = "CONNECTION_LOST",
-  
+
   // Authentication errors
   AUTH_FAILED = "AUTH_FAILED",
   AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS",
   AUTH_TOKEN_EXPIRED = "AUTH_TOKEN_EXPIRED",
   AUTH_INSUFFICIENT_PERMISSIONS = "AUTH_INSUFFICIENT_PERMISSIONS",
-  
+
   // Rate limiting errors
   RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED",
   QUOTA_EXCEEDED = "QUOTA_EXCEEDED",
-  
+
   // Validation errors
   VALIDATION_FAILED = "VALIDATION_FAILED",
   INVALID_INPUT = "INVALID_INPUT",
   MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD",
   INVALID_FORMAT = "INVALID_FORMAT",
-  
+
   // Mailbox.org specific errors
   MAILBOX_SERVER_ERROR = "MAILBOX_SERVER_ERROR",
   MAILBOX_MAINTENANCE = "MAILBOX_MAINTENANCE",
   MAILBOX_FEATURE_UNAVAILABLE = "MAILBOX_FEATURE_UNAVAILABLE",
-  
+
   // Email specific errors
   EMAIL_NOT_FOUND = "EMAIL_NOT_FOUND",
   FOLDER_NOT_FOUND = "FOLDER_NOT_FOUND",
   ATTACHMENT_TOO_LARGE = "ATTACHMENT_TOO_LARGE",
   INVALID_EMAIL_ADDRESS = "INVALID_EMAIL_ADDRESS",
-  
+
   // Calendar specific errors
   CALENDAR_NOT_FOUND = "CALENDAR_NOT_FOUND",
   EVENT_NOT_FOUND = "EVENT_NOT_FOUND",
   INVALID_DATE_RANGE = "INVALID_DATE_RANGE",
   CALENDAR_CONFLICT = "CALENDAR_CONFLICT",
-  
+
   // Cache errors
   CACHE_ERROR = "CACHE_ERROR",
   CACHE_MISS = "CACHE_MISS",
-  
+
   // Configuration errors
   CONFIG_INVALID = "CONFIG_INVALID",
   CONFIG_MISSING = "CONFIG_MISSING",
-  
+
   // Internal errors
   INTERNAL_ERROR = "INTERNAL_ERROR",
   NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
-  OPERATION_FAILED = "OPERATION_FAILED"
+  OPERATION_FAILED = "OPERATION_FAILED",
 }
 
 export interface ErrorContext {
@@ -79,14 +79,14 @@ export abstract class MCPError extends Error {
     message: string,
     code: ErrorCode,
     context: ErrorContext = {},
-    isRetryable: boolean = false
+    isRetryable = false,
   ) {
     super(message);
     this.name = this.constructor.name;
     this.code = code;
     this.context = {
       ...context,
-      timestamp: context.timestamp || new Date()
+      timestamp: context.timestamp || new Date(),
     };
     this.isRetryable = isRetryable;
     this.timestamp = new Date();
@@ -108,7 +108,7 @@ export abstract class MCPError extends Error {
       context: this.context,
       isRetryable: this.isRetryable,
       timestamp: this.timestamp,
-      stack: this.stack
+      stack: this.stack,
     };
   }
 
@@ -127,7 +127,7 @@ export class ConnectionError extends MCPError {
   constructor(
     message: string,
     code: ErrorCode = ErrorCode.CONNECTION_FAILED,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, true); // Connection errors are usually retryable
   }
@@ -153,7 +153,7 @@ export class AuthenticationError extends MCPError {
   constructor(
     message: string,
     code: ErrorCode = ErrorCode.AUTH_FAILED,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, false); // Auth errors are usually not retryable
   }
@@ -181,7 +181,7 @@ export class RateLimitError extends MCPError {
   constructor(
     message: string,
     retryAfter?: number,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, ErrorCode.RATE_LIMIT_EXCEEDED, context, true);
     this.retryAfter = retryAfter;
@@ -206,7 +206,7 @@ export class ValidationError extends MCPError {
     message: string,
     field?: string,
     value?: unknown,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, ErrorCode.VALIDATION_FAILED, context, false);
     this.field = field;
@@ -231,7 +231,7 @@ export class MailboxError extends MCPError {
     message: string,
     code: ErrorCode = ErrorCode.MAILBOX_SERVER_ERROR,
     serverCode?: string,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, true);
     this.serverCode = serverCode;
@@ -261,7 +261,7 @@ export class EmailError extends MCPError {
     code: ErrorCode,
     emailId?: string,
     folder?: string,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, false);
     this.emailId = emailId;
@@ -296,7 +296,7 @@ export class CalendarError extends MCPError {
     code: ErrorCode,
     calendarId?: string,
     eventId?: string,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, false);
     this.calendarId = calendarId;
@@ -326,7 +326,7 @@ export class CacheError extends MCPError {
   constructor(
     message: string,
     code: ErrorCode = ErrorCode.CACHE_ERROR,
-    context: ErrorContext = {}
+    context: ErrorContext = {},
   ) {
     super(message, code, context, true);
   }
@@ -342,11 +342,7 @@ export class CacheError extends MCPError {
 export class ConfigurationError extends MCPError {
   public readonly configKey?: string;
 
-  constructor(
-    message: string,
-    configKey?: string,
-    context: ErrorContext = {}
-  ) {
+  constructor(message: string, configKey?: string, context: ErrorContext = {}) {
     super(message, ErrorCode.CONFIG_INVALID, context, false);
     this.configKey = configKey;
   }
@@ -370,14 +366,16 @@ export class ErrorUtils {
     if (error instanceof MCPError) {
       return error.isRetryable;
     }
-    
+
     // Consider network errors as retryable
-    if (error.message.includes("ECONNRESET") || 
-        error.message.includes("ENOTFOUND") ||
-        error.message.includes("ETIMEDOUT")) {
+    if (
+      error.message.includes("ECONNRESET") ||
+      error.message.includes("ENOTFOUND") ||
+      error.message.includes("ETIMEDOUT")
+    ) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -411,28 +409,45 @@ export class ErrorUtils {
 
     // Categorize common error patterns
     if (error.message.includes("auth") || error.message.includes("login")) {
-      return new AuthenticationError(error.message, ErrorCode.AUTH_FAILED, context);
+      return new AuthenticationError(
+        error.message,
+        ErrorCode.AUTH_FAILED,
+        context,
+      );
     }
-    
-    if (error.message.includes("connection") || 
-        error.message.includes("network") ||
-        error.message.includes("ECONNRESET") ||
-        error.message.includes("ENOTFOUND") ||
-        error.message.includes("ECONNREFUSED") ||
-        error.message.includes("Connection not available")) {
-      return new ConnectionError(error.message, ErrorCode.CONNECTION_FAILED, context);
+
+    if (
+      error.message.includes("connection") ||
+      error.message.includes("network") ||
+      error.message.includes("ECONNRESET") ||
+      error.message.includes("ENOTFOUND") ||
+      error.message.includes("ECONNREFUSED") ||
+      error.message.includes("Connection not available")
+    ) {
+      return new ConnectionError(
+        error.message,
+        ErrorCode.CONNECTION_FAILED,
+        context,
+      );
     }
-    
-    if (error.message.includes("timeout") || error.message.includes("ETIMEDOUT")) {
-      return new ConnectionError(error.message, ErrorCode.CONNECTION_TIMEOUT, context);
+
+    if (
+      error.message.includes("timeout") ||
+      error.message.includes("ETIMEDOUT")
+    ) {
+      return new ConnectionError(
+        error.message,
+        ErrorCode.CONNECTION_TIMEOUT,
+        context,
+      );
     }
 
     // Default to internal error
-    return new class extends MCPError {
+    return new (class extends MCPError {
       constructor() {
         super(error.message, ErrorCode.INTERNAL_ERROR, context, false);
         this.stack = error.stack;
       }
-    }();
+    })();
   }
 }

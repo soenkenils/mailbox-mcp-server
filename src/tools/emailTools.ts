@@ -3,11 +3,23 @@ import type { EmailService } from "../services/EmailService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import {
   EmailError,
-  ValidationError,
   ErrorCode,
-  ErrorUtils,
   type ErrorContext,
+  ErrorUtils,
+  ValidationError,
 } from "../types/errors.js";
+import {
+  createDirectorySchema,
+  createDraftSchema,
+  deleteEmailSchema,
+  getEmailSchema,
+  getEmailThreadSchema,
+  markEmailSchema,
+  moveEmailSchema,
+  searchEmailsSchema,
+  sendEmailSchema,
+  validateInput,
+} from "../validation/schemas.js";
 
 export function createEmailTools(
   emailService: EmailService,
@@ -343,13 +355,18 @@ export async function handleEmailTool(
   try {
     switch (name) {
       case "search_emails": {
+        const validatedArgs = validateInput(searchEmailsSchema, args);
         const options = {
-          query: args.query,
-          folder: args.folder || "INBOX",
-          since: args.since ? new Date(args.since) : undefined,
-          before: args.before ? new Date(args.before) : undefined,
-          limit: args.limit || 50,
-          offset: args.offset || 0,
+          query: validatedArgs.query,
+          folder: validatedArgs.folder,
+          since: validatedArgs.since
+            ? new Date(validatedArgs.since)
+            : undefined,
+          before: validatedArgs.before
+            ? new Date(validatedArgs.before)
+            : undefined,
+          limit: validatedArgs.limit,
+          offset: validatedArgs.offset,
         };
 
         const emails = await emailService.searchEmails(options);
@@ -375,9 +392,13 @@ export async function handleEmailTool(
       }
 
       case "get_email": {
+        const validatedArgs = validateInput(getEmailSchema, args);
         let email: any;
         try {
-          email = await emailService.getEmail(args.uid, args.folder || "INBOX");
+          email = await emailService.getEmail(
+            validatedArgs.uid,
+            validatedArgs.folder,
+          );
         } catch (error) {
           // Handle connection errors gracefully
           if (
@@ -403,7 +424,7 @@ export async function handleEmailTool(
             content: [
               {
                 type: "text",
-                text: `Email with UID ${args.uid} not found in folder ${args.folder || "INBOX"}`,
+                text: `Email with UID ${validatedArgs.uid} not found in folder ${validatedArgs.folder}`,
               },
             ],
           };
@@ -441,9 +462,10 @@ export async function handleEmailTool(
       }
 
       case "get_email_thread": {
+        const validatedArgs = validateInput(getEmailThreadSchema, args);
         const thread = await emailService.getEmailThread(
-          args.messageId,
-          args.folder || "INBOX",
+          validatedArgs.messageId,
+          validatedArgs.folder,
         );
 
         if (!thread) {
@@ -451,7 +473,7 @@ export async function handleEmailTool(
             content: [
               {
                 type: "text",
-                text: `No thread found for message ID: ${args.messageId}`,
+                text: `No thread found for message ID: ${validatedArgs.messageId}`,
               },
             ],
           };
@@ -494,13 +516,14 @@ export async function handleEmailTool(
           };
         }
 
+        const validatedArgs = validateInput(sendEmailSchema, args);
         const composition = {
-          to: args.to,
-          cc: args.cc,
-          bcc: args.bcc,
-          subject: args.subject,
-          text: args.text,
-          html: args.html,
+          to: validatedArgs.to,
+          cc: validatedArgs.cc,
+          bcc: validatedArgs.bcc,
+          subject: validatedArgs.subject,
+          text: validatedArgs.text,
+          html: validatedArgs.html,
         };
 
         const result = await smtpService.sendEmail(composition);
@@ -510,7 +533,7 @@ export async function handleEmailTool(
             {
               type: "text",
               text: result.success
-                ? `✅ Email sent successfully!\n\n**Subject:** ${args.subject}\n**To:** ${args.to.map((r: any) => `${r.name || ""} <${r.address}>`).join(", ")}\n**Message ID:** ${result.messageId || "Unknown"}`
+                ? `✅ Email sent successfully!\n\n**Subject:** ${validatedArgs.subject}\n**To:** ${validatedArgs.to.map((r: any) => `${r.name || ""} <${r.address}>`).join(", ")}\n**Message ID:** ${result.messageId || "Unknown"}`
                 : `❌ Failed to send email: ${result.message}`,
             },
           ],
@@ -519,23 +542,27 @@ export async function handleEmailTool(
       }
 
       case "create_draft": {
+        const validatedArgs = validateInput(createDraftSchema, args);
         const composition = {
-          to: args.to,
-          cc: args.cc,
-          bcc: args.bcc,
-          subject: args.subject,
-          text: args.text,
-          html: args.html,
+          to: validatedArgs.to,
+          cc: validatedArgs.cc,
+          bcc: validatedArgs.bcc,
+          subject: validatedArgs.subject,
+          text: validatedArgs.text,
+          html: validatedArgs.html,
         };
 
-        const result = await emailService.createDraft(composition, args.folder);
+        const result = await emailService.createDraft(
+          composition,
+          validatedArgs.folder,
+        );
 
         return {
           content: [
             {
               type: "text",
               text: result.success
-                ? `✅ Draft saved successfully!\n\n**Subject:** ${args.subject}\n**Folder:** ${args.folder || "Drafts"}\n**UID:** ${result.uid || "Unknown"}`
+                ? `✅ Draft saved successfully!\n\n**Subject:** ${validatedArgs.subject}\n**Folder:** ${validatedArgs.folder}\n**UID:** ${result.uid || "Unknown"}`
                 : `❌ Failed to save draft: ${result.message}`,
             },
           ],
@@ -544,10 +571,11 @@ export async function handleEmailTool(
       }
 
       case "move_email": {
+        const validatedArgs = validateInput(moveEmailSchema, args);
         const result = await emailService.moveEmail(
-          args.uid,
-          args.fromFolder,
-          args.toFolder,
+          validatedArgs.uid,
+          validatedArgs.fromFolder,
+          validatedArgs.toFolder,
         );
 
         return {
@@ -555,7 +583,7 @@ export async function handleEmailTool(
             {
               type: "text",
               text: result.success
-                ? `✅ Email moved successfully!\n\n**UID:** ${args.uid}\n**From:** ${args.fromFolder}\n**To:** ${args.toFolder}`
+                ? `✅ Email moved successfully!\n\n**UID:** ${validatedArgs.uid}\n**From:** ${validatedArgs.fromFolder}\n**To:** ${validatedArgs.toFolder}`
                 : `❌ Failed to move email: ${result.message}`,
             },
           ],
@@ -564,11 +592,12 @@ export async function handleEmailTool(
       }
 
       case "mark_email": {
+        const validatedArgs = validateInput(markEmailSchema, args);
         const result = await emailService.markEmail(
-          args.uid,
-          args.folder || "INBOX",
-          args.flags,
-          args.action,
+          validatedArgs.uid,
+          validatedArgs.folder ?? "INBOX",
+          validatedArgs.flags,
+          validatedArgs.action,
         );
 
         return {
@@ -576,7 +605,7 @@ export async function handleEmailTool(
             {
               type: "text",
               text: result.success
-                ? `✅ Email flags updated successfully!\n\n**UID:** ${args.uid}\n**Folder:** ${args.folder || "INBOX"}\n**Action:** ${args.action}\n**Flags:** ${args.flags.join(", ")}`
+                ? `✅ Email flags updated successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Action:** ${validatedArgs.action}\n**Flags:** ${validatedArgs.flags.join(", ")}`
                 : `❌ Failed to update email flags: ${result.message}`,
             },
           ],
@@ -585,10 +614,11 @@ export async function handleEmailTool(
       }
 
       case "delete_email": {
+        const validatedArgs = validateInput(deleteEmailSchema, args);
         const result = await emailService.deleteEmail(
-          args.uid,
-          args.folder || "INBOX",
-          args.permanent,
+          validatedArgs.uid,
+          validatedArgs.folder ?? "INBOX",
+          validatedArgs.permanent ?? false,
         );
 
         return {
@@ -596,7 +626,7 @@ export async function handleEmailTool(
             {
               type: "text",
               text: result.success
-                ? `✅ Email deleted successfully!\n\n**UID:** ${args.uid}\n**Folder:** ${args.folder || "INBOX"}\n**Type:** ${args.permanent ? "Permanent deletion" : "Moved to trash"}`
+                ? `✅ Email deleted successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Type:** ${validatedArgs.permanent ? "Permanent deletion" : "Moved to trash"}`
                 : `❌ Failed to delete email: ${result.message}`,
             },
           ],
@@ -628,9 +658,10 @@ export async function handleEmailTool(
       }
 
       case "create_directory": {
+        const validatedArgs = validateInput(createDirectorySchema, args);
         const result = await emailService.createDirectory(
-          args.name,
-          args.parentPath || "",
+          validatedArgs.name,
+          validatedArgs.parentPath,
         );
 
         return {
@@ -638,7 +669,7 @@ export async function handleEmailTool(
             {
               type: "text",
               text: result.success
-                ? `✅ Directory created successfully!\n\n**Name:** ${args.name}\n**Parent:** ${args.parentPath || "Root"}`
+                ? `✅ Directory created successfully!\n\n**Name:** ${validatedArgs.name}\n**Parent:** ${validatedArgs.parentPath || "Root"}`
                 : `❌ Failed to create directory: ${result.message}`,
             },
           ],
@@ -647,18 +678,53 @@ export async function handleEmailTool(
       }
 
       default:
-        throw new ValidationError(`Unknown email tool: ${name}`, "tool_name", name);
+        throw new ValidationError(
+          `Unknown email tool: ${name}`,
+          "tool_name",
+          name,
+        );
     }
   } catch (error) {
     const context: ErrorContext = {
       operation: name,
       service: "emailTools",
-      details: { args }
+      details: { args },
     };
 
+    // Handle validation errors specifically
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Validation failed:")
+    ) {
+      const validationError = new ValidationError(
+        error.message.replace("Validation failed: ", ""),
+        "input_validation",
+        args,
+        context,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Invalid input for ${name}: ${validationError.getUserMessage()}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
     // Convert to structured error if not already
-    const mcpError = error instanceof Error ? ErrorUtils.toMCPError(error, context) : 
-      new EmailError(String(error), ErrorCode.OPERATION_FAILED, undefined, undefined, context);
+    const mcpError =
+      error instanceof Error
+        ? ErrorUtils.toMCPError(error, context)
+        : new EmailError(
+            String(error),
+            ErrorCode.OPERATION_FAILED,
+            undefined,
+            undefined,
+            context,
+          );
 
     return {
       content: [
