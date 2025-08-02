@@ -15,6 +15,14 @@ import {
   handleCalendarTool,
 } from "./tools/calendarTools.js";
 import { createEmailTools, handleEmailTool } from "./tools/emailTools.js";
+import {
+  ConfigurationError,
+  ValidationError,
+  ErrorCode,
+  ErrorUtils,
+  type MCPError,
+} from "./types/errors.js";
+import { logger, createLogger, LogLevel } from "./services/Logger.js";
 
 class MailboxMcpServer {
   private server: Server;
@@ -23,6 +31,7 @@ class MailboxMcpServer {
   private calendarService!: CalendarService;
   private cache!: MemoryCache;
   private config!: ServerConfig;
+  private logger = createLogger("MailboxMcpServer");
 
   constructor() {
     this.server = new Server(
@@ -33,10 +42,14 @@ class MailboxMcpServer {
       {
         capabilities: {
           tools: {},
+          logging: {},
         },
       },
     );
 
+    // Configure logger with MCP server
+    logger.setMcpServer(this.server);
+    
     this.setupErrorHandling();
     this.loadConfiguration();
     this.initializeServices();
@@ -44,18 +57,27 @@ class MailboxMcpServer {
   }
 
   private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
-      console.error("[MCP Error]", error);
+    this.server.onerror = async (error) => {
+      await this.logger.error("MCP Server error", {
+        operation: "mcp_server_error",
+        service: "server"
+      }, { error: error.message, stack: error.stack });
     };
 
     process.on("SIGINT", async () => {
-      console.error("\nShutting down Mailbox MCP Server...");
+      await this.logger.info("Received SIGINT, shutting down gracefully", {
+        operation: "shutdown",
+        service: "process"
+      });
       await this.cleanup();
       process.exit(0);
     });
 
     process.on("SIGTERM", async () => {
-      console.error("\nShutting down Mailbox MCP Server...");
+      await this.logger.info("Received SIGTERM, shutting down gracefully", {
+        operation: "shutdown", 
+        service: "process"
+      });
       await this.cleanup();
       process.exit(0);
     });
@@ -64,11 +86,28 @@ class MailboxMcpServer {
   private loadConfiguration(): void {
     try {
       this.config = loadConfig();
+      
+      // Set logger level based on debug config
       if (this.config.debug) {
-        console.error("Configuration loaded successfully");
+        logger.setMinLevel(LogLevel.DEBUG);
+        this.logger.debug("Debug mode enabled");
       }
+      
+      this.logger.info("Configuration loaded successfully", {
+        operation: "loadConfiguration",
+        service: "config"
+      }, {
+        debug: this.config.debug,
+        pools: {
+          imap: this.config.pools.imap.maxConnections,
+          smtp: this.config.pools.smtp.maxConnections
+        }
+      });
     } catch (error) {
-      console.error("Failed to load configuration:", error);
+      this.logger.critical("Failed to load configuration", {
+        operation: "loadConfiguration",
+        service: "config"
+      }, { error: error instanceof Error ? error.message : String(error) });
       process.exit(1);
     }
   }
@@ -90,19 +129,25 @@ class MailboxMcpServer {
         this.cache,
       );
 
-      if (this.config.debug) {
-        console.error("Services initialized successfully");
-        console.error("IMAP Pool Config:", {
+      this.logger.info("Services initialized successfully", {
+        operation: "initializeServices",
+        service: "initialization"
+      }, {
+        services: ["EmailService", "SmtpService", "CalendarService", "MemoryCache"],
+        imapPool: {
           min: this.config.pools.imap.minConnections,
           max: this.config.pools.imap.maxConnections,
-        });
-        console.error("SMTP Pool Config:", {
+        },
+        smtpPool: {
           min: this.config.pools.smtp.minConnections,
           max: this.config.pools.smtp.maxConnections,
-        });
-      }
+        }
+      });
     } catch (error) {
-      console.error("Failed to initialize services:", error);
+      this.logger.critical("Failed to initialize services", {
+        operation: "initializeServices",
+        service: "initialization"
+      }, { error: error instanceof Error ? error.message : String(error) });
       process.exit(1);
     }
   }
@@ -151,9 +196,10 @@ class MailboxMcpServer {
             ) &&
             !value.startsWith("urn:uuid:"))
         ) {
-          if (this.config.debug) {
-            console.error(`Removing invalid UUID parameter: ${key}=${value}`);
-          }
+          this.logger.debug(`Removing invalid UUID parameter: ${key}=${value}`, {
+            operation: "sanitizeArgs",
+            service: "validation"
+          });
           delete sanitized[key];
         }
       }
@@ -174,43 +220,73 @@ class MailboxMcpServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      const timer = this.logger.startTimer(`tool:${name}`);
 
-      if (this.config.debug) {
-        console.error(`Executing tool: ${name} with args:`, args);
-      }
+      this.logger.debug(`Executing tool: ${name}`, {
+        operation: "callTool",
+        service: "toolHandler"
+      }, { tool: name, args });
 
       // Filter out invalid UUID parameters that Claude Desktop might pass
       const cleanArgs = this.sanitizeArgs(args as Record<string, unknown>);
 
       try {
+        let result;
+        
         if (this.isEmailTool(name)) {
-          return await handleEmailTool(
+          result = await handleEmailTool(
             name,
             cleanArgs,
             this.emailService,
             this.smtpService,
           );
-        }
-
-        if (this.isCalendarTool(name)) {
-          return await handleCalendarTool(
+        } else if (this.isCalendarTool(name)) {
+          result = await handleCalendarTool(
             name,
             cleanArgs,
             this.calendarService,
           );
+        } else {
+          throw new ValidationError(`Unknown tool: ${name}`, "tool_name", name);
         }
 
-        throw new Error(`Unknown tool: ${name}`);
+        // Record successful execution
+        const metrics = timer.end(true);
+        this.logger.info(`Tool executed successfully: ${name}`, {
+          operation: "callTool",
+          service: "toolHandler",
+          duration: metrics.duration
+        }, { tool: name, success: true });
+
+        return result;
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error(`Tool execution error for ${name}:`, errorMessage);
+        // Record failed execution
+        const errorType = error instanceof Error ? error.constructor.name : "UnknownError";
+        const metrics = timer.end(false, errorType);
+        
+        // Convert to structured error
+        const mcpError = error instanceof Error ? ErrorUtils.toMCPError(error, {
+          operation: `call_tool:${name}`,
+          service: "MailboxMcpServer",
+          details: { tool: name, args: cleanArgs }
+        }) : new ValidationError(String(error), "unknown", error);
+
+        this.logger.error(`Tool execution failed: ${name}`, {
+          operation: "callTool",
+          service: "toolHandler",
+          duration: metrics.duration
+        }, {
+          tool: name,
+          error: mcpError.toJSON(),
+          userMessage: mcpError.getUserMessage(),
+          isRetryable: mcpError.isRetryable
+        });
 
         return {
           content: [
             {
               type: "text",
-              text: `Error executing ${name}: ${errorMessage}`,
+              text: `Error executing ${name}: ${mcpError.getUserMessage()}${mcpError.isRetryable ? " (This operation can be retried)" : ""}`,
             },
           ],
           isError: true,
@@ -220,56 +296,100 @@ class MailboxMcpServer {
   }
 
   async start(): Promise<void> {
+    const startTimer = this.logger.startTimer("server_startup");
+    
     try {
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
 
-      if (this.config.debug) {
-        console.error("Mailbox MCP Server started successfully");
-      }
+      const metrics = startTimer.end(true);
+      this.logger.info("Mailbox MCP Server started successfully", {
+        operation: "server_startup",
+        service: "MailboxMcpServer",
+        duration: metrics.duration
+      }, {
+        version: "0.1.0",
+        capabilities: ["tools", "logging"],
+        transport: "stdio"
+      });
     } catch (error) {
-      console.error("Failed to start server:", error);
+      const metrics = startTimer.end(false, error instanceof Error ? error.constructor.name : "UnknownError");
+      const mcpError = ErrorUtils.toMCPError(error as Error, {
+        operation: "server_startup",
+        service: "MailboxMcpServer"
+      });
+      
+      this.logger.critical("Failed to start server", {
+        operation: "server_startup",
+        service: "MailboxMcpServer",
+        duration: metrics.duration
+      }, {
+        error: mcpError.toJSON(),
+        userMessage: mcpError.getUserMessage()
+      });
       process.exit(1);
     }
   }
 
   private async cleanup(): Promise<void> {
+    const cleanupTimer = this.logger.startTimer("server_cleanup");
+    
     try {
-      if (this.config.debug) {
-        console.error("Starting cleanup...");
+      this.logger.info("Starting server cleanup", {
+        operation: "cleanup",
+        service: "MailboxMcpServer"
+      });
 
-        // Log pool metrics before cleanup
-        const emailMetrics = this.emailService.getPoolMetrics();
-        const smtpMetrics = this.smtpService.getPoolMetrics();
+      // Log pool metrics before cleanup
+      const emailMetrics = this.emailService.getPoolMetrics();
+      const smtpMetrics = this.smtpService.getPoolMetrics();
+      const performanceMetrics = logger.getPerformanceMetrics();
 
-        console.error("Final IMAP Pool Metrics:", {
+      this.logger.info("Final connection pool metrics", {
+        operation: "cleanup",
+        service: "metrics"
+      }, {
+        imapPool: {
           total: emailMetrics.totalConnections,
           active: emailMetrics.activeConnections,
           idle: emailMetrics.idleConnections,
           acquired: emailMetrics.totalAcquired,
           released: emailMetrics.totalReleased,
           errors: emailMetrics.totalErrors,
-        });
-
-        console.error("Final SMTP Pool Metrics:", {
+        },
+        smtpPool: {
           total: smtpMetrics.totalConnections,
           active: smtpMetrics.activeConnections,
           idle: smtpMetrics.idleConnections,
           acquired: smtpMetrics.totalAcquired,
           released: smtpMetrics.totalReleased,
           errors: smtpMetrics.totalErrors,
-        });
-      }
+        },
+        performance: {
+          totalOperations: performanceMetrics.total,
+          successful: performanceMetrics.successful,
+          failed: performanceMetrics.failed,
+          averageDuration: performanceMetrics.averageDuration
+        }
+      });
 
       await this.emailService.disconnect();
       await this.smtpService.close();
       this.cache.destroy();
 
-      if (this.config.debug) {
-        console.error("Cleanup completed successfully");
-      }
+      const metrics = cleanupTimer.end(true);
+      this.logger.info("Server cleanup completed successfully", {
+        operation: "cleanup",
+        service: "MailboxMcpServer",
+        duration: metrics.duration
+      });
     } catch (error) {
-      console.error("Error during cleanup:", error);
+      const metrics = cleanupTimer.end(false, error instanceof Error ? error.constructor.name : "UnknownError");
+      this.logger.error("Error during cleanup", {
+        operation: "cleanup",
+        service: "MailboxMcpServer",
+        duration: metrics.duration
+      }, { error: error instanceof Error ? error.message : String(error) });
     }
   }
 }
@@ -281,7 +401,15 @@ async function main(): Promise<void> {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
-    console.error("Fatal error:", error);
+    const mcpError = ErrorUtils.toMCPError(error as Error, {
+      operation: "main",
+      service: "MailboxMcpServer"
+    });
+    
+    console.error("Fatal error:", {
+      error: mcpError.toJSON(),
+      userMessage: mcpError.getUserMessage()
+    });
     process.exit(1);
   });
 }

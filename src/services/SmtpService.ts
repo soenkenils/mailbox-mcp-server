@@ -9,9 +9,19 @@ import {
   type SmtpConnectionWrapper,
   type SmtpPoolConfig,
 } from "./SmtpConnectionPool.js";
+import {
+  ConnectionError,
+  EmailError,
+  ValidationError,
+  ErrorCode,
+  ErrorUtils,
+  type ErrorContext,
+} from "../types/errors.js";
+import { createLogger } from "./Logger.js";
 
 export class SmtpService {
   private pool: SmtpConnectionPool;
+  private logger = createLogger("SmtpService");
 
   constructor(
     connection: SmtpConnection,
@@ -60,7 +70,10 @@ export class SmtpService {
         messageId: info.messageId,
       };
     } catch (error) {
-      console.error("Failed to send email:", error);
+      await this.logger.error("Failed to send email", {
+        operation: "sendEmail",
+        service: "SmtpService"
+      }, { composition, error: error instanceof Error ? error.message : String(error) });
       return {
         success: false,
         message: `Failed to send email: ${error instanceof Error ? error.message : String(error)}`,
@@ -80,7 +93,10 @@ export class SmtpService {
       await wrapper.connection.verify();
       return true;
     } catch (error) {
-      console.error("SMTP connection verification failed:", error);
+      await this.logger.error("SMTP connection verification failed", {
+        operation: "verifyConnection",
+        service: "SmtpService"
+      }, { error: error instanceof Error ? error.message : String(error) });
       return false;
     } finally {
       if (wrapper) {
@@ -127,7 +143,10 @@ export class SmtpService {
         metrics.totalErrors < metrics.totalConnections
       );
     } catch (error) {
-      console.error("Error checking SMTP pool health:", error);
+      await this.logger.error("Error checking SMTP pool health", {
+        operation: "isHealthy",
+        service: "SmtpService"
+      }, { error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   }

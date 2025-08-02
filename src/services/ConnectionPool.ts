@@ -1,3 +1,5 @@
+import { createLogger } from "./Logger.js";
+
 export interface ConnectionPoolConfig {
   minConnections: number;
   maxConnections: number;
@@ -49,6 +51,7 @@ export abstract class ConnectionPool<T> {
     requestedAt: Date;
   }>;
   protected metrics: PoolMetrics;
+  protected logger = createLogger("ConnectionPool");
   private healthCheckInterval?: NodeJS.Timeout;
   private isShuttingDown = false;
   private connectionErrors: Array<{
@@ -221,8 +224,18 @@ export abstract class ConnectionPool<T> {
         // If this is not the last attempt, wait with exponential backoff
         if (attempt < this.config.maxRetries) {
           const backoffDelay = this.calculateExponentialBackoff(attempt);
-          console.error(
-            `Connection creation failed (attempt ${attempt + 1}/${this.config.maxRetries + 1}), retrying in ${backoffDelay}ms: ${lastError.message}`,
+          await this.logger.warning(
+            `Connection creation failed, retrying`,
+            {
+              operation: "createNewConnection",
+              service: "ConnectionPool"
+            },
+            {
+              attempt: attempt + 1,
+              maxRetries: this.config.maxRetries + 1,
+              backoffDelay,
+              error: lastError.message
+            }
           );
           await new Promise((resolve) => setTimeout(resolve, backoffDelay));
         }

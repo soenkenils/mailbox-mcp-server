@@ -273,7 +273,7 @@ describe("Email Tools", () => {
         );
 
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain("IMAP connection failed");
+        expect(result.content[0].text).toContain("Unable to connect to the server");
       });
 
       it("should handle unknown tool", async () => {

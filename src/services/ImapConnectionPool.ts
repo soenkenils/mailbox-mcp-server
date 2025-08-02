@@ -10,6 +10,7 @@ import {
   type ConnectionPoolConfig,
   type ConnectionWrapper,
 } from "./ConnectionPool.js";
+import { createLogger } from "./Logger.js";
 
 export interface ImapConnectionWrapper extends ConnectionWrapper<ImapFlow> {
   selectedFolder?: string;
@@ -23,6 +24,7 @@ export interface ImapPoolConfig extends ConnectionPoolConfig {
 export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
   private connectionConfig: ImapConnection;
   private circuitBreaker: CircuitBreaker;
+  protected logger = createLogger("ImapConnectionPool");
 
   constructor(config: ImapPoolConfig) {
     super(config);
@@ -52,7 +54,12 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
 
       // Set up error handling
       client.on("error", (error: Error) => {
-        console.error("IMAP connection error:", error);
+        this.logger.error("IMAP connection error", {
+          operation: "createConnection",
+          service: "ImapConnectionPool"
+        }, { error: error.message }).catch(() => {
+          // Ignore logging errors
+        });
       });
 
       await client.connect();

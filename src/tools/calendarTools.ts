@@ -1,6 +1,13 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import dayjs from "dayjs";
 import type { CalendarService } from "../services/CalendarService.js";
+import {
+  CalendarError,
+  ValidationError,
+  ErrorCode,
+  ErrorUtils,
+  type ErrorContext,
+} from "../types/errors.js";
 
 interface CalendarToolArgs {
   start?: string;
@@ -257,14 +264,24 @@ export async function handleCalendarTool(
       }
 
       default:
-        throw new Error(`Unknown calendar tool: ${name}`);
+        throw new ValidationError(`Unknown calendar tool: ${name}`, "tool_name", name);
     }
   } catch (error) {
+    const context: ErrorContext = {
+      operation: name,
+      service: "calendarTools",
+      details: { args }
+    };
+
+    // Convert to structured error if not already
+    const mcpError = error instanceof Error ? ErrorUtils.toMCPError(error, context) : 
+      new CalendarError(String(error), ErrorCode.OPERATION_FAILED, undefined, undefined, context);
+
     return {
       content: [
         {
           type: "text",
-          text: `Error executing ${name}: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error executing ${name}: ${mcpError.getUserMessage()}${mcpError.isRetryable ? " (This operation can be retried)" : ""}`,
         },
       ],
       isError: true,

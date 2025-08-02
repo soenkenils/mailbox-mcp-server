@@ -1,6 +1,13 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { EmailService } from "../services/EmailService.js";
 import type { SmtpService } from "../services/SmtpService.js";
+import {
+  EmailError,
+  ValidationError,
+  ErrorCode,
+  ErrorUtils,
+  type ErrorContext,
+} from "../types/errors.js";
 
 export function createEmailTools(
   emailService: EmailService,
@@ -640,14 +647,24 @@ export async function handleEmailTool(
       }
 
       default:
-        throw new Error(`Unknown email tool: ${name}`);
+        throw new ValidationError(`Unknown email tool: ${name}`, "tool_name", name);
     }
   } catch (error) {
+    const context: ErrorContext = {
+      operation: name,
+      service: "emailTools",
+      details: { args }
+    };
+
+    // Convert to structured error if not already
+    const mcpError = error instanceof Error ? ErrorUtils.toMCPError(error, context) : 
+      new EmailError(String(error), ErrorCode.OPERATION_FAILED, undefined, undefined, context);
+
     return {
       content: [
         {
           type: "text",
-          text: `Error executing ${name}: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error executing ${name}: ${mcpError.getUserMessage()}${mcpError.isRetryable ? " (This operation can be retried)" : ""}`,
         },
       ],
       isError: true,
