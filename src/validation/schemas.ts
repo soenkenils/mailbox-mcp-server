@@ -63,10 +63,26 @@ const htmlContentSchema = v.pipe(
   v.transform(sanitizeHtml),
 );
 
-// Date validation
+// Date validation - flexible ISO 8601 format support
 const dateSchema = v.pipe(
   v.string("Date must be a string"),
-  v.isoDateTime("Invalid date format - must be ISO 8601"),
+  v.trim(),
+  v.check((value) => {
+    // Support multiple ISO 8601 formats:
+    // - YYYY-MM-DD
+    // - YYYY-MM-DDTHH:mm
+    // - YYYY-MM-DDTHH:mm:ss
+    // - YYYY-MM-DDTHH:mm:ss.sss
+    // - With timezone: Z or ±HH:mm
+    const isoDateRegex =
+      /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+    return isoDateRegex.test(value);
+  }, "Invalid date format - must be ISO 8601 (YYYY-MM-DD, YYYY-MM-DDTHH:mm, YYYY-MM-DDTHH:mm:ss, etc.)"),
+  v.check((value) => {
+    // Validate that the date is actually parseable and valid
+    const date = new Date(value);
+    return !isNaN(date.getTime());
+  }, "Invalid date - unable to parse"),
 );
 
 // Pagination schemas
