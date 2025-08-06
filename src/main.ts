@@ -16,6 +16,7 @@ import {
   handleCalendarTool,
 } from "./tools/calendarTools.js";
 import { createEmailTools, handleEmailTool } from "./tools/emailTools.js";
+import { getSieveTools, handleSieveTool } from "./tools/sieveTools.js";
 import {
   ConfigurationError,
   ErrorCode,
@@ -198,6 +199,18 @@ class MailboxMcpServer {
     );
   }
 
+  private isSieveTool(toolName: string): boolean {
+    return [
+      "list_sieve_scripts",
+      "get_sieve_script",
+      "create_sieve_filter",
+      "delete_sieve_script",
+      "activate_sieve_script",
+      "check_sieve_script",
+      "get_sieve_capabilities",
+    ].includes(toolName);
+  }
+
   private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
     if (!args || typeof args !== "object") {
       return args;
@@ -240,9 +253,10 @@ class MailboxMcpServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const emailTools = createEmailTools(this.emailService, this.smtpService);
       const calendarTools = createCalendarTools(this.calendarService);
+      const sieveTools = getSieveTools();
 
       return {
-        tools: [...emailTools, ...calendarTools],
+        tools: [...emailTools, ...calendarTools, ...sieveTools],
       };
     });
 
@@ -277,6 +291,11 @@ class MailboxMcpServer {
             name,
             cleanArgs,
             this.calendarService,
+          );
+        } else if (this.isSieveTool(name)) {
+          result = await handleSieveTool(
+            { params: { name, arguments: cleanArgs } } as any,
+            this.config,
           );
         } else {
           throw new ValidationError(`Unknown tool: ${name}`, "tool_name", name);

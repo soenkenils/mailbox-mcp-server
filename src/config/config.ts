@@ -2,6 +2,7 @@ import type { ConnectionPoolConfig } from "../services/ConnectionPool.js";
 import type { CacheConfig } from "../types/cache.types.js";
 import type { CalDavConnection } from "../types/calendar.types.js";
 import type { ImapConnection, SmtpConnection } from "../types/email.types.js";
+import type { SieveConnection } from "../types/sieve.types.js";
 
 export interface PoolsConfig {
   imap: ConnectionPoolConfig;
@@ -12,6 +13,7 @@ export interface ServerConfig {
   email: ImapConnection;
   smtp: SmtpConnection;
   calendar: CalDavConnection;
+  sieve: SieveConnection;
   cache: CacheConfig;
   pools: PoolsConfig;
   debug: boolean;
@@ -50,6 +52,13 @@ export function loadConfig(): ServerConfig {
       username: email,
       password: password,
       calendars: process.env.MAILBOX_CALENDARS?.split(",") || undefined,
+    },
+    sieve: {
+      host: process.env.MAILBOX_SIEVE_HOST || "imap.mailbox.org",
+      port: Number.parseInt(process.env.MAILBOX_SIEVE_PORT || "4190", 10),
+      secure: process.env.MAILBOX_SIEVE_SECURE === "true", // Default to false for now
+      user: email,
+      password: password,
     },
     cache: {
       email: {
