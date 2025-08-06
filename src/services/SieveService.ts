@@ -108,7 +108,10 @@ export class SieveService {
 
     try {
       // Check if STARTTLS is available and we're not already using TLS
-      if (this.capabilities?.sieveExtensions.includes('STARTTLS') && !this.config.secure) {
+      if (
+        this.capabilities?.sieveExtensions.includes("STARTTLS") &&
+        !this.config.secure
+      ) {
         await this.logger.info(
           "Starting TLS upgrade for ManageSieve connection",
           {
@@ -300,24 +303,34 @@ export class SieveService {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new SieveError(`Connection timeout to ${this.config.host}:${this.config.port}`));
+        reject(
+          new SieveError(
+            `Connection timeout to ${this.config.host}:${this.config.port}`,
+          ),
+        );
       }, 10000);
 
       this.socket!.on("connect", () => {
         clearTimeout(timeout);
-        this.logger.debug(`Socket connected to ${this.config.host}:${this.config.port}`, {
-          operation: "socketConnect",
-          service: "SieveService",
-        });
+        this.logger.debug(
+          `Socket connected to ${this.config.host}:${this.config.port}`,
+          {
+            operation: "socketConnect",
+            service: "SieveService",
+          },
+        );
         resolve();
       });
 
       this.socket!.on("secureConnect", () => {
         clearTimeout(timeout);
-        this.logger.debug(`TLS connection established to ${this.config.host}:${this.config.port}`, {
-          operation: "tlsConnect", 
-          service: "SieveService",
-        });
+        this.logger.debug(
+          `TLS connection established to ${this.config.host}:${this.config.port}`,
+          {
+            operation: "tlsConnect",
+            service: "SieveService",
+          },
+        );
         resolve();
       });
 
@@ -334,14 +347,18 @@ export class SieveService {
       this.socket!.on("error", (error) => {
         clearTimeout(timeout);
         this.connected = false;
-        this.logger.error(`Socket error: ${error.message}`, {
-          operation: "socketError",
-          service: "SieveService",
-        }, {
-          host: this.config.host,
-          port: this.config.port,
-          secure: this.config.secure,
-        });
+        this.logger.error(
+          `Socket error: ${error.message}`,
+          {
+            operation: "socketError",
+            service: "SieveService",
+          },
+          {
+            host: this.config.host,
+            port: this.config.port,
+            secure: this.config.secure,
+          },
+        );
         reject(new SieveError(`Socket error: ${error.message}`));
       });
 
@@ -356,7 +373,11 @@ export class SieveService {
 
       this.socket!.on("timeout", () => {
         clearTimeout(timeout);
-        reject(new SieveError(`Socket timeout to ${this.config.host}:${this.config.port}`));
+        reject(
+          new SieveError(
+            `Socket timeout to ${this.config.host}:${this.config.port}`,
+          ),
+        );
       });
     });
   }
@@ -364,21 +385,28 @@ export class SieveService {
   private async waitForGreeting(): Promise<void> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.logger.error("Timeout waiting for server greeting", {
-          operation: "waitForGreeting",
-          service: "SieveService",
-        }, {
-          buffer: this.buffer.substring(0, 200),
-          bufferLength: this.buffer.length,
-        });
+        this.logger.error(
+          "Timeout waiting for server greeting",
+          {
+            operation: "waitForGreeting",
+            service: "SieveService",
+          },
+          {
+            buffer: this.buffer.substring(0, 200),
+            bufferLength: this.buffer.length,
+          },
+        );
         reject(new SieveError("Timeout waiting for server greeting"));
       }, 15000);
 
       const checkGreeting = () => {
-        this.logger.debug(`Checking greeting in buffer: ${this.buffer.substring(0, 100)}...`, {
-          operation: "checkGreeting",
-          service: "SieveService", 
-        });
+        this.logger.debug(
+          `Checking greeting in buffer: ${this.buffer.substring(0, 100)}...`,
+          {
+            operation: "checkGreeting",
+            service: "SieveService",
+          },
+        );
 
         const lines = this.buffer.split("\r\n");
         for (const line of lines) {
@@ -410,16 +438,16 @@ export class SieveService {
       let greetingReceived = false;
       const greetingHandler = (data: Buffer) => {
         if (greetingReceived) return;
-        
+
         const dataStr = data.toString();
         this.logger.debug(`Greeting data received: ${dataStr}`, {
           operation: "greetingData",
           service: "SieveService",
         });
-        
+
         this.buffer += dataStr;
         checkGreeting();
-        
+
         if (this.buffer.includes("OK")) {
           greetingReceived = true;
           this.socket!.removeListener("data", greetingHandler);
@@ -484,11 +512,11 @@ export class SieveService {
     // For capabilities and multi-line responses, we need to collect all data
     if (line.startsWith("OK ")) {
       // For capabilities response, include all collected buffer data
-      const data = this.buffer.split('\r\n').slice(0, -1).join('\r\n');
-      this.resolveCommand({ 
-        success: true, 
+      const data = this.buffer.split("\r\n").slice(0, -1).join("\r\n");
+      this.resolveCommand({
+        success: true,
         message: line.substring(3),
-        data: data 
+        data: data,
       });
     } else if (line.startsWith("NO ")) {
       this.resolveCommand({
@@ -586,17 +614,20 @@ export class SieveService {
         tlsSocket.on("secureConnect", () => {
           clearTimeout(timeout);
           this.socket = tlsSocket;
-          
+
           // Clear the buffer after TLS upgrade to avoid confusion with old data
           this.buffer = "";
-          
+
           // Re-setup data and error handlers for the new TLS socket
           tlsSocket.on("data", (data: Buffer) => {
             const dataStr = data.toString();
-            this.logger.debug(`TLS data received: ${dataStr.substring(0, 100)}...`, {
-              operation: "tlsData",
-              service: "SieveService",
-            });
+            this.logger.debug(
+              `TLS data received: ${dataStr.substring(0, 100)}...`,
+              {
+                operation: "tlsData",
+                service: "SieveService",
+              },
+            );
             this.buffer += dataStr;
             this.processBuffer();
           });
@@ -620,10 +651,13 @@ export class SieveService {
           clearTimeout(timeout);
           reject(new SieveError(`TLS upgrade failed: ${error.message}`));
         });
-
       } catch (error) {
         clearTimeout(timeout);
-        reject(new SieveError(`TLS upgrade error: ${error instanceof Error ? error.message : String(error)}`));
+        reject(
+          new SieveError(
+            `TLS upgrade error: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
       }
     });
   }

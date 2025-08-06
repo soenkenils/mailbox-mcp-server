@@ -63,18 +63,14 @@ describe("Configuration", () => {
       delete process.env.MAILBOX_EMAIL;
       delete process.env.MAILBOX_PASSWORD;
 
-      expect(() => loadConfig()).toThrow(
-        "Missing required environment variable: MAILBOX_EMAIL",
-      );
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
 
     it("should throw error when MAILBOX_PASSWORD is missing", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
       delete process.env.MAILBOX_PASSWORD;
 
-      expect(() => loadConfig()).toThrow(
-        "Missing required environment variable: MAILBOX_PASSWORD",
-      );
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
 
     it("should parse calendar list from environment", () => {
@@ -94,6 +90,45 @@ describe("Configuration", () => {
       const config = loadConfig();
 
       expect(config.calendar.calendars).toBeUndefined();
+    });
+
+    it("should validate email format", () => {
+      process.env.MAILBOX_EMAIL = "invalid-email";
+      process.env.MAILBOX_PASSWORD = "testpassword";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should validate port numbers", () => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_IMAP_PORT = "70000"; // Invalid port > 65535
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should validate boolean values", () => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.DEBUG = "maybe"; // Invalid boolean
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should validate URL format", () => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_CALDAV_URL = "not-a-url";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should validate minimum values for cache settings", () => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.CACHE_MAX_SIZE = "0"; // Must be >= 1
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
   });
 });

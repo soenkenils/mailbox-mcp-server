@@ -127,47 +127,78 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ### **Environment Variables**
 
+Configuration is automatically validated at startup using comprehensive validation rules. The server will fail fast with clear error messages if any configuration is invalid or missing.
+
 #### **Required Configuration**
 
 - `MAILBOX_EMAIL`: Your mailbox.org email address (**required**)
+  - Must be a valid email address format
 - `MAILBOX_PASSWORD`: Your mailbox.org app password (**required**)
+  - Must be a non-empty string
 
 #### **Optional Email Configuration**
 
 **IMAP (Reading Emails):**
 - `MAILBOX_IMAP_HOST`: IMAP server host (default: `imap.mailbox.org`)
+  - Must be a non-empty string
 - `MAILBOX_IMAP_PORT`: IMAP server port (default: `993`)
+  - Must be a valid port number (1-65535)
 - `MAILBOX_IMAP_SECURE`: Use TLS encryption (default: `true`)
+  - Must be `"true"` or `"false"`
 
 **SMTP (Sending Emails):**
 - `MAILBOX_SMTP_HOST`: SMTP server host (default: `smtp.mailbox.org`)
-- `MAILBOX_SMTP_PORT`: SMTP server port (default: `587`)
+  - Must be a non-empty string
+- `MAILBOX_SMTP_PORT`: SMTP server port (default: `465`)
+  - Must be a valid port number (1-65535)
 - `MAILBOX_SMTP_SECURE`: Use TLS encryption (default: `true`)
+  - Must be `"true"` or `"false"`
 
 #### **Optional Calendar Configuration**
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
+  - Must be a valid URL format
 - `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
+
+#### **Optional Sieve Configuration**
+
+- `MAILBOX_SIEVE_HOST`: Sieve server host (default: `imap.mailbox.org`)
+  - Must be a non-empty string
+- `MAILBOX_SIEVE_PORT`: Sieve server port (default: `4190`)
+  - Must be a valid port number (1-65535)
+- `MAILBOX_SIEVE_SECURE`: Use TLS encryption (default: `false`)
+  - Must be `"true"` or `"false"`
 
 #### **Optional Cache Configuration**
 
+All cache TTL values must be non-negative numbers (in milliseconds):
 - `CACHE_EMAIL_SEARCH_TTL`: Email search cache TTL in ms (default: `300000`)
-- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`) 
+- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`)
+- `CACHE_EMAIL_THREAD_TTL`: Email thread cache TTL in ms (default: `300000`)
 - `CACHE_CALENDAR_EVENTS_TTL`: Calendar events cache TTL in ms (default: `900000`)
+- `CACHE_CALENDAR_FREEBUSY_TTL`: Calendar free/busy cache TTL in ms (default: `300000`)
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
+  - Must be a positive integer
+- `CACHE_CLEANUP_INTERVAL`: Cache cleanup frequency in ms (default: `300000`)
+  - Must be at least 1000ms
 
 #### **Optional Connection Pool Configuration**
 
 **Note:** mailbox.org limits concurrent IMAP connections per account. Using more than 2-3 connections may cause connection issues.
 
 - `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `2` - safe for mailbox.org)
+  - Must be between 1 and 100 connections
 - `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `15000`)
+  - Must be at least 1000ms
 - `POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `30000`)
+  - Must be at least 1000ms
 - `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `6000`)
+  - Must be at least 1000ms
 
 #### **Optional Debug Configuration**
 
 - `DEBUG`: Enable debug logging (default: `false`)
+  - Must be `"true"` or `"false"`
 
 ### **Security Notes**
 
