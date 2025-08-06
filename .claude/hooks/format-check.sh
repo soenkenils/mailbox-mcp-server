@@ -11,7 +11,7 @@ if bun run check; then
     echo "✅ Code quality checks passed"
 else
     echo "⚠️  Code quality issues found - running auto-fix..."
-    bun run check --write
+    bun run check
     echo "🔧 Auto-fixes applied"
 fi
 

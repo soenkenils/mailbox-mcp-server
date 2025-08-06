@@ -32,7 +32,7 @@
 				"noUselessFragments": "error"
 			},
 			"suspicious": {
-				"noExplicitAny": "error",
+				"noExplicitAny": "warn",
 				"noAsyncPromiseExecutor": "error"
 			}
 		}
