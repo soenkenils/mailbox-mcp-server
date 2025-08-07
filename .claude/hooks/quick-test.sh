@@ -1,12 +1,12 @@
 #!/bin/bash
-# Schnelle Tests nach Code-Änderungen
+# Quick tests after code changes
 
 set -e
 cd "$CLAUDE_PROJECT_DIR"
 
 echo "🧪 Running quick tests..."
 
-# Nur Unit Tests, keine Integration Tests
+# Only unit tests, no integration tests
 if bun run test --reporter=verbose --exclude="**/integration.test.ts"; then
     echo "✅ Quick tests passed"
 else
