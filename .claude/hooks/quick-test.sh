@@ -7,7 +7,7 @@ cd "$CLAUDE_PROJECT_DIR"
 echo "🧪 Running quick tests..."
 
 # Nur Unit Tests, keine Integration Tests
-if bun run test --run --reporter=verbose --exclude="**/integration.test.ts"; then
+if bun run test --reporter=verbose --exclude="**/integration.test.ts"; then
     echo "✅ Quick tests passed"
 else
     echo "❌ Some tests failed"
