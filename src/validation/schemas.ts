@@ -5,7 +5,7 @@ import * as v from "valibot";
 // =============================================================================
 
 export const sanitizeString = (str: string): string => {
-  return str.trim().replace(/[\x00-\x1F\x7F-\x9F]/g, ""); // Remove control characters
+  return str.trim().replace(/[\u0000-\u001F\u007F-\u009F]/g, ""); // Remove control characters
 };
 
 export const sanitizeHtml = (html: string): string => {
@@ -38,7 +38,7 @@ const folderNameSchema = v.pipe(
   v.trim(),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.regex(/^[^\/\\<>:"|?*\x00-\x1F]+$/, "Invalid folder name characters"),
+  v.regex(/^[^\/\\<>:"|?*\u0000-\u001F]+$/, "Invalid folder name characters"),
   v.transform(sanitizeString),
 );
 
@@ -81,7 +81,7 @@ const dateSchema = v.pipe(
   v.check((value) => {
     // Validate that the date is actually parseable and valid
     const date = new Date(value);
-    return !isNaN(date.getTime());
+    return !Number.isNaN(date.getTime());
   }, "Invalid date - unable to parse"),
 );
 

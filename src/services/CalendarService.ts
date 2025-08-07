@@ -22,7 +22,7 @@ import { createLogger } from "./Logger.js";
 export class CalendarService {
   private connection: CalDavConnection;
   private cache: LocalCache;
-  private client: any;
+  private client: ReturnType<typeof createDAVClient> | null = null;
   private logger = createLogger("CalendarService");
 
   constructor(connection: CalDavConnection, cache: LocalCache) {
@@ -32,7 +32,7 @@ export class CalendarService {
 
   private async getClient() {
     if (!this.client) {
-      this.client = await createDAVClient({
+      this.client = createDAVClient({
         serverUrl: this.connection.baseUrl,
         credentials: {
           username: this.connection.username,
@@ -145,7 +145,9 @@ export class CalendarService {
       const client = await this.getClient();
       const calendars = await client.fetchCalendars();
 
-      return calendars.map((cal: DAVCalendar) => cal.displayName || cal.url);
+      return calendars.map(
+        (cal: DAVCalendar) => (cal.displayName as string) || cal.url,
+      );
     } catch (error) {
       await this.logger.error(
         "Calendar discovery failed",
@@ -268,9 +270,9 @@ export class CalendarService {
     return events;
   }
 
-  private parseVEvent(vevent: any, calendar: string): CalendarEvent | null {
+  private parseVEvent(vevent: unknown, calendar: string): CalendarEvent | null {
     try {
-      const event = new ICAL.Event(vevent);
+      const event = new ICAL.Event(vevent as ICAL.Component);
 
       const basicInfo = this.extractBasicEventInfo(event);
       if (!this.hasValidDates(event)) {
@@ -305,7 +307,7 @@ export class CalendarService {
   }
 
   private extractBasicEventInfo(
-    event: any,
+    event: ICAL.Event,
   ): Pick<
     CalendarEvent,
     "id" | "uid" | "summary" | "description" | "location"
@@ -320,12 +322,12 @@ export class CalendarService {
     };
   }
 
-  private hasValidDates(event: any): boolean {
+  private hasValidDates(event: ICAL.Event): boolean {
     return !!(event.startDate && event.endDate);
   }
 
   private extractTimeInfo(
-    event: any,
+    event: ICAL.Event,
   ): Pick<
     CalendarEvent,
     "start" | "end" | "allDay" | "recurring" | "recurrenceRule"
@@ -342,7 +344,7 @@ export class CalendarService {
   }
 
   private extractParticipants(
-    event: any,
+    event: ICAL.Event,
   ): Pick<CalendarEvent, "attendees" | "organizer"> {
     const attendees = this.parseAttendees(event.attendees);
     const organizer = this.parseOrganizer(event.organizer);
@@ -353,13 +355,13 @@ export class CalendarService {
     };
   }
 
-  private parseAttendees(attendees: any[]): Attendee[] {
+  private parseAttendees(attendees: unknown[] | null | undefined): Attendee[] {
     // Früher Return mit leerem Array wenn attendees falsy ist
     if (!attendees || !Array.isArray(attendees)) {
       return [];
     }
 
-    return attendees.map((attendee: any) => {
+    return attendees.map((attendee: unknown) => {
       const email = this.extractEmail(attendee);
       return {
         email: email.replace("mailto:", ""),
@@ -370,7 +372,7 @@ export class CalendarService {
   }
 
   private parseOrganizer(
-    organizer: any,
+    organizer: unknown,
   ): { email: string; name: string } | undefined {
     if (!organizer) {
       return undefined;
@@ -383,23 +385,30 @@ export class CalendarService {
     };
   }
 
-  private extractEmail(participant: any): string {
-    return participant.getFirstValue
-      ? participant.getFirstValue()
+  private extractEmail(participant: unknown): string {
+    const typedParticipant = participant as { getFirstValue?: () => string };
+    return typedParticipant.getFirstValue
+      ? typedParticipant.getFirstValue()
       : String(participant);
   }
 
-  private extractName(participant: any, email: string): string {
-    return participant.getParameter
-      ? participant.getParameter("cn")
+  private extractName(participant: unknown, email: string): string {
+    const typedParticipant = participant as {
+      getParameter?: (name: string) => string;
+    };
+    return typedParticipant.getParameter
+      ? typedParticipant.getParameter("cn")
       : email.replace("mailto:", "").split("@")[0];
   }
 
   private extractStatus(
-    attendee: any,
+    attendee: unknown,
   ): "needs-action" | "accepted" | "declined" | "tentative" {
-    const status = attendee.getParameter
-      ? attendee.getParameter("partstat") || "needs-action"
+    const typedAttendee = attendee as {
+      getParameter?: (name: string) => string;
+    };
+    const status = typedAttendee.getParameter
+      ? typedAttendee.getParameter("partstat") || "needs-action"
       : "needs-action";
 
     // Map iCal status values to our expected types
@@ -416,7 +425,7 @@ export class CalendarService {
   }
 
   private extractMetadata(
-    event: any,
+    event: ICAL.Event,
     calendar: string,
   ): Pick<CalendarEvent, "calendar" | "categories" | "created" | "modified"> {
     const categories = this.parseCategories(
@@ -436,16 +445,17 @@ export class CalendarService {
     };
   }
 
-  private parseCategories(categories: any): string[] {
+  private parseCategories(categories: unknown): string[] {
     return categories && typeof categories === "string"
       ? categories.split(",").map((cat: string) => cat.trim())
       : [];
   }
 
-  private parseICalDate(value: any): Date | null {
+  private parseICalDate(value: unknown): Date | null {
     if (!value) return null;
-    if (value.toJSDate && typeof value.toJSDate === "function") {
-      return value.toJSDate();
+    const typedValue = value as { toJSDate?: () => Date };
+    if (typedValue.toJSDate && typeof typedValue.toJSDate === "function") {
+      return typedValue.toJSDate();
     }
     if (typeof value === "string") {
       return dayjs(value).toDate();
@@ -464,9 +474,8 @@ export class CalendarService {
     return events.filter(
       (event) =>
         event.summary.toLowerCase().includes(searchTerm) ||
-        (event.description &&
-          event.description.toLowerCase().includes(searchTerm)) ||
-        (event.location && event.location.toLowerCase().includes(searchTerm)),
+        event.description?.toLowerCase().includes(searchTerm) ||
+        event.location?.toLowerCase().includes(searchTerm),
     );
   }
 

@@ -1,7 +1,9 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
+  type CallToolRequest,
   CallToolRequestSchema,
+  type CallToolResult,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
@@ -277,7 +279,7 @@ class MailboxMcpServer {
       const cleanArgs = this.sanitizeArgs(args as Record<string, unknown>);
 
       try {
-        let result;
+        let result: CallToolResult;
 
         if (this.isEmailTool(name)) {
           result = await handleEmailTool(
@@ -294,7 +296,7 @@ class MailboxMcpServer {
           );
         } else if (this.isSieveTool(name)) {
           result = await handleSieveTool(
-            { params: { name, arguments: cleanArgs } } as any,
+            { params: { name, arguments: cleanArgs } } as CallToolRequest,
             this.config,
           );
         } else {

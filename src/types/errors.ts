@@ -356,98 +356,103 @@ export class ConfigurationError extends MCPError {
 }
 
 /**
- * Utility functions for error handling
+ * Check if an error is retryable
  */
-export class ErrorUtils {
-  /**
-   * Check if an error is retryable
-   */
-  static isRetryable(error: Error): boolean {
-    if (error instanceof MCPError) {
-      return error.isRetryable;
-    }
-
-    // Consider network errors as retryable
-    if (
-      error.message.includes("ECONNRESET") ||
-      error.message.includes("ENOTFOUND") ||
-      error.message.includes("ETIMEDOUT")
-    ) {
-      return true;
-    }
-
-    return false;
+export function isRetryableError(error: Error): boolean {
+  if (error instanceof MCPError) {
+    return error.isRetryable;
   }
 
-  /**
-   * Extract error code from any error
-   */
-  static getErrorCode(error: Error): ErrorCode {
-    if (error instanceof MCPError) {
-      return error.code;
-    }
-    return ErrorCode.INTERNAL_ERROR;
+  // Consider network errors as retryable
+  if (
+    error.message.includes("ECONNRESET") ||
+    error.message.includes("ENOTFOUND") ||
+    error.message.includes("ETIMEDOUT")
+  ) {
+    return true;
   }
 
-  /**
-   * Get user-friendly message from any error
-   */
-  static getUserMessage(error: Error): string {
-    if (error instanceof MCPError) {
-      return error.getUserMessage();
-    }
-    return "An unexpected error occurred. Please try again.";
-  }
-
-  /**
-   * Convert any error to MCPError
-   */
-  static toMCPError(error: Error, context: ErrorContext = {}): MCPError {
-    if (error instanceof MCPError) {
-      return error;
-    }
-
-    // Categorize common error patterns
-    if (error.message.includes("auth") || error.message.includes("login")) {
-      return new AuthenticationError(
-        error.message,
-        ErrorCode.AUTH_FAILED,
-        context,
-      );
-    }
-
-    if (
-      error.message.includes("connection") ||
-      error.message.includes("network") ||
-      error.message.includes("ECONNRESET") ||
-      error.message.includes("ENOTFOUND") ||
-      error.message.includes("ECONNREFUSED") ||
-      error.message.includes("Connection not available")
-    ) {
-      return new ConnectionError(
-        error.message,
-        ErrorCode.CONNECTION_FAILED,
-        context,
-      );
-    }
-
-    if (
-      error.message.includes("timeout") ||
-      error.message.includes("ETIMEDOUT")
-    ) {
-      return new ConnectionError(
-        error.message,
-        ErrorCode.CONNECTION_TIMEOUT,
-        context,
-      );
-    }
-
-    // Default to internal error
-    return new (class extends MCPError {
-      constructor() {
-        super(error.message, ErrorCode.INTERNAL_ERROR, context, false);
-        this.stack = error.stack;
-      }
-    })();
-  }
+  return false;
 }
+
+/**
+ * Extract error code from any error
+ */
+export function getErrorCode(error: Error): ErrorCode {
+  if (error instanceof MCPError) {
+    return error.code;
+  }
+  return ErrorCode.INTERNAL_ERROR;
+}
+
+/**
+ * Get user-friendly message from any error
+ */
+export function getUserMessage(error: Error): string {
+  if (error instanceof MCPError) {
+    return error.getUserMessage();
+  }
+  return "An unexpected error occurred. Please try again.";
+}
+
+/**
+ * Convert any error to MCPError
+ */
+export function toMCPError(error: Error, context: ErrorContext = {}): MCPError {
+  if (error instanceof MCPError) {
+    return error;
+  }
+
+  // Categorize common error patterns
+  if (error.message.includes("auth") || error.message.includes("login")) {
+    return new AuthenticationError(
+      error.message,
+      ErrorCode.AUTH_FAILED,
+      context,
+    );
+  }
+
+  if (
+    error.message.includes("connection") ||
+    error.message.includes("network") ||
+    error.message.includes("ECONNRESET") ||
+    error.message.includes("ENOTFOUND") ||
+    error.message.includes("ECONNREFUSED") ||
+    error.message.includes("Connection not available")
+  ) {
+    return new ConnectionError(
+      error.message,
+      ErrorCode.CONNECTION_FAILED,
+      context,
+    );
+  }
+
+  if (
+    error.message.includes("timeout") ||
+    error.message.includes("ETIMEDOUT")
+  ) {
+    return new ConnectionError(
+      error.message,
+      ErrorCode.CONNECTION_TIMEOUT,
+      context,
+    );
+  }
+
+  // Default to internal error
+  return new (class extends MCPError {
+    constructor() {
+      super(error.message, ErrorCode.INTERNAL_ERROR, context, false);
+      this.stack = error.stack;
+    }
+  })();
+}
+
+/**
+ * @deprecated Use individual functions instead: isRetryableError, getErrorCode, getUserMessage, toMCPError
+ */
+export const ErrorUtils = {
+  isRetryable: isRetryableError,
+  getErrorCode,
+  getUserMessage,
+  toMCPError,
+};

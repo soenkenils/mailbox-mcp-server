@@ -42,7 +42,7 @@ export class OfflineService {
       const cachedResults = this.cache.getStale<EmailMessage[]>(key);
       if (cachedResults) {
         await this.logger.info(
-          `Found offline search results for query`,
+          "Found offline search results for query",
           {
             operation: "searchOfflineEmails",
             service: "OfflineService",
@@ -54,7 +54,7 @@ export class OfflineService {
     }
 
     await this.logger.info(
-      `No offline search results found for query`,
+      "No offline search results found for query",
       {
         operation: "searchOfflineEmails",
         service: "OfflineService",
@@ -185,17 +185,20 @@ export class OfflineService {
 
     // Apply client-side filtering since we're working with cached data
     if (options.query) {
+      const query = options.query;
       filtered = filtered.filter((email) =>
-        this.matchesOfflineQuery(email, options.query!),
+        this.matchesOfflineQuery(email, query),
       );
     }
 
     if (options.since) {
-      filtered = filtered.filter((email) => email.date >= options.since!);
+      const since = options.since;
+      filtered = filtered.filter((email) => email.date >= since);
     }
 
     if (options.before) {
-      filtered = filtered.filter((email) => email.date <= options.before!);
+      const before = options.before;
+      filtered = filtered.filter((email) => email.date <= before);
     }
 
     // Apply pagination

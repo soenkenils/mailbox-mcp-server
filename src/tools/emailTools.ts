@@ -378,12 +378,13 @@ export async function handleEmailTool(
               text: `Found ${emails.length} emails:\n\n${emails
                 .map(
                   (email) =>
-                    `**${email.subject}**\n` +
-                    `From: ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}\n` +
-                    `To: ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}\n` +
-                    `Date: ${email.date.toISOString()}\n` +
-                    `UID: ${email.uid}\n` +
-                    `Folder: ${email.folder}\n`,
+                    `**${email.subject}**
+From: ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
+To: ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}
+Date: ${email.date.toISOString()}
+UID: ${email.uid}
+Folder: ${email.folder}
+`,
                 )
                 .join("\n---\n")}`,
             },
@@ -444,18 +445,20 @@ export async function handleEmailTool(
           content: [
             {
               type: "text",
-              text:
-                `**Subject:** ${email.subject}\n\n` +
-                `**From:** ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}\n` +
-                `**To:** ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}\n` +
-                (email.cc?.length
-                  ? `**CC:** ${email.cc.map((c) => `${c.name || ""} <${c.address}>`).join(", ")}\n`
-                  : "") +
-                `**Date:** ${email.date.toISOString()}\n` +
-                `**UID:** ${email.uid}\n` +
-                `**Folder:** ${email.folder}\n\n` +
-                `**Content:**\n${email.text || email.html || "No content available"}` +
-                attachmentInfo,
+              text: `**Subject:** ${email.subject}
+
+**From:** ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
+**To:** ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}
+${
+  email.cc?.length
+    ? `**CC:** ${email.cc.map((c) => `${c.name || ""} <${c.address}>`).join(", ")}\n`
+    : ""
+}**Date:** ${email.date.toISOString()}
+**UID:** ${email.uid}
+**Folder:** ${email.folder}
+
+**Content:**
+${email.text || email.html || "No content available"}${attachmentInfo}`,
             },
           ],
         };
@@ -483,21 +486,23 @@ export async function handleEmailTool(
           content: [
             {
               type: "text",
-              text:
-                `**Thread:** ${thread.subject}\n` +
-                `**Participants:** ${thread.participants.map((p) => `${p.name || ""} <${p.address}>`).join(", ")}\n` +
-                `**Last Activity:** ${thread.lastActivity.toISOString()}\n` +
-                `**Messages:** ${thread.messages.length}\n\n` +
-                `**Messages in Thread:**\n${thread.messages
-                  .map(
-                    (msg) =>
-                      `---\n` +
-                      `**Subject:** ${msg.subject}\n` +
-                      `**From:** ${msg.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}\n` +
-                      `**Date:** ${msg.date.toISOString()}\n` +
-                      `**Content:** ${(msg.text || msg.html || "No content").substring(0, 200)}...\n`,
-                  )
-                  .join("\n")}`,
+              text: `**Thread:** ${thread.subject}
+**Participants:** ${thread.participants.map((p) => `${p.name || ""} <${p.address}>`).join(", ")}
+**Last Activity:** ${thread.lastActivity.toISOString()}
+**Messages:** ${thread.messages.length}
+
+**Messages in Thread:**
+${thread.messages
+  .map(
+    (msg) =>
+      `---
+**Subject:** ${msg.subject}
+**From:** ${msg.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
+**Date:** ${msg.date.toISOString()}
+**Content:** ${(msg.text || msg.html || "No content").substring(0, 200)}...
+`,
+  )
+  .join("\n")}`,
             },
           ],
         };
@@ -644,12 +649,10 @@ export async function handleEmailTool(
               text: `📁 Available Email Folders (${folders.length}):\n\n${folders
                 .map(
                   (folder) =>
-                    `**${folder.name}**\n` +
-                    `Path: ${folder.path}\n` +
-                    `Flags: ${folder.flags.join(", ") || "None"}\n` +
-                    (folder.specialUse
-                      ? `Special Use: ${folder.specialUse}\n`
-                      : ""),
+                    `**${folder.name}**
+Path: ${folder.path}
+Flags: ${folder.flags.join(", ") || "None"}
+${folder.specialUse ? `Special Use: ${folder.specialUse}\n` : ""}`,
                 )
                 .join("\n---\n")}`,
             },

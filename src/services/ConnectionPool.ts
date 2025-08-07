@@ -225,7 +225,7 @@ export abstract class ConnectionPool<T> {
         if (attempt < this.config.maxRetries) {
           const backoffDelay = this.calculateExponentialBackoff(attempt);
           await this.logger.warning(
-            `Connection creation failed, retrying`,
+            "Connection creation failed, retrying",
             {
               operation: "createNewConnection",
               service: "ConnectionPool",

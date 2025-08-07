@@ -135,7 +135,7 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
 
 export async function handleCalendarTool(
   name: string,
-  args: any,
+  args: Record<string, unknown>,
   calendarService: CalendarService,
 ): Promise<CallToolResult> {
   try {
@@ -166,18 +166,17 @@ export async function handleCalendarTool(
               text: `Found ${events.length} calendar events:\n\n${events
                 .map(
                   (event) =>
-                    `**${event.summary}**\n` +
-                    `Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}\n` +
-                    `End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}\n` +
-                    (event.location ? `Location: ${event.location}\n` : "") +
-                    (event.description
-                      ? `Description: ${event.description.substring(0, 100)}${event.description.length > 100 ? "..." : ""}\n`
-                      : "") +
-                    `Calendar: ${event.calendar}\n` +
-                    (event.attendees?.length
-                      ? `Attendees: ${event.attendees.length}\n`
-                      : "") +
-                    (event.recurring ? "Recurring: Yes\n" : ""),
+                    `**${event.summary}**
+Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}
+End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}
+${event.location ? `Location: ${event.location}\n` : ""}${
+  event.description
+    ? `Description: ${event.description.substring(0, 100)}${event.description.length > 100 ? "..." : ""}\n`
+    : ""
+}Calendar: ${event.calendar}
+${
+  event.attendees?.length ? `Attendees: ${event.attendees.length}\n` : ""
+}${event.recurring ? "Recurring: Yes\n" : ""}`,
                 )
                 .join("\n---\n")}`,
             },
@@ -212,14 +211,15 @@ export async function handleCalendarTool(
               text: `Found ${events.length} events matching "${validatedArgs.query}":\n\n${events
                 .map(
                   (event) =>
-                    `**${event.summary}**\n` +
-                    `Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}\n` +
-                    `End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}\n` +
-                    (event.location ? `Location: ${event.location}\n` : "") +
-                    (event.description
-                      ? `Description: ${event.description.substring(0, 150)}${event.description.length > 150 ? "..." : ""}\n`
-                      : "") +
-                    `Calendar: ${event.calendar}\n`,
+                    `**${event.summary}**
+Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}
+End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}
+${event.location ? `Location: ${event.location}\n` : ""}${
+  event.description
+    ? `Description: ${event.description.substring(0, 150)}${event.description.length > 150 ? "..." : ""}\n`
+    : ""
+}Calendar: ${event.calendar}
+`,
                 )
                 .join("\n---\n")}`,
             },
@@ -240,8 +240,7 @@ export async function handleCalendarTool(
 
         const busySlots = freeBusy.busy.map(
           (slot) =>
-            `${dayjs(slot.start).format("YYYY-MM-DD HH:mm")} - ${dayjs(slot.end).format("HH:mm")}` +
-            (slot.summary ? ` (${slot.summary})` : ""),
+            `${dayjs(slot.start).format("YYYY-MM-DD HH:mm")} - ${dayjs(slot.end).format("HH:mm")}${slot.summary ? ` (${slot.summary})` : ""}`,
         );
 
         const freeSlots = freeBusy.free.map(
@@ -253,11 +252,14 @@ export async function handleCalendarTool(
           content: [
             {
               type: "text",
-              text:
-                `**Free/Busy Information**\n` +
-                `Period: ${dayjs(start).format("YYYY-MM-DD HH:mm")} - ${dayjs(end).format("YYYY-MM-DD HH:mm")}\n\n` +
-                `**Busy Times (${freeBusy.busy.length}):**\n${busySlots.length > 0 ? busySlots.join("\n") : "No busy times"}\n\n` +
-                `**Free Times (${freeBusy.free.length}):**\n${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
+              text: `**Free/Busy Information**
+Period: ${dayjs(start).format("YYYY-MM-DD HH:mm")} - ${dayjs(end).format("YYYY-MM-DD HH:mm")}
+
+**Busy Times (${freeBusy.busy.length}):**
+${busySlots.length > 0 ? busySlots.join("\n") : "No busy times"}
+
+**Free Times (${freeBusy.free.length}):**
+${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
             },
           ],
         };

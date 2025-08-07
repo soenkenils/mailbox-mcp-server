@@ -310,7 +310,7 @@ export class SieveService {
         );
       }, 10000);
 
-      this.socket!.on("connect", () => {
+      this.socket?.on("connect", () => {
         clearTimeout(timeout);
         this.logger.debug(
           `Socket connected to ${this.config.host}:${this.config.port}`,
@@ -322,7 +322,7 @@ export class SieveService {
         resolve();
       });
 
-      this.socket!.on("secureConnect", () => {
+      this.socket?.on("secureConnect", () => {
         clearTimeout(timeout);
         this.logger.debug(
           `TLS connection established to ${this.config.host}:${this.config.port}`,
@@ -334,7 +334,7 @@ export class SieveService {
         resolve();
       });
 
-      this.socket!.on("data", (data: Buffer) => {
+      this.socket?.on("data", (data: Buffer) => {
         const dataStr = data.toString();
         this.logger.debug(`Received data: ${dataStr.substring(0, 100)}...`, {
           operation: "socketData",
@@ -344,7 +344,7 @@ export class SieveService {
         this.processBuffer();
       });
 
-      this.socket!.on("error", (error) => {
+      this.socket?.on("error", (error) => {
         clearTimeout(timeout);
         this.connected = false;
         this.logger.error(
@@ -362,7 +362,7 @@ export class SieveService {
         reject(new SieveError(`Socket error: ${error.message}`));
       });
 
-      this.socket!.on("close", () => {
+      this.socket?.on("close", () => {
         this.connected = false;
         this.authenticated = false;
         this.logger.debug("Socket closed", {
@@ -371,7 +371,7 @@ export class SieveService {
         });
       });
 
-      this.socket!.on("timeout", () => {
+      this.socket?.on("timeout", () => {
         clearTimeout(timeout);
         reject(
           new SieveError(
@@ -450,11 +450,11 @@ export class SieveService {
 
         if (this.buffer.includes("OK")) {
           greetingReceived = true;
-          this.socket!.removeListener("data", greetingHandler);
+          this.socket?.removeListener("data", greetingHandler);
         }
       };
 
-      this.socket!.on("data", greetingHandler);
+      this.socket?.on("data", greetingHandler);
     });
   }
 
@@ -485,14 +485,23 @@ export class SieveService {
         reject(new SieveError(`Command timeout: ${command}`));
       }, 30000);
 
-      this.socket!.write(`${command}\r\n`);
+      this.socket?.write(`${command}\r\n`);
 
-      // Override resolve to clear timeout
+      // Create wrapped resolve to clear timeout
       const originalResolve = resolve;
-      resolve = (response) => {
+      const resolveWithCleanup = (response: SieveResponse) => {
         clearTimeout(timeout);
         originalResolve(response);
       };
+
+      // Replace resolve with cleanup version
+      this.responseResolvers.set(id, {
+        resolve: resolveWithCleanup,
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
     });
   }
 

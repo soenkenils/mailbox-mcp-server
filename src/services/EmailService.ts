@@ -1,4 +1,36 @@
 import { type ParsedMail, simpleParser } from "mailparser";
+
+// IMAP library type definitions
+interface ImapSearchCriteria {
+  all?: boolean;
+  since?: Date;
+  before?: Date;
+  from?: string;
+  to?: string;
+  subject?: string;
+  body?: string;
+  or?: Array<{ [key: string]: string | Date }>;
+}
+
+interface ImapMessage {
+  envelope: {
+    messageId?: string;
+    subject?: string;
+    from?: Array<{ name?: string; address: string }>;
+    to?: Array<{ name?: string; address: string }>;
+    cc?: Array<{ name?: string; address: string }>;
+    date?: Date;
+  };
+  uid: number;
+  flags: string[];
+  bodystructure?: unknown;
+  size?: number;
+}
+
+interface ImapEnvelopeAddress {
+  name?: string;
+  address: string;
+}
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailComposition,
@@ -171,7 +203,7 @@ export class EmailService {
       ) {
         wrapper.isHealthy = false;
         await this.logger.warning(
-          `Marking connection as unhealthy due to timeout`,
+          "Marking connection as unhealthy due to timeout",
           {
             operation: "getEmail",
             service: "EmailService",
@@ -289,7 +321,10 @@ export class EmailService {
         uid: true,
         flags: true,
       })) {
-        const emailMessage = this.parseEmailMessage(message, folder);
+        const emailMessage = this.parseEmailMessage(
+          message as unknown as ImapMessage,
+          folder,
+        );
         if (emailMessage) {
           messages.push(emailMessage);
         }
@@ -315,7 +350,7 @@ export class EmailService {
         return null;
       }
 
-      const parsed = await simpleParser(rawMessage.source as Buffer);
+      const parsed = await simpleParser((rawMessage as any).source as Buffer);
       return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
       throw new Error(
@@ -328,7 +363,7 @@ export class EmailService {
     wrapper: ImapConnectionWrapper,
     uid: number,
     folder: string,
-  ): Promise<any | null> {
+  ): Promise<ImapMessage | null> {
     // Add timeout to prevent hanging fetch operations
     const timeoutMs = 10000; // 10 seconds timeout for fetch operation
     const fetchPromise = this.performFetch(wrapper, uid);
@@ -363,7 +398,7 @@ export class EmailService {
   private async performFetch(
     wrapper: ImapConnectionWrapper,
     uid: number,
-  ): Promise<any | null> {
+  ): Promise<ImapMessage | null> {
     for await (const msg of wrapper.connection.fetch(
       `${uid}:${uid}`,
       {
@@ -374,13 +409,13 @@ export class EmailService {
       },
       { uid: true },
     )) {
-      return msg;
+      return msg as unknown as ImapMessage;
     }
     return null;
   }
 
-  private buildSearchCriteria(options: EmailSearchOptions): any {
-    let criteria: any = {};
+  private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {
+    let criteria: ImapSearchCriteria = {};
 
     criteria = this.addDateFilters(criteria, options);
     criteria = this.addQueryFilters(criteria, options);
@@ -388,7 +423,10 @@ export class EmailService {
     return Object.keys(criteria).length === 0 ? { all: true } : criteria;
   }
 
-  private addDateFilters(criteria: any, options: EmailSearchOptions): any {
+  private addDateFilters(
+    criteria: ImapSearchCriteria,
+    options: EmailSearchOptions,
+  ): ImapSearchCriteria {
     if (options.since) {
       criteria.since = options.since;
     }
@@ -398,7 +436,10 @@ export class EmailService {
     return criteria;
   }
 
-  private addQueryFilters(criteria: any, options: EmailSearchOptions): any {
+  private addQueryFilters(
+    criteria: ImapSearchCriteria,
+    options: EmailSearchOptions,
+  ): ImapSearchCriteria {
     if (!options.query) {
       return criteria;
     }
@@ -424,7 +465,7 @@ export class EmailService {
     return query.includes(" OR ");
   }
 
-  private handleOrQuery(criteria: any): any {
+  private handleOrQuery(criteria: ImapSearchCriteria): ImapSearchCriteria {
     return Object.keys(criteria).length === 0 ? { all: true } : criteria;
   }
 
@@ -432,7 +473,10 @@ export class EmailService {
     return query.toLowerCase().startsWith("from:");
   }
 
-  private handleFromQuery(criteria: any, query: string): any {
+  private handleFromQuery(
+    criteria: ImapSearchCriteria,
+    query: string,
+  ): ImapSearchCriteria {
     criteria.from = query.substring(5).trim();
     return criteria;
   }
@@ -441,12 +485,18 @@ export class EmailService {
     return query.toLowerCase().startsWith("to:");
   }
 
-  private handleToQuery(criteria: any, query: string): any {
+  private handleToQuery(
+    criteria: ImapSearchCriteria,
+    query: string,
+  ): ImapSearchCriteria {
     criteria.to = query.substring(3).trim();
     return criteria;
   }
 
-  private handleTextQuery(criteria: any, query: string): any {
+  private handleTextQuery(
+    criteria: ImapSearchCriteria,
+    query: string,
+  ): ImapSearchCriteria {
     criteria.or = [{ subject: query }, { body: query }];
     return criteria;
   }
@@ -459,12 +509,11 @@ export class EmailService {
 
     // Apply query filter for complex queries that weren't handled by IMAP
     if (options.query) {
-      const needsInMemoryQueryFilter = options.query.includes(" OR ");
+      const query = options.query;
+      const needsInMemoryQueryFilter = query.includes(" OR ");
 
       if (needsInMemoryQueryFilter) {
-        filtered = filtered.filter((msg) =>
-          this.matchesQuery(msg, options.query!),
-        );
+        filtered = filtered.filter((msg) => this.matchesQuery(msg, query));
       }
     }
 
@@ -518,7 +567,10 @@ export class EmailService {
     );
   }
 
-  private parseEmailMessage(message: any, folder: string): EmailMessage | null {
+  private parseEmailMessage(
+    message: ImapMessage,
+    folder: string,
+  ): EmailMessage | null {
     if (!message.envelope) {
       return null;
     }
@@ -540,7 +592,7 @@ export class EmailService {
 
   private parseFullEmailMessage(
     parsed: ParsedMail,
-    message: any,
+    message: ImapMessage,
     folder: string,
   ): EmailMessage {
     return {
@@ -566,11 +618,15 @@ export class EmailService {
   }
 
   private parseAddressesFromEnvelope(
-    addresses: any,
+    addresses: unknown,
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
     if (!Array.isArray(addresses)) {
-      return [addresses];
+      const addr = addresses as any;
+      if (addr.address) {
+        return [{ name: addr.name, address: addr.address }];
+      }
+      return [];
     }
     return addresses.map((addr) => ({
       name: addr.name,
@@ -579,11 +635,15 @@ export class EmailService {
   }
 
   private parseAddressesFromParsed(
-    addresses: any,
+    addresses: unknown,
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
     if (!Array.isArray(addresses)) {
-      return [addresses];
+      const addr = addresses as any;
+      if (addr.address) {
+        return [{ name: addr.name, address: addr.address }];
+      }
+      return [];
     }
     return addresses.map((addr) => ({
       name: addr.name,
@@ -985,12 +1045,14 @@ export class EmailService {
     // you'd want to track keys by folder
     for (let i = 0; i < 1000; i++) {
       const searchKey = `email_search:${JSON.stringify({ folder })}`;
-      if (this.cache.has && this.cache.has(searchKey)) {
+      if (this.cache.has?.(searchKey)) {
         keysToDelete.push(searchKey);
       }
     }
 
-    keysToDelete.forEach((key) => this.cache.delete(key));
+    for (const key of keysToDelete) {
+      this.cache.delete(key);
+    }
   }
 
   private tryGetStaleCache<T>(key: string): T | null {

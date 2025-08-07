@@ -116,7 +116,7 @@ const EnvSchema = v.object({
   DEBUG: v.optional(v.picklist(["true", "false"])),
 });
 
-function formatValidationError(error: v.ValiError<unknown>): string {
+function formatValidationError(error: v.ValiError<any>): string {
   const issues = v.flatten(error.issues);
   const messages: string[] = [];
 
