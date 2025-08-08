@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryCache } from "../src/services/LocalCache.js";
-import type { CacheConfig } from "../src/types/cache.types.js";
+import type { CacheConfig, CacheEntry } from "../src/types/cache.types.js";
+
+// Test helper type to access private members
+interface TestableMemoryCache extends MemoryCache {
+  cache: Map<string, CacheEntry<unknown>>;
+  cleanupWithStaleRetention(): void;
+  getStats(): {
+    size: number;
+    entries: Array<{ key: string; age: number; isExpired: boolean }>;
+  };
+}
 
 describe("MemoryCache", () => {
   let cache: MemoryCache;
@@ -81,14 +91,14 @@ describe("MemoryCache", () => {
     it("should use custom TTL when provided", () => {
       cache.set("test-key", "data", 500);
 
-      const entry = (cache as any).cache.get("test-key");
+      const entry = (cache as TestableMemoryCache).cache.get("test-key");
       expect(entry.ttl).toBe(500);
     });
 
     it("should use default TTL when not provided", () => {
       cache.set("test-key", "data");
 
-      const entry = (cache as any).cache.get("test-key");
+      const entry = (cache as TestableMemoryCache).cache.get("test-key");
       expect(entry.ttl).toBe(300000); // 5 minutes default
     });
   });
@@ -143,7 +153,7 @@ describe("MemoryCache", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Call cleanupWithStaleRetention (used by automatic cleanup timer)
-      (cache as any).cleanupWithStaleRetention();
+      (cache as TestableMemoryCache).cleanupWithStaleRetention();
 
       // Both entries should still exist because stale retention keeps them for 24 hours
       expect(cache.size()).toBe(2);
@@ -203,18 +213,18 @@ describe("MemoryCache", () => {
       cache.set("key1", "data1", 1000);
       cache.set("key2", "data2", 2000);
 
-      const stats = (cache as any).getStats();
+      const stats = (cache as TestableMemoryCache).getStats();
 
       expect(stats.size).toBe(2);
       expect(stats.entries).toHaveLength(2);
 
-      stats.entries.forEach((entry: any) => {
+      for (const entry of stats.entries) {
         expect(entry).toHaveProperty("key");
         expect(entry).toHaveProperty("age");
         expect(entry).toHaveProperty("isExpired");
         expect(typeof entry.age).toBe("number");
         expect(typeof entry.isExpired).toBe("boolean");
-      });
+      }
     });
 
     it("should correctly identify expired entries in stats", async () => {
@@ -223,9 +233,9 @@ describe("MemoryCache", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const stats = (cache as any).getStats();
-      const freshEntry = stats.entries.find((e: any) => e.key === "fresh");
-      const staleEntry = stats.entries.find((e: any) => e.key === "stale");
+      const stats = (cache as TestableMemoryCache).getStats();
+      const freshEntry = stats.entries.find((e) => e.key === "fresh");
+      const staleEntry = stats.entries.find((e) => e.key === "stale");
 
       expect(freshEntry.isExpired).toBe(false);
       expect(staleEntry.isExpired).toBe(true);
@@ -238,7 +248,7 @@ describe("MemoryCache", () => {
       const veryOldTimestamp = Date.now() - 25 * 60 * 60 * 1000; // 25 hours ago
 
       // Manually add old entry
-      (cache as any).cache.set("very-old", {
+      (cache as TestableMemoryCache).cache.set("very-old", {
         data: "old-data",
         timestamp: veryOldTimestamp,
         ttl: 300000, // 5 minutes
@@ -247,7 +257,7 @@ describe("MemoryCache", () => {
       expect(cache.getStale("very-old")).toBe("old-data");
 
       // Run stale retention cleanup
-      (cache as any).cleanupWithStaleRetention();
+      (cache as TestableMemoryCache).cleanupWithStaleRetention();
 
       // Very old data should be cleaned up
       expect(cache.getStale("very-old")).toBeNull();
@@ -258,7 +268,7 @@ describe("MemoryCache", () => {
       const recentTimestamp = Date.now() - 60 * 60 * 1000; // 1 hour ago
 
       // Manually add entry that's expired but not too old
-      (cache as any).cache.set("recent-stale", {
+      (cache as TestableMemoryCache).cache.set("recent-stale", {
         data: "recent-data",
         timestamp: recentTimestamp,
         ttl: 300000, // 5 minutes (so it's expired)
@@ -268,13 +278,13 @@ describe("MemoryCache", () => {
       expect(cache.get("recent-stale")).toBeNull(); // Expired for normal get
 
       // Run stale retention cleanup
-      (cache as any).cleanupWithStaleRetention();
+      (cache as TestableMemoryCache).cleanupWithStaleRetention();
 
       // Should still be available (but only if get() wasn't called which deletes it)
       // Since we called get() above, the entry is gone, so let's test the cleanup works correctly
       // by adding a fresh entry for this test
       const freshTimestamp = Date.now() - 60 * 60 * 1000; // 1 hour ago
-      (cache as any).cache.set("fresh-stale", {
+      (cache as TestableMemoryCache).cache.set("fresh-stale", {
         data: "fresh-stale-data",
         timestamp: freshTimestamp,
         ttl: 300000, // 5 minutes (so it's expired)

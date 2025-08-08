@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { CalendarService } from "../src/services/CalendarService.js";
+import type { EmailService } from "../src/services/EmailService.js";
+import type { SmtpService } from "../src/services/SmtpService.js";
 import { createCalendarTools } from "../src/tools/calendarTools.js";
 import { createEmailTools } from "../src/tools/emailTools.js";
 
@@ -84,10 +87,10 @@ describe("main.ts module structure and logic", () => {
       ];
 
       // Test that these messages follow consistent patterns
-      expectedErrorMessages.forEach((message) => {
+      for (const message of expectedErrorMessages) {
         expect(typeof message).toBe("string");
         expect(message.length).toBeGreaterThan(0);
-      });
+      }
     });
   });
 
@@ -101,10 +104,10 @@ describe("main.ts module structure and logic", () => {
       ];
 
       // Test that these messages follow consistent patterns
-      expectedDebugMessages.forEach((message) => {
+      for (const message of expectedDebugMessages) {
         expect(typeof message).toBe("string");
         expect(message.length).toBeGreaterThan(0);
-      });
+      }
     });
   });
 
@@ -112,10 +115,10 @@ describe("main.ts module structure and logic", () => {
     it("should handle expected process signals", () => {
       const expectedSignals = ["SIGINT", "SIGTERM"];
 
-      expectedSignals.forEach((signal) => {
+      for (const signal of expectedSignals) {
         expect(typeof signal).toBe("string");
         expect(signal.startsWith("SIG")).toBe(true);
-      });
+      }
     });
   });
 
@@ -127,10 +130,10 @@ describe("main.ts module structure and logic", () => {
         "@modelcontextprotocol/sdk/types.js",
       ];
 
-      requiredSDKModules.forEach((module) => {
+      for (const module of requiredSDKModules) {
         expect(typeof module).toBe("string");
         expect(module.includes("@modelcontextprotocol")).toBe(true);
-      });
+      }
     });
 
     it("should import required local modules", () => {
@@ -144,11 +147,11 @@ describe("main.ts module structure and logic", () => {
         "./tools/emailTools.js",
       ];
 
-      requiredLocalModules.forEach((module) => {
+      for (const module of requiredLocalModules) {
         expect(typeof module).toBe("string");
         expect(module.startsWith("./")).toBe(true);
         expect(module.endsWith(".js")).toBe(true);
-      });
+      }
     });
   });
 
@@ -292,8 +295,8 @@ describe("main.ts module structure and logic", () => {
 
   describe("Tool Registration Integrity", () => {
     it("should ensure all implemented email tools are registered in routing logic", () => {
-      const mockEmailService = {} as any;
-      const mockSmtpService = {} as any;
+      const mockEmailService = {} as EmailService;
+      const mockSmtpService = {} as SmtpService;
 
       // Get all implemented email tools
       const implementedEmailTools = createEmailTools(
@@ -331,7 +334,7 @@ describe("main.ts module structure and logic", () => {
     });
 
     it("should ensure all implemented calendar tools are registered in routing logic", () => {
-      const mockCalendarService = {} as any;
+      const mockCalendarService = {} as CalendarService;
 
       // Get all implemented calendar tools
       const implementedCalendarTools = createCalendarTools(mockCalendarService);

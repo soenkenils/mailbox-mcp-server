@@ -350,7 +350,9 @@ export class EmailService {
         return null;
       }
 
-      const parsed = await simpleParser((rawMessage as any).source as Buffer);
+      const parsed = await simpleParser(
+        (rawMessage as ImapMessage & { source: Buffer }).source,
+      );
       return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
       throw new Error(
@@ -622,7 +624,7 @@ export class EmailService {
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
     if (!Array.isArray(addresses)) {
-      const addr = addresses as any;
+      const addr = addresses as { name?: string; address: string };
       if (addr.address) {
         return [{ name: addr.name, address: addr.address }];
       }
@@ -639,7 +641,7 @@ export class EmailService {
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
     if (!Array.isArray(addresses)) {
-      const addr = addresses as any;
+      const addr = addresses as { name?: string; address: string };
       if (addr.address) {
         return [{ name: addr.name, address: addr.address }];
       }

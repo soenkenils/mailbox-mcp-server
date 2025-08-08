@@ -8,11 +8,21 @@ import {
   it,
   vi,
 } from "vitest";
+import { CalendarService } from "../src/services/CalendarService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { CalDavConnection } from "../src/types/calendar.types.js";
 
+// Test helper interface for accessing private methods
+interface TestableCalendarService extends CalendarService {
+  getClient(): Promise<{
+    fetchCalendars: () => Promise<unknown[]>;
+    fetchCalendarObjects: () => Promise<unknown[]>;
+  }>;
+  discoverCalendars(): Promise<string[]>;
+}
+
 // Mock factories for cleaner test setup
-const createMockICalEvent = (overrides: Record<string, any> = {}) => ({
+const createMockICalEvent = (overrides: Record<string, unknown> = {}) => ({
   uid: "event1@example.com",
   summary: "Test Event",
   description: "Test Description",
@@ -60,7 +70,6 @@ vi.mock("ical.js", () => {
       .fn()
       .mockImplementation(() => [[["vcalendar", [], [["vevent", [], []]]]]]),
     Component: class {
-      constructor(jcalData: any) {}
       getAllSubcomponents(type: string) {
         if (type === "vevent") {
           // Return mock vevent data that will work with ICAL.Event
@@ -82,8 +91,8 @@ vi.mock("ical.js", () => {
         toJSDate: () => new Date("2025-06-20T11:00:00Z"),
         isDate: false,
       };
-      public attendees: any[] = [];
-      public organizer: any = null;
+      public attendees: unknown[] = [];
+      public organizer: unknown = null;
       public component = {
         getFirstPropertyValue: (prop: string) => {
           if (prop === "rrule") return null;
@@ -93,8 +102,6 @@ vi.mock("ical.js", () => {
           return null;
         },
       };
-
-      constructor(vevent: any) {}
 
       isRecurring() {
         return false;
@@ -122,9 +129,6 @@ vi.mock("tsdav", () => {
   };
 });
 
-// Import CalendarService after setting up mocks
-import { CalendarService } from "../src/services/CalendarService.js";
-
 // Mock factories
 const createMockCache = (): LocalCache => ({
   get: vi.fn(),
@@ -146,7 +150,7 @@ const createMockConnection = (
   ...overrides,
 });
 
-const createTestCalendarEvent = (overrides: Record<string, any> = {}) => ({
+const createTestCalendarEvent = (overrides: Record<string, unknown> = {}) => ({
   id: "event1",
   uid: "event1@example.com",
   summary: "Test Event",
@@ -160,7 +164,7 @@ const createTestCalendarEvent = (overrides: Record<string, any> = {}) => ({
   ...overrides,
 });
 
-const createTestICalData = (eventData: Record<string, any> = {}) => {
+const createTestICalData = (eventData: Record<string, unknown> = {}) => {
   const event = {
     uid: "event1@example.com",
     summary: "Test Event",
@@ -224,7 +228,10 @@ describe("CalendarService", () => {
     calendarService = new CalendarService(mockConnection, mockCache);
 
     // Mock the getClient method to return our mock client
-    vi.spyOn(calendarService as any, "getClient").mockResolvedValue({
+    vi.spyOn(
+      calendarService as TestableCalendarService,
+      "getClient",
+    ).mockResolvedValue({
       fetchCalendars: mockFetchCalendars,
       fetchCalendarObjects: mockFetchCalendarObjects,
     });
@@ -394,7 +401,9 @@ describe("CalendarService", () => {
         },
       ]);
 
-      const result = await (calendarService as any).discoverCalendars();
+      const result = await (
+        calendarService as TestableCalendarService
+      ).discoverCalendars();
 
       expect(Array.isArray(result)).toBe(true);
       expect(mockFetchCalendars).toHaveBeenCalled();
@@ -406,7 +415,9 @@ describe("CalendarService", () => {
       // Mock fetchCalendars to throw an error
       mockFetchCalendars.mockRejectedValueOnce(new Error("Failed to fetch"));
 
-      const result = await (calendarService as any).discoverCalendars();
+      const result = await (
+        calendarService as TestableCalendarService
+      ).discoverCalendars();
 
       // Should return the default calendar on error
       expect(result).toEqual(["personal"]);
@@ -435,7 +446,9 @@ describe("CalendarService", () => {
     });
 
     it("should handle malformed iCal data", async () => {
-      const ICAL = (await vi.importMock("ical.js")) as any;
+      const ICAL = (await vi.importMock("ical.js")) as {
+        parse: { mockImplementationOnce: (fn: () => void) => void };
+      };
 
       mockFetchCalendarObjects.mockResolvedValue([
         { data: "INVALID_ICAL_DATA" },

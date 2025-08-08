@@ -27,7 +27,7 @@ export interface SieveResponse {
   success: boolean;
   code?: string;
   message?: string;
-  data?: any;
+  data?: unknown;
 }
 
 export interface FilterCondition {

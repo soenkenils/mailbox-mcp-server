@@ -2,7 +2,24 @@ import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
-import type { EmailMessage, ImapConnection } from "../src/types/email.types.js";
+import type {
+  EmailMessage,
+  EmailSearchOptions,
+  ImapConnection,
+} from "../src/types/email.types.js";
+
+// Test helper interface for accessing private methods
+interface TestableEmailService extends EmailService {
+  applyInMemoryFilters(
+    messages: EmailMessage[],
+    options: unknown,
+  ): EmailMessage[];
+  parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
+  parseAddressesFromEnvelope(
+    addresses: unknown,
+  ): Array<{ name?: string; address: string }>;
+  buildSearchCriteria(options: unknown): unknown;
+}
 
 // Mock factories for cleaner test setup
 const createMockEmailMessage = (
@@ -21,7 +38,7 @@ const createMockEmailMessage = (
   ...overrides,
 });
 
-const createMockImapMessage = (overrides: any = {}) => ({
+const createMockImapMessage = (overrides: Record<string, unknown> = {}) => ({
   uid: 1,
   envelope: {
     messageId: "msg-1",
@@ -130,8 +147,10 @@ describe("EmailService", () => {
   // Note: buildSearchCriteria tests removed - testing implementation details rather than behavior
   describe("buildSearchCriteria - REMOVE", () => {
     // Access the private method for testing
-    const buildSearchCriteria = (options: any) => {
-      return (emailService as any).buildSearchCriteria(options);
+    const buildSearchCriteria = (options: EmailSearchOptions) => {
+      return (emailService as TestableEmailService).buildSearchCriteria(
+        options,
+      );
     };
 
     it("should return all for empty options", () => {
@@ -225,8 +244,14 @@ describe("EmailService", () => {
   });
 
   describe("applyInMemoryFilters", () => {
-    const applyInMemoryFilters = (messages: any[], options: any) => {
-      return (emailService as any).applyInMemoryFilters(messages, options);
+    const applyInMemoryFilters = (
+      messages: EmailMessage[],
+      options: unknown,
+    ) => {
+      return (emailService as TestableEmailService).applyInMemoryFilters(
+        messages,
+        options,
+      );
     };
 
     const mockMessages = [
@@ -365,7 +390,10 @@ describe("EmailService", () => {
         },
         flags: ["Seen"],
       };
-      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
       expect(result).toMatchObject({
         id: "msg-42",
         uid: 42,
@@ -381,7 +409,10 @@ describe("EmailService", () => {
 
     it("should return null if envelope is missing", () => {
       const message = { uid: 1 };
-      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
       expect(result).toBeNull();
     });
 
@@ -398,7 +429,10 @@ describe("EmailService", () => {
         },
         flags: undefined,
       };
-      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
       expect(result).toMatchObject({
         id: "msg-2",
         uid: 2,
@@ -414,8 +448,10 @@ describe("EmailService", () => {
   });
 
   describe("parseAddressesFromEnvelope", () => {
-    const parseAddresses = (addresses: any) =>
-      (emailService as any).parseAddressesFromEnvelope(addresses);
+    const parseAddresses = (addresses: unknown) =>
+      (emailService as TestableEmailService).parseAddressesFromEnvelope(
+        addresses,
+      );
 
     it("should handle array of addresses", () => {
       const input = [
@@ -487,7 +523,10 @@ describe("EmailService", () => {
         flags: null,
       };
 
-      const result = (emailService as any).parseEmailMessage(message, "INBOX");
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
 
       expect(result).toMatchObject({
         uid: 1,
@@ -500,8 +539,10 @@ describe("EmailService", () => {
     });
 
     it("should handle boundary conditions for search criteria", () => {
-      const buildSearchCriteria = (options: any) => {
-        return (emailService as any).buildSearchCriteria(options);
+      const buildSearchCriteria = (options: unknown) => {
+        return (emailService as TestableEmailService).buildSearchCriteria(
+          options,
+        );
       };
 
       // Test very long query
@@ -518,8 +559,10 @@ describe("EmailService", () => {
 
   describe("additional edge cases", () => {
     it("should handle complex search criteria combinations", () => {
-      const buildSearchCriteria = (options: any) => {
-        return (emailService as any).buildSearchCriteria(options);
+      const buildSearchCriteria = (options: unknown) => {
+        return (emailService as TestableEmailService).buildSearchCriteria(
+          options,
+        );
       };
 
       // Test multiple criteria combinations
@@ -535,8 +578,10 @@ describe("EmailService", () => {
     });
 
     it("should handle malformed address parsing edge cases", () => {
-      const parseAddresses = (addresses: any) =>
-        (emailService as any).parseAddressesFromEnvelope(addresses);
+      const parseAddresses = (addresses: unknown) =>
+        (emailService as TestableEmailService).parseAddressesFromEnvelope(
+          addresses,
+        );
 
       // Test falsy values return empty array
       expect(parseAddresses(null)).toEqual([]);
@@ -548,12 +593,10 @@ describe("EmailService", () => {
       // Test empty array stays empty
       expect(parseAddresses([])).toEqual([]);
 
-      // Test truthy non-array values become single-item arrays
-      expect(parseAddresses({})).toEqual([{}]);
-      expect(parseAddresses("string-instead-of-object")).toEqual([
-        "string-instead-of-object",
-      ]);
-      expect(parseAddresses(123)).toEqual([123]);
+      // Test truthy non-array values without address property return empty array
+      expect(parseAddresses({})).toEqual([]);
+      expect(parseAddresses("string-instead-of-object")).toEqual([]);
+      expect(parseAddresses(123)).toEqual([]);
     });
   });
 

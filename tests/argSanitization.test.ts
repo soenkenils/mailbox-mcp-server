@@ -77,10 +77,10 @@ describe("Argument Sanitization", () => {
     });
 
     it("should handle non-object arguments", () => {
-      expect(testServer.sanitizeArgs(null as any)).toBeNull();
-      expect(testServer.sanitizeArgs(undefined as any)).toBeUndefined();
-      expect(testServer.sanitizeArgs("string" as any)).toBe("string");
-      expect(testServer.sanitizeArgs(123 as any)).toBe(123);
+      expect(testServer.sanitizeArgs(null as unknown)).toBeNull();
+      expect(testServer.sanitizeArgs(undefined as unknown)).toBeUndefined();
+      expect(testServer.sanitizeArgs("string" as unknown)).toBe("string");
+      expect(testServer.sanitizeArgs(123 as unknown)).toBe(123);
     });
 
     it("should handle empty objects", () => {

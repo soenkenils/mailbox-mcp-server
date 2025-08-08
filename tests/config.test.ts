@@ -29,9 +29,9 @@ describe("Configuration", () => {
     it("should use default values when optional environment variables are not set", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
       process.env.MAILBOX_PASSWORD = "testpassword";
-      delete process.env.MAILBOX_CALDAV_URL;
-      delete process.env.MAILBOX_IMAP_HOST;
-      delete process.env.DEBUG;
+      process.env.MAILBOX_CALDAV_URL = undefined;
+      process.env.MAILBOX_IMAP_HOST = undefined;
+      process.env.DEBUG = undefined;
 
       const config = loadConfig();
 
@@ -60,15 +60,15 @@ describe("Configuration", () => {
     });
 
     it("should throw error when required environment variables are missing", () => {
-      delete process.env.MAILBOX_EMAIL;
-      delete process.env.MAILBOX_PASSWORD;
+      process.env.MAILBOX_EMAIL = undefined;
+      process.env.MAILBOX_PASSWORD = undefined;
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
 
     it("should throw error when MAILBOX_PASSWORD is missing", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      delete process.env.MAILBOX_PASSWORD;
+      process.env.MAILBOX_PASSWORD = undefined;
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });

@@ -1,6 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { EmailService } from "../services/EmailService.js";
 import type { SmtpService } from "../services/SmtpService.js";
+import type { EmailMessage } from "../types/email.types.js";
 import {
   EmailError,
   ErrorCode,
@@ -348,10 +349,13 @@ export function createEmailTools(
 
 export async function handleEmailTool(
   name: string,
-  args: any,
+  args: unknown,
   emailService: EmailService,
   smtpService?: SmtpService,
-): Promise<any> {
+): Promise<{
+  content: Array<{ type: "text"; text: string; [key: string]: unknown }>;
+  isError?: boolean;
+}> {
   try {
     switch (name) {
       case "search_emails": {
@@ -394,7 +398,7 @@ Folder: ${email.folder}
 
       case "get_email": {
         const validatedArgs = validateInput(getEmailSchema, args);
-        let email: any;
+        let email: EmailMessage | null;
         try {
           email = await emailService.getEmail(
             validatedArgs.uid,
@@ -411,7 +415,7 @@ Folder: ${email.folder}
               content: [
                 {
                   type: "text",
-                  text: `Connection error while fetching email UID ${args.uid}. The IMAP server may have closed the connection. Please try again.`,
+                  text: `Connection error while fetching email UID ${validatedArgs.uid}. The IMAP server may have closed the connection. Please try again.`,
                 },
               ],
               isError: true,
@@ -538,7 +542,7 @@ ${thread.messages
             {
               type: "text",
               text: result.success
-                ? `✅ Email sent successfully!\n\n**Subject:** ${validatedArgs.subject}\n**To:** ${validatedArgs.to.map((r: any) => `${r.name || ""} <${r.address}>`).join(", ")}\n**Message ID:** ${result.messageId || "Unknown"}`
+                ? `✅ Email sent successfully!\n\n**Subject:** ${validatedArgs.subject}\n**To:** ${validatedArgs.to.map((r: { name?: string; address: string }) => `${r.name || ""} <${r.address}>`).join(", ")}\n**Message ID:** ${result.messageId || "Unknown"}`
                 : `❌ Failed to send email: ${result.message}`,
             },
           ],

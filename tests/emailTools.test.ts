@@ -15,7 +15,7 @@ describe("Email Tools", () => {
       getEmailThread: vi.fn(),
       connect: vi.fn(),
       disconnect: vi.fn(),
-    } as any;
+    } as EmailService;
   });
 
   describe("createEmailTools", () => {

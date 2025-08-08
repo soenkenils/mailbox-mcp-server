@@ -1,9 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SmtpConnectionPool,
+  type SmtpConnectionWrapper,
   type SmtpPoolConfig,
 } from "../src/services/SmtpConnectionPool.js";
 import type { SmtpConnection } from "../src/types/email.types.js";
+
+interface SendMailOptions {
+  to?: string | string[];
+  from?: string;
+  subject?: string;
+  text?: string;
+  html?: string;
+  [key: string]: unknown;
+}
+
+// Type for accessing pool internals in tests
+interface TestableSmtpConnectionPool extends SmtpConnectionPool {
+  connections: Map<string, SmtpConnectionWrapper>;
+}
 
 // Mock Transporter
 class MockTransporter {
@@ -26,7 +41,7 @@ class MockTransporter {
     return this.isValid;
   }
 
-  async sendMail(options: any): Promise<{ messageId: string }> {
+  async sendMail(options: SendMailOptions): Promise<{ messageId: string }> {
     if (this.shouldFailSend) {
       throw new Error("Failed to send email");
     }
@@ -58,7 +73,7 @@ describe("SmtpConnectionPool", () => {
 
     // Ensure the nodemailer mock is properly set up
     const nodemailer = await import("nodemailer");
-    (nodemailer.default.createTransport as any).mockImplementation(
+    (nodemailer.default.createTransport as Mock).mockImplementation(
       () => new MockTransporter(),
     );
 
@@ -105,7 +120,7 @@ describe("SmtpConnectionPool", () => {
       const verifySpy = vi.spyOn(mockTransporter, "verify");
 
       const nodemailer = await import("nodemailer");
-      (nodemailer.default.createTransport as any).mockReturnValue(
+      (nodemailer.default.createTransport as Mock).mockReturnValue(
         mockTransporter,
       );
 
@@ -120,7 +135,7 @@ describe("SmtpConnectionPool", () => {
       mockTransporter.setShouldFailVerify(true);
 
       const nodemailer = await import("nodemailer");
-      (nodemailer.default.createTransport as any).mockReturnValue(
+      (nodemailer.default.createTransport as Mock).mockReturnValue(
         mockTransporter,
       );
 
@@ -143,7 +158,7 @@ describe("SmtpConnectionPool", () => {
     it("should detect invalid connections", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       const isValid = await pool.validateConnection(wrapper.connection);
@@ -155,7 +170,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle verification errors gracefully", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
       mockTransporter.verify = vi
         .fn()
         .mockRejectedValue(new Error("Network error"));
@@ -180,7 +195,7 @@ describe("SmtpConnectionPool", () => {
       const wrapper2 = await pool.acquire();
 
       expect(wrapper2.lastVerified).toBeDefined();
-      expect(wrapper2.lastVerified!.getTime()).toBeGreaterThan(
+      expect(wrapper2.lastVerified?.getTime()).toBeGreaterThan(
         Date.now() - 1000,
       );
 
@@ -209,7 +224,7 @@ describe("SmtpConnectionPool", () => {
       const wrapper = await pool.acquire();
       wrapper.lastVerified = new Date(Date.now() - 2000); // Force verification
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       await pool.release(wrapper);
@@ -220,7 +235,7 @@ describe("SmtpConnectionPool", () => {
       );
 
       // Check that failure was tracked
-      const connections = (pool as any).connections as Map<string, any>;
+      const connections = (pool as TestableSmtpConnectionPool).connections;
       const connection = connections.get(wrapper.id);
       expect(connection?.verificationFailures).toBeGreaterThan(0);
     });
@@ -233,14 +248,15 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
 
       // Access the connection directly from the pool's internal map
-      const connections = (pool as any).connections as Map<string, any>;
+      const connections = (pool as TestableSmtpConnectionPool).connections;
       const storedWrapper = connections.get(connectionId);
 
       // Set up the failure scenario
-      storedWrapper.verificationFailures = config.maxVerificationFailures! - 1; // Set to 1 (max is 2)
+      storedWrapper.verificationFailures =
+        (config.maxVerificationFailures || 2) - 1; // Set to 1 (max is 2)
       storedWrapper.lastVerified = new Date(Date.now() - 2000); // Force verification needed
 
-      const mockTransporter = storedWrapper.connection as any;
+      const mockTransporter = storedWrapper.connection as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       // Should fail and destroy the connection
@@ -305,7 +321,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle verification failures in verifyAllConnections", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       await pool.release(wrapper);
@@ -346,7 +362,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle close errors gracefully", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
       mockTransporter.close = vi.fn(() => {
         throw new Error("Close failed");
       });
@@ -409,10 +425,10 @@ describe("SmtpConnectionPool", () => {
 
       // All should complete successfully
       expect(results).toHaveLength(3);
-      results.forEach((result) => {
+      for (const result of results) {
         expect(typeof result.verified).toBe("number");
         expect(typeof result.failed).toBe("number");
-      });
+      }
     });
   });
 
@@ -421,7 +437,7 @@ describe("SmtpConnectionPool", () => {
       const wrapper = await pool.acquire();
       wrapper.lastVerified = new Date(Date.now() - 2000);
 
-      const mockTransporter = wrapper.connection as any;
+      const mockTransporter = wrapper.connection as MockTransporter;
 
       // First verification fails
       mockTransporter.setShouldFailVerify(true);

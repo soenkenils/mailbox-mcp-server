@@ -5,7 +5,19 @@ import * as v from "valibot";
 // =============================================================================
 
 export const sanitizeString = (str: string): string => {
-  return str.trim().replace(/[\u0000-\u001F\u007F-\u009F]/g, ""); // Remove control characters
+  // Remove control characters (0-31, 127-159) without using regex ranges
+  return str
+    .trim()
+    .split("")
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return (
+        !(code >= 0 && code <= 31) &&
+        code !== 127 &&
+        !(code >= 128 && code <= 159)
+      );
+    })
+    .join("");
 };
 
 export const sanitizeHtml = (html: string): string => {
@@ -38,7 +50,10 @@ const folderNameSchema = v.pipe(
   v.trim(),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.regex(/^[^\/\\<>:"|?*\u0000-\u001F]+$/, "Invalid folder name characters"),
+  v.check(
+    (str) => !/[\/\\<>:"|?*]/.test(str),
+    "Invalid folder name characters",
+  ),
   v.transform(sanitizeString),
 );
 

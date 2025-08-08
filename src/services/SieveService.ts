@@ -215,7 +215,7 @@ export class SieveService {
       );
     }
 
-    return this.parseScriptList(response.data);
+    return this.parseScriptList(response.data as string);
   }
 
   async getScript(name: string): Promise<string> {
@@ -229,7 +229,7 @@ export class SieveService {
       );
     }
 
-    return response.data;
+    return response.data as string;
   }
 
   async putScript(name: string, content: string): Promise<void> {
@@ -467,7 +467,7 @@ export class SieveService {
       );
     }
 
-    return this.parseCapabilities(response.data);
+    return this.parseCapabilities(response.data as string);
   }
 
   private async sendCommand(command: string): Promise<SieveResponse> {

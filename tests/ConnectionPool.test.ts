@@ -5,6 +5,12 @@ import {
   type ConnectionWrapper,
 } from "../src/services/ConnectionPool.js";
 
+// Test helper interface for accessing private methods
+interface TestableConnectionPool<T> extends ConnectionPool<T> {
+  updateMetrics(): void;
+  performHealthCheck(): Promise<void>;
+}
+
 // Mock connection class for testing
 class MockConnection {
   public id: string;
@@ -78,7 +84,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
     return this.connections;
   }
 
-  getWaitingQueue(): Array<any> {
+  getWaitingQueue(): Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }> {
     return this.waitingQueue;
   }
 }
@@ -219,11 +228,11 @@ describe("ConnectionPool", () => {
       expect(successful.length + failed.length).toBe(2);
 
       // Verify timeout errors
-      failed.forEach((result) => {
+      for (const result of failed) {
         if (result.status === "rejected") {
           expect(result.reason.message).toContain("Connection acquire timeout");
         }
-      });
+      }
 
       // Release all initial connections
       for (const connection of initialConnections) {
@@ -390,7 +399,7 @@ describe("ConnectionPool", () => {
       const wrapper = await pool.acquire();
 
       // Simulate corrupted wrapper
-      delete (wrapper as any).isHealthy;
+      (wrapper as { isHealthy?: boolean }).isHealthy = undefined;
 
       // Should still be able to release
       await expect(pool.release(wrapper)).resolves.not.toThrow();
@@ -552,7 +561,7 @@ describe("ConnectionPool", () => {
       const wrapper2 = await pool.acquire();
 
       // Force metrics update
-      (pool as any).updateMetrics();
+      (pool as TestableConnectionPool<MockConnection>).updateMetrics();
 
       const metrics = pool.getMetrics();
       expect(metrics.averageConnectionAge).toBeGreaterThan(0);
@@ -571,12 +580,14 @@ describe("ConnectionPool", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Manually trigger health check instead of waiting for timer
-      await (pool as any).performHealthCheck();
+      await (
+        pool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
 
       const updatedMetrics = pool.getMetrics();
       expect(updatedMetrics.lastHealthCheck).toBeInstanceOf(Date);
-      expect(updatedMetrics.lastHealthCheck!.getTime()).toBeGreaterThan(
-        initialMetrics.lastHealthCheck!.getTime(),
+      expect(updatedMetrics.lastHealthCheck?.getTime()).toBeGreaterThan(
+        initialMetrics.lastHealthCheck?.getTime(),
       );
     });
 
@@ -588,7 +599,7 @@ describe("ConnectionPool", () => {
       await pool.release(wrapper);
 
       // Force metrics update
-      (pool as any).updateMetrics();
+      (pool as TestableConnectionPool<MockConnection>).updateMetrics();
 
       const metrics = pool.getMetrics();
       expect(metrics.unhealthyConnections).toBe(1);

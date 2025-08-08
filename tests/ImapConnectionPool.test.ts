@@ -59,7 +59,7 @@ class MockImapFlow {
     this.selectedFolder = folder;
   }
 
-  on(event: string, handler: Function): MockImapFlow {
+  on(event: string, handler: (...args: unknown[]) => void): MockImapFlow {
     // Mock event handler registration - ensure proper chaining
     return this;
   }
@@ -80,7 +80,7 @@ describe("ImapConnectionPool", () => {
 
     // Reset the mock implementation to ensure clean state
     const { ImapFlow } = await import("imapflow");
-    (ImapFlow as any).mockImplementation(() => new MockImapFlow());
+    vi.mocked(ImapFlow).mockImplementation(() => new MockImapFlow());
 
     connection = {
       host: "imap.example.com",
@@ -123,7 +123,7 @@ describe("ImapConnectionPool", () => {
       mockImapFlow.setShouldFailConnect(true);
 
       const { ImapFlow } = await import("imapflow");
-      (ImapFlow as any).mockImplementation(() => mockImapFlow);
+      vi.mocked(ImapFlow).mockImplementation(() => mockImapFlow);
 
       await expect(pool.acquire()).rejects.toThrow(
         "Failed to create connection",
@@ -156,7 +156,7 @@ describe("ImapConnectionPool", () => {
     it("should handle noop failures", async () => {
       const wrapper = await pool.acquire();
 
-      const mockImapFlow = wrapper.connection as any;
+      const mockImapFlow = wrapper.connection as MockImapFlow;
       mockImapFlow.setShouldFailNoop(true);
 
       const isValid = await pool.validateConnection(wrapper.connection);
@@ -208,7 +208,7 @@ describe("ImapConnectionPool", () => {
       mockImapFlow.setShouldFailMailboxOpen(true);
 
       const { ImapFlow } = await import("imapflow");
-      (ImapFlow as any).mockImplementation(() => mockImapFlow);
+      vi.mocked(ImapFlow).mockImplementation(() => mockImapFlow);
 
       await expect(pool.acquireForFolder("INBOX")).rejects.toThrow(
         "Failed to select folder INBOX",
@@ -242,12 +242,13 @@ describe("ImapConnectionPool", () => {
       await pool.invalidateFolderConnections("INBOX");
 
       // Check connections
-      const connections = (pool as any).connections as Map<string, any>;
+      const connections = (pool as { connections: Map<string, unknown> })
+        .connections;
       const inboxConnection = Array.from(connections.values()).find(
-        (w: any) => w.id === wrapper1.id,
+        (w: { id: string }) => w.id === wrapper1.id,
       );
       const sentConnection = Array.from(connections.values()).find(
-        (w: any) => w.id === wrapper2.id,
+        (w: { id: string }) => w.id === wrapper2.id,
       );
 
       // INBOX connection should be marked unhealthy
@@ -275,11 +276,11 @@ describe("ImapConnectionPool", () => {
       const metrics = pool.getImapMetrics();
 
       expect(metrics.folderDistribution).toBeDefined();
-      expect(metrics.folderDistribution["INBOX"]).toBeGreaterThan(0);
+      expect(metrics.folderDistribution.INBOX).toBeGreaterThan(0);
 
       // Only expect Sent folder if we got separate connections
       if (wrapper1.id !== wrapper2.id) {
-        expect(metrics.folderDistribution["Sent"]).toBeGreaterThan(0);
+        expect(metrics.folderDistribution.Sent).toBeGreaterThan(0);
       }
 
       expect(metrics.totalConnections).toBeGreaterThan(0);
@@ -292,7 +293,7 @@ describe("ImapConnectionPool", () => {
       const metrics = pool.getImapMetrics();
 
       // Active connection should not appear in folder distribution
-      expect(metrics.folderDistribution["INBOX"]).toBeUndefined();
+      expect(metrics.folderDistribution.INBOX).toBeUndefined();
 
       await pool.releaseFromFolder(wrapper);
     });
@@ -311,7 +312,7 @@ describe("ImapConnectionPool", () => {
       const wrapper = await pool.acquire();
 
       // Mock logout to fail
-      const mockImapFlow = wrapper.connection as any;
+      const mockImapFlow = wrapper.connection as MockImapFlow;
       mockImapFlow.logout = vi
         .fn()
         .mockRejectedValue(new Error("Logout failed"));
@@ -377,10 +378,10 @@ describe("ImapConnectionPool", () => {
 
       // Check that all acquisitions succeeded
       expect(wrappers).toHaveLength(4);
-      wrappers.forEach((wrapper) => {
+      for (const wrapper of wrappers) {
         expect(wrapper).toBeDefined();
         expect(wrapper.selectedFolder).toBeDefined();
-      });
+      }
 
       // Clean up
       for (const wrapper of wrappers) {

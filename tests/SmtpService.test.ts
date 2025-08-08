@@ -1,11 +1,25 @@
 import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
-import type { SmtpPoolConfig } from "../src/services/SmtpConnectionPool.js";
+import type {
+  SmtpConnectionWrapper,
+  SmtpPoolConfig,
+} from "../src/services/SmtpConnectionPool.js";
 import { SmtpService } from "../src/services/SmtpService.js";
 import type {
   EmailComposition,
   SmtpConnection,
 } from "../src/types/email.types.js";
+
+// Type for accessing service internals in tests
+interface TestableSmtpService extends SmtpService {
+  pool: {
+    acquire: Mock;
+    release: Mock;
+    destroy: Mock;
+    getSmtpMetrics: Mock;
+    getMetrics: Mock;
+  };
+}
 
 // Mock factories for cleaner test setup
 const createMockSmtpConnection = (
@@ -41,8 +55,14 @@ import { SmtpConnectionPool } from "../src/services/SmtpConnectionPool.js";
 describe("SmtpService", () => {
   let smtpService: SmtpService;
   let mockConnection: SmtpConnection;
-  let mockPool: any;
-  let mockWrapper: any;
+  let mockPool: {
+    acquire: Mock;
+    release: Mock;
+    destroy: Mock;
+    getSmtpMetrics: Mock;
+    getMetrics: Mock;
+  };
+  let mockWrapper: SmtpConnectionWrapper;
   let mockSendMail: Mock;
   let mockVerify: Mock;
   let mockClose: Mock;
@@ -88,7 +108,7 @@ describe("SmtpService", () => {
     };
 
     // Set up the mock pool implementation
-    (SmtpConnectionPool as any).mockImplementation(() => ({
+    (SmtpConnectionPool as Mock).mockImplementation(() => ({
       acquire: vi.fn().mockResolvedValue(mockWrapper),
       release: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn().mockResolvedValue(undefined),
@@ -121,7 +141,7 @@ describe("SmtpService", () => {
     smtpService = new SmtpService(mockConnection, mockPoolConfig);
 
     // Get the mock pool instance
-    mockPool = (smtpService as any).pool;
+    mockPool = (smtpService as TestableSmtpService).pool;
 
     // Setup default successful responses
     mockSendMail.mockResolvedValue({
@@ -283,7 +303,7 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition();
 
       // Setup the mock pool for this service instance
-      const servicePool = (service as any).pool;
+      const servicePool = (service as TestableSmtpService).pool;
       servicePool.acquire.mockResolvedValue(mockWrapper);
       servicePool.release.mockResolvedValue(undefined);
       servicePool.connectionConfig = connection;
@@ -320,7 +340,7 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition();
 
       // Setup the mock pool for this service instance
-      const servicePool = (service as any).pool;
+      const servicePool = (service as TestableSmtpService).pool;
       servicePool.acquire.mockResolvedValue(mockWrapper);
       servicePool.release.mockResolvedValue(undefined);
       servicePool.connectionConfig = connection;
