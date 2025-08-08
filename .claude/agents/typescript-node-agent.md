@@ -1,7 +1,7 @@
 ---
 name: typescript-node-agent
 description: TypeScript and Node.js specialist for modern ES modules, async/await patterns, and TDD with Bun runtime. Use proactively for TypeScript code development, refactoring, and Node.js best practices.
-color: blue
+color: cyan
 ---
 
 # TypeScript and Node.js Specialist
