@@ -124,7 +124,14 @@ export abstract class ConnectionPool<T> {
 
   async release(wrapper: ConnectionWrapper<T>): Promise<void> {
     if (!this.connections.has(wrapper.id)) {
-      console.warn(`Attempting to release unknown connection ${wrapper.id}`);
+      await this.logger.warning(
+        "Attempting to release unknown connection",
+        {
+          operation: "release",
+          service: "ConnectionPool",
+        },
+        { connectionId: wrapper.id },
+      );
       return;
     }
 
@@ -191,53 +198,22 @@ export abstract class ConnectionPool<T> {
   }
 
   private async createNewConnection(): Promise<ConnectionWrapper<T>> {
+    return this.createConnectionWithRetries();
+  }
+
+  private async createConnectionWithRetries(): Promise<ConnectionWrapper<T>> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       try {
-        const connection = await this.createConnection();
-        const wrapper: ConnectionWrapper<T> = {
-          connection,
-          createdAt: new Date(),
-          lastUsed: new Date(),
-          isHealthy: true,
-          inUse: true,
-          id: this.generateConnectionId(),
-        };
-
-        this.connections.set(wrapper.id, wrapper);
-        this.metrics.totalConnections++;
-        this.metrics.activeConnections++;
-        this.metrics.totalCreated++;
-        this.metrics.totalAcquired++;
-        this.updateMetrics();
-
-        return wrapper;
+        return await this.createConnectionWrapper();
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        this.metrics.totalErrors++;
-        this.recordError(
-          lastError.message,
-          `createConnection attempt ${attempt + 1}`,
-        );
+        this.recordConnectionCreationError(lastError, attempt);
 
         // If this is not the last attempt, wait with exponential backoff
         if (attempt < this.config.maxRetries) {
-          const backoffDelay = this.calculateExponentialBackoff(attempt);
-          await this.logger.warning(
-            "Connection creation failed, retrying",
-            {
-              operation: "createNewConnection",
-              service: "ConnectionPool",
-            },
-            {
-              attempt: attempt + 1,
-              maxRetries: this.config.maxRetries + 1,
-              backoffDelay,
-              error: lastError.message,
-            },
-          );
-          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+          await this.handleConnectionCreationError(lastError, attempt);
         }
       }
     }
@@ -245,6 +221,56 @@ export abstract class ConnectionPool<T> {
     throw new Error(
       `Failed to create connection after ${this.config.maxRetries + 1} attempts: ${lastError?.message || "Unknown error"}`,
     );
+  }
+
+  private async createConnectionWrapper(): Promise<ConnectionWrapper<T>> {
+    const connection = await this.createConnection();
+    const wrapper: ConnectionWrapper<T> = {
+      connection,
+      createdAt: new Date(),
+      lastUsed: new Date(),
+      isHealthy: true,
+      inUse: true,
+      id: this.generateConnectionId(),
+    };
+
+    this.registerConnection(wrapper);
+    return wrapper;
+  }
+
+  private registerConnection(wrapper: ConnectionWrapper<T>): void {
+    this.connections.set(wrapper.id, wrapper);
+    this.metrics.totalConnections++;
+    this.metrics.activeConnections++;
+    this.metrics.totalCreated++;
+    this.metrics.totalAcquired++;
+    this.updateMetrics();
+  }
+
+  private recordConnectionCreationError(error: Error, attempt: number): void {
+    this.metrics.totalErrors++;
+    this.recordError(error.message, `createConnection attempt ${attempt + 1}`);
+  }
+
+  private async handleConnectionCreationError(
+    error: Error,
+    attempt: number,
+  ): Promise<void> {
+    const backoffDelay = this.calculateExponentialBackoff(attempt);
+    await this.logger.warning(
+      "Connection creation failed, retrying",
+      {
+        operation: "createNewConnection",
+        service: "ConnectionPool",
+      },
+      {
+        attempt: attempt + 1,
+        maxRetries: this.config.maxRetries + 1,
+        backoffDelay,
+        error: error.message,
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, backoffDelay));
   }
 
   protected async activateConnection(
@@ -304,7 +330,17 @@ export abstract class ConnectionPool<T> {
     try {
       await this.destroyConnection(wrapper.connection);
     } catch (error) {
-      console.warn(`Error destroying connection ${wrapper.id}:`, error);
+      await this.logger.warning(
+        "Error destroying connection",
+        {
+          operation: "destroyConnectionWrapper",
+          service: "ConnectionPool",
+        },
+        {
+          connectionId: wrapper.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
     } finally {
       this.connections.delete(wrapper.id);
       if (wrapper.inUse) {
@@ -324,41 +360,70 @@ export abstract class ConnectionPool<T> {
   }
 
   private async performHealthCheck(): Promise<void> {
+    const connectionsToDestroy = await this.identifyConnectionsToDestroy();
+    await this.destroyUnhealthyConnections(connectionsToDestroy);
+    await this.ensureMinimumConnections();
+    this.updateMetrics();
+  }
+
+  private async identifyConnectionsToDestroy(): Promise<
+    ConnectionWrapper<T>[]
+  > {
     const now = new Date();
     const idleTimeout = this.config.idleTimeoutMs;
     const connectionsToDestroy: ConnectionWrapper<T>[] = [];
 
-    // Check for idle connections that should be removed
     for (const wrapper of this.connections.values()) {
       if (!wrapper.inUse) {
-        const idleTime = now.getTime() - wrapper.lastUsed.getTime();
-        if (
-          idleTime > idleTimeout &&
-          this.connections.size > this.config.minConnections
-        ) {
+        const shouldDestroy = await this.shouldDestroyConnection(
+          wrapper,
+          now,
+          idleTimeout,
+        );
+        if (shouldDestroy) {
           connectionsToDestroy.push(wrapper);
-        } else {
-          // Validate idle connections periodically
-          try {
-            const isValid = await this.validateConnection(wrapper.connection);
-            wrapper.isHealthy = isValid;
-            if (!isValid) {
-              connectionsToDestroy.push(wrapper);
-            }
-          } catch (error) {
-            wrapper.isHealthy = false;
-            connectionsToDestroy.push(wrapper);
-          }
         }
       }
     }
 
-    // Destroy unhealthy and idle connections
+    return connectionsToDestroy;
+  }
+
+  private async shouldDestroyConnection(
+    wrapper: ConnectionWrapper<T>,
+    now: Date,
+    idleTimeout: number,
+  ): Promise<boolean> {
+    const idleTime = now.getTime() - wrapper.lastUsed.getTime();
+
+    // Check if connection has been idle too long
+    if (
+      idleTime > idleTimeout &&
+      this.connections.size > this.config.minConnections
+    ) {
+      return true;
+    }
+
+    // Validate idle connections periodically
+    try {
+      const isValid = await this.validateConnection(wrapper.connection);
+      wrapper.isHealthy = isValid;
+      return !isValid;
+    } catch (error) {
+      wrapper.isHealthy = false;
+      return true;
+    }
+  }
+
+  private async destroyUnhealthyConnections(
+    connectionsToDestroy: ConnectionWrapper<T>[],
+  ): Promise<void> {
     for (const wrapper of connectionsToDestroy) {
       await this.destroyConnectionWrapper(wrapper);
     }
+  }
 
-    // Ensure minimum connections
+  private async ensureMinimumConnections(): Promise<void> {
     while (
       this.connections.size < this.config.minConnections &&
       !this.isShuttingDown
@@ -367,16 +432,18 @@ export abstract class ConnectionPool<T> {
         await this.createNewConnection();
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        console.warn(
-          "Failed to create minimum connection during health check:",
-          errorMsg,
+        await this.logger.warning(
+          "Failed to create minimum connection during health check",
+          {
+            operation: "performHealthCheck",
+            service: "ConnectionPool",
+          },
+          { error: errorMsg },
         );
         this.recordError(errorMsg, "healthCheck createConnection");
         break;
       }
     }
-
-    this.updateMetrics();
   }
 
   private updateMetrics(): void {

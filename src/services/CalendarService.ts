@@ -17,17 +17,35 @@ import {
   type ErrorContext,
   ErrorUtils,
 } from "../types/errors.js";
+import {
+  CircuitBreaker,
+  type CircuitBreakerConfig,
+  type CircuitBreakerMetrics,
+} from "./CircuitBreaker.js";
 import { createLogger } from "./Logger.js";
 
 export class CalendarService {
   private connection: CalDavConnection;
   private cache: LocalCache;
   private client: ReturnType<typeof createDAVClient> | null = null;
+  private circuitBreaker: CircuitBreaker;
   private logger = createLogger("CalendarService");
 
-  constructor(connection: CalDavConnection, cache: LocalCache) {
+  constructor(
+    connection: CalDavConnection,
+    cache: LocalCache,
+    circuitBreakerConfig?: CircuitBreakerConfig,
+  ) {
     this.connection = connection;
     this.cache = cache;
+
+    // Initialize circuit breaker with defaults or provided config
+    const cbConfig = circuitBreakerConfig || {
+      failureThreshold: 3,
+      recoveryTimeout: 5000, // 5 seconds
+      monitoringInterval: 2000, // 2 seconds
+    };
+    this.circuitBreaker = new CircuitBreaker(cbConfig);
   }
 
   private async getClient() {
@@ -55,10 +73,28 @@ export class CalendarService {
       return cached;
     }
 
-    const events = await this.fetchCalendarEvents(options);
-    this.cache.set(cacheKey, events, 900000); // 15 minutes TTL
-
-    return events;
+    // Try to get fresh data, fallback to stale cache on connection failure
+    try {
+      const events = await this.fetchCalendarEvents(options);
+      this.cache.set(cacheKey, events, 900000); // 15 minutes TTL
+      return events;
+    } catch (error) {
+      // Fallback: Return stale cache if available
+      if (this.isConnectionError(error)) {
+        const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
+        if (staleEvents) {
+          await this.logger.warning(
+            "Returning stale calendar events due to connection failure",
+            {
+              operation: "getCalendarEvents",
+              service: "CalendarService",
+            },
+          );
+          return staleEvents;
+        }
+      }
+      throw error;
+    }
   }
 
   async searchCalendar(
@@ -71,12 +107,30 @@ export class CalendarService {
       return cached;
     }
 
-    const events = await this.fetchCalendarEvents(options);
-    const filteredEvents = this.filterEventsByQuery(events, options.query);
+    // Try to get fresh data, fallback to stale cache on connection failure
+    try {
+      const events = await this.fetchCalendarEvents(options);
+      const filteredEvents = this.filterEventsByQuery(events, options.query);
 
-    this.cache.set(cacheKey, filteredEvents, 900000); // 15 minutes TTL
-
-    return filteredEvents;
+      this.cache.set(cacheKey, filteredEvents, 900000); // 15 minutes TTL
+      return filteredEvents;
+    } catch (error) {
+      // Fallback: Return stale cache if available
+      if (this.isConnectionError(error)) {
+        const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
+        if (staleEvents) {
+          await this.logger.warning(
+            "Returning stale calendar search results due to connection failure",
+            {
+              operation: "searchCalendar",
+              service: "CalendarService",
+            },
+          );
+          return staleEvents;
+        }
+      }
+      throw error;
+    }
   }
 
   async getFreeBusy(
@@ -91,16 +145,34 @@ export class CalendarService {
       return cached;
     }
 
-    const events = await this.fetchCalendarEvents({
-      start,
-      end,
-      calendar,
-    });
+    // Try to get fresh data, fallback to stale cache on connection failure
+    try {
+      const events = await this.fetchCalendarEvents({
+        start,
+        end,
+        calendar,
+      });
 
-    const freeBusy = this.calculateFreeBusy(events, start, end);
-    this.cache.set(cacheKey, freeBusy, 300000); // 5 minutes TTL
-
-    return freeBusy;
+      const freeBusy = this.calculateFreeBusy(events, start, end);
+      this.cache.set(cacheKey, freeBusy, 300000); // 5 minutes TTL
+      return freeBusy;
+    } catch (error) {
+      // Fallback: Return stale cache if available
+      if (this.isConnectionError(error)) {
+        const staleFreeBusy = this.tryGetStaleCache<FreeBusyInfo>(cacheKey);
+        if (staleFreeBusy) {
+          await this.logger.warning(
+            "Returning stale free/busy info due to connection failure",
+            {
+              operation: "getFreeBusy",
+              service: "CalendarService",
+            },
+          );
+          return staleFreeBusy;
+        }
+      }
+      throw error;
+    }
   }
 
   private async fetchCalendarEvents(
@@ -142,8 +214,10 @@ export class CalendarService {
 
   private async discoverCalendars(): Promise<string[]> {
     try {
-      const client = await this.getClient();
-      const calendars = await client.fetchCalendars();
+      const calendars = await this.circuitBreaker.execute(async () => {
+        const client = await this.getClient();
+        return await client.fetchCalendars();
+      });
 
       return calendars.map(
         (cal: DAVCalendar) => (cal.displayName as string) || cal.url,
@@ -166,28 +240,34 @@ export class CalendarService {
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
     try {
-      const client = await this.getClient();
-      const calendars = await client.fetchCalendars();
+      const { calendars, calendarObjects } = await this.circuitBreaker.execute(
+        async () => {
+          const client = await this.getClient();
+          const calendars = await client.fetchCalendars();
 
-      const targetCalendar = calendars.find(
-        (cal: DAVCalendar) =>
-          cal.displayName === calendar || cal.url.includes(calendar),
+          const targetCalendar = calendars.find(
+            (cal: DAVCalendar) =>
+              cal.displayName === calendar || cal.url.includes(calendar),
+          );
+
+          if (!targetCalendar) {
+            throw new Error(`Calendar ${calendar} not found`);
+          }
+
+          const calendarObjects = await client.fetchCalendarObjects({
+            calendar: targetCalendar,
+            timeRange:
+              options.start && options.end
+                ? {
+                    start: options.start.toISOString(),
+                    end: options.end.toISOString(),
+                  }
+                : undefined,
+          });
+
+          return { calendars, calendarObjects };
+        },
       );
-
-      if (!targetCalendar) {
-        throw new Error(`Calendar ${calendar} not found`);
-      }
-
-      const calendarObjects = await client.fetchCalendarObjects({
-        calendar: targetCalendar,
-        timeRange:
-          options.start && options.end
-            ? {
-                start: options.start.toISOString(),
-                end: options.end.toISOString(),
-              }
-            : undefined,
-      });
 
       return await this.parseCalendarObjects(calendarObjects, calendar);
     } catch (error) {
@@ -536,5 +616,35 @@ export class CalendarService {
     }
 
     return { start, end, busy, free };
+  }
+
+  private isConnectionError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("connection") ||
+      message.includes("timeout") ||
+      message.includes("econnreset") ||
+      message.includes("enotfound") ||
+      message.includes("econnrefused") ||
+      message.includes("circuit breaker is open")
+    );
+  }
+
+  private tryGetStaleCache<T>(key: string): T | null {
+    // Try to get data from cache even if expired
+    return this.cache.getStale<T>(key);
+  }
+
+  // Get circuit breaker metrics
+  getCircuitBreakerMetrics(): CircuitBreakerMetrics {
+    return this.circuitBreaker.getMetrics();
+  }
+
+  // Reset circuit breaker (for administrative purposes)
+  resetCircuitBreaker(): void {
+    this.circuitBreaker.reset();
   }
 }
