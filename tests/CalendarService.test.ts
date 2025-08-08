@@ -1,3 +1,4 @@
+import type { createDAVClient } from "tsdav";
 import {
   type Mock,
   afterAll,
@@ -12,52 +13,22 @@ import { CalendarService } from "../src/services/CalendarService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { CalDavConnection } from "../src/types/calendar.types.js";
 
-// Test helper interface for accessing private methods
-interface TestableCalendarService extends CalendarService {
-  getClient(): Promise<{
-    fetchCalendars: () => Promise<unknown[]>;
-    fetchCalendarObjects: () => Promise<unknown[]>;
-  }>;
-  discoverCalendars(): Promise<string[]>;
+// Type for the mock DAV client with only the methods we need for testing
+type MockDAVClient = Pick<
+  Awaited<ReturnType<typeof createDAVClient>>,
+  "fetchCalendars" | "fetchCalendarObjects"
+>;
+
+// Test helper class for accessing protected methods
+class TestableCalendarService extends CalendarService {
+  public async getClient() {
+    return super.getClient();
+  }
+
+  public async discoverCalendars() {
+    return super.discoverCalendars();
+  }
 }
-
-// Mock factories for cleaner test setup
-const createMockICalEvent = (overrides: Record<string, unknown> = {}) => ({
-  uid: "event1@example.com",
-  summary: "Test Event",
-  description: "Test Description",
-  location: "Test Location",
-  startDate: {
-    toJSDate: () => new Date("2025-06-20T10:00:00Z"),
-    isDate: false,
-  },
-  endDate: {
-    toJSDate: () => new Date("2025-06-20T11:00:00Z"),
-    isDate: false,
-  },
-  isRecurring: () => false,
-  attendees: [],
-  organizer: null,
-  component: {
-    getFirstPropertyValue: (prop: string) => {
-      if (prop === "rrule") return null;
-      if (prop === "categories") return null;
-      if (prop === "created") return null;
-      if (prop === "last-modified") return null;
-      return null;
-    },
-  },
-  ...overrides,
-});
-
-const createMockICalComponent = () => ({
-  getAllSubcomponents: vi.fn().mockImplementation((type: string) => {
-    if (type === "vevent") {
-      return [{}];
-    }
-    return [];
-  }),
-});
 
 // Define mock functions at the top level
 const mockFetchCalendars = vi.fn();
@@ -138,6 +109,7 @@ const createMockCache = (): LocalCache => ({
   has: vi.fn(),
   size: vi.fn(),
   cleanup: vi.fn(),
+  getStale: vi.fn(),
 });
 
 const createMockConnection = (
@@ -223,9 +195,7 @@ describe("CalendarService", () => {
     // Setup mock instances
     mockCache = createMockCache();
     mockConnection = createMockConnection();
-
-    // Create service instance
-    calendarService = new CalendarService(mockConnection, mockCache);
+    calendarService = new TestableCalendarService(mockConnection, mockCache);
 
     // Mock the getClient method to return our mock client
     vi.spyOn(
@@ -234,7 +204,7 @@ describe("CalendarService", () => {
     ).mockResolvedValue({
       fetchCalendars: mockFetchCalendars,
       fetchCalendarObjects: mockFetchCalendarObjects,
-    });
+    } as MockDAVClient);
   });
 
   describe("getCalendarEvents", () => {

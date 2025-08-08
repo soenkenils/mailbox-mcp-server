@@ -10,14 +10,6 @@ import type {
   FreeBusyInfo,
 } from "../types/calendar.types.js";
 import {
-  CacheError,
-  CalendarError,
-  ConnectionError,
-  ErrorCode,
-  type ErrorContext,
-  ErrorUtils,
-} from "../types/errors.js";
-import {
   CircuitBreaker,
   type CircuitBreakerConfig,
   type CircuitBreakerMetrics,
@@ -27,7 +19,7 @@ import { createLogger } from "./Logger.js";
 export class CalendarService {
   private connection: CalDavConnection;
   private cache: LocalCache;
-  private client: ReturnType<typeof createDAVClient> | null = null;
+  private client: Awaited<ReturnType<typeof createDAVClient>> | null = null;
   private circuitBreaker: CircuitBreaker;
   private logger = createLogger("CalendarService");
 
@@ -48,9 +40,11 @@ export class CalendarService {
     this.circuitBreaker = new CircuitBreaker(cbConfig);
   }
 
-  private async getClient() {
+  protected async getClient(): Promise<
+    Awaited<ReturnType<typeof createDAVClient>>
+  > {
     if (!this.client) {
-      this.client = createDAVClient({
+      this.client = await createDAVClient({
         serverUrl: this.connection.baseUrl,
         credentials: {
           username: this.connection.username,
@@ -212,7 +206,7 @@ export class CalendarService {
     }
   }
 
-  private async discoverCalendars(): Promise<string[]> {
+  protected async discoverCalendars(): Promise<string[]> {
     try {
       const calendars = await this.circuitBreaker.execute(async () => {
         const client = await this.getClient();
