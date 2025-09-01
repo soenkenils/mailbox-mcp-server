@@ -15,12 +15,12 @@ describe("Configuration", () => {
   describe("loadConfig", () => {
     it("should load configuration with required environment variables", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
 
       const config = loadConfig();
 
       expect(config.email.user).toBe("test@mailbox.org");
-      expect(config.email.password).toBe("testpassword");
+      expect(config.email.password).toBe("TestPass123!");
       expect(config.email.host).toBe("imap.mailbox.org");
       expect(config.email.port).toBe(993);
       expect(config.email.secure).toBe(true);
@@ -28,7 +28,7 @@ describe("Configuration", () => {
 
     it("should use default values when optional environment variables are not set", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.MAILBOX_CALDAV_URL = undefined;
       process.env.MAILBOX_IMAP_HOST = undefined;
       process.env.DEBUG = undefined;
@@ -43,7 +43,7 @@ describe("Configuration", () => {
 
     it("should override defaults with environment variables", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.MAILBOX_IMAP_HOST = "custom.imap.server";
       process.env.MAILBOX_IMAP_PORT = "143";
       process.env.MAILBOX_IMAP_SECURE = "false";
@@ -75,7 +75,7 @@ describe("Configuration", () => {
 
     it("should parse calendar list from environment", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.MAILBOX_CALENDARS = "personal,work,family";
 
       const config = loadConfig();
@@ -85,7 +85,7 @@ describe("Configuration", () => {
 
     it("should handle empty calendar list", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
 
       const config = loadConfig();
 
@@ -94,14 +94,14 @@ describe("Configuration", () => {
 
     it("should validate email format", () => {
       process.env.MAILBOX_EMAIL = "invalid-email";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
 
     it("should validate port numbers", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.MAILBOX_IMAP_PORT = "70000"; // Invalid port > 65535
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
@@ -109,7 +109,7 @@ describe("Configuration", () => {
 
     it("should validate boolean values", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.DEBUG = "maybe"; // Invalid boolean
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
@@ -117,7 +117,7 @@ describe("Configuration", () => {
 
     it("should validate URL format", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.MAILBOX_CALDAV_URL = "not-a-url";
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
@@ -125,7 +125,7 @@ describe("Configuration", () => {
 
     it("should validate minimum values for cache settings", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
-      process.env.MAILBOX_PASSWORD = "testpassword";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
       process.env.CACHE_MAX_SIZE = "0"; // Must be >= 1
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");

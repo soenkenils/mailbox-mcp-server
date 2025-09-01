@@ -9,6 +9,10 @@ import {
 
 import { type ServerConfig, loadConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
+import {
+  type DynamicPoolConfig,
+  dynamicPoolManager,
+} from "./services/DynamicPoolManager.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";
 import { LogLevel, createLogger, logger } from "./services/Logger.js";
@@ -144,6 +148,17 @@ class MailboxMcpServer {
         this.cache,
       );
 
+      // Register pools with dynamic pool manager for adaptive scaling
+      // Type assertion needed due to interface compatibility between ConnectionPoolConfig and DynamicPoolConfig
+      dynamicPoolManager.registerPool(
+        "imap",
+        this.config.pools.imap as unknown as DynamicPoolConfig,
+      );
+      dynamicPoolManager.registerPool(
+        "smtp",
+        this.config.pools.smtp as unknown as DynamicPoolConfig,
+      );
+
       this.logger.info(
         "Services initialized successfully",
         {
@@ -253,9 +268,12 @@ class MailboxMcpServer {
 
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const emailTools = createEmailTools(this.emailService, this.smtpService);
-      const calendarTools = createCalendarTools(this.calendarService);
-      const sieveTools = getSieveTools();
+      // Create tool definitions in parallel for better performance
+      const [emailTools, calendarTools, sieveTools] = await Promise.all([
+        Promise.resolve(createEmailTools(this.emailService, this.smtpService)),
+        Promise.resolve(createCalendarTools(this.calendarService)),
+        Promise.resolve(getSieveTools()),
+      ]);
 
       return {
         tools: [...emailTools, ...calendarTools, ...sieveTools],
@@ -416,10 +434,14 @@ class MailboxMcpServer {
         service: "MailboxMcpServer",
       });
 
-      // Log pool metrics before cleanup
-      const emailMetrics = this.emailService.getPoolMetrics();
-      const smtpMetrics = this.smtpService.getPoolMetrics();
-      const performanceMetrics = logger.getPerformanceMetrics();
+      // Log pool metrics before cleanup - fetch in parallel for better performance
+      const [emailMetrics, smtpMetrics, performanceMetrics] = await Promise.all(
+        [
+          Promise.resolve(this.emailService.getPoolMetrics()),
+          Promise.resolve(this.smtpService.getPoolMetrics()),
+          Promise.resolve(logger.getPerformanceMetrics()),
+        ],
+      );
 
       this.logger.info(
         "Final connection pool metrics",
@@ -453,8 +475,11 @@ class MailboxMcpServer {
         },
       );
 
-      await this.emailService.disconnect();
-      await this.smtpService.close();
+      // Disconnect services in parallel for faster cleanup
+      await Promise.all([
+        this.emailService.disconnect(),
+        this.smtpService.close(),
+      ]);
       this.cache.destroy();
 
       const metrics = cleanupTimer.end(true);

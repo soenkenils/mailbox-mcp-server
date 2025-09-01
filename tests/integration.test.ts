@@ -97,7 +97,7 @@ describe("Integration Tests", () => {
     process.env = {
       ...originalEnv,
       MAILBOX_EMAIL: "test@mailbox.org",
-      MAILBOX_PASSWORD: "testpassword",
+      MAILBOX_PASSWORD: "TestPass123!",
       CACHE_EMAIL_SEARCH_TTL: "1000",
       CACHE_CALENDAR_EVENTS_TTL: "2000",
     };

@@ -62,7 +62,14 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       await connection.verify();
       return true;
     } catch (error) {
-      console.warn("SMTP connection validation failed:", error);
+      await this.logger.warning(
+        "SMTP connection validation failed",
+        {
+          operation: "validateConnection",
+          service: "SmtpConnectionPool",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       return false;
     }
   }
@@ -106,7 +113,14 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
     try {
       connection.close();
     } catch (error) {
-      console.warn("Error closing SMTP connection:", error);
+      await this.logger.warning(
+        "Error closing SMTP connection",
+        {
+          operation: "destroyConnection",
+          service: "SmtpConnectionPool",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
     }
   }
 
@@ -196,9 +210,18 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
               ) {
                 // Schedule destruction asynchronously
                 this.destroyConnection(smtpWrapper.connection)
-                  .catch((err) =>
-                    console.warn("Error destroying connection:", err),
-                  )
+                  .catch(async (err) => {
+                    await this.logger.warning(
+                      "Error destroying connection",
+                      {
+                        operation: "periodicVerification",
+                        service: "SmtpConnectionPool",
+                      },
+                      {
+                        error: err instanceof Error ? err.message : String(err),
+                      },
+                    );
+                  })
                   .finally(() => this.connections.delete(smtpWrapper.id));
               }
             }

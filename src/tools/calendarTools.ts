@@ -5,7 +5,7 @@ import {
   CalendarError,
   ErrorCode,
   type ErrorContext,
-  ErrorUtils,
+  toMCPError,
   ValidationError,
 } from "../types/errors.js";
 import {
@@ -305,7 +305,7 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
     // Convert to structured error if not already
     const mcpError =
       error instanceof Error
-        ? ErrorUtils.toMCPError(error, context)
+        ? toMCPError(error, context)
         : new CalendarError(
             String(error),
             ErrorCode.OPERATION_FAILED,

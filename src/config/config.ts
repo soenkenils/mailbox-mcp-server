@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import type { ConnectionPoolConfig } from "../services/ConnectionPool.js";
+import { DynamicPoolManager } from "../services/DynamicPoolManager.js";
 import type { CacheConfig } from "../types/cache.types.js";
 import type { CalDavConnection } from "../types/calendar.types.js";
 import type { ImapConnection, SmtpConnection } from "../types/email.types.js";
@@ -20,11 +21,57 @@ export interface ServerConfig {
   debug: boolean;
 }
 
+// Custom validation functions for security
+const isStrongPassword = (value: string): boolean => {
+  // Minimum 8 characters, at least one uppercase, lowercase, number, and special char
+  const minLength = value.length >= 8;
+  const hasUppercase = /[A-Z]/.test(value);
+  const hasLowercase = /[a-z]/.test(value);
+  const hasNumber = /\d/.test(value);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(value);
+
+  return (
+    minLength && hasUppercase && hasLowercase && hasNumber && hasSpecialChar
+  );
+};
+
+const isSecureEmail = (value: string): boolean => {
+  // Basic email validation plus ensure it's not from common insecure domains
+  const insecureDomains = ["example.com", "test.com", "localhost"];
+  const domain = value.split("@")[1]?.toLowerCase();
+  return !insecureDomains.includes(domain);
+};
+
+const strongPasswordTransform = (value: string) => {
+  if (!isStrongPassword(value)) {
+    throw new Error(
+      "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character",
+    );
+  }
+  return value;
+};
+
+const secureEmailTransform = (value: string) => {
+  if (!isSecureEmail(value)) {
+    throw new Error("Email domain appears to be insecure or for testing only");
+  }
+  return value;
+};
+
 // Environment variables validation schema
 const EnvSchema = v.object({
-  // Required variables
-  MAILBOX_EMAIL: v.pipe(v.string(), v.email(), v.minLength(1)),
-  MAILBOX_PASSWORD: v.pipe(v.string(), v.minLength(1)),
+  // Required variables with enhanced security validation
+  MAILBOX_EMAIL: v.pipe(
+    v.string(),
+    v.email("Invalid email format"),
+    v.minLength(5, "Email too short"),
+    v.transform(secureEmailTransform),
+  ),
+  MAILBOX_PASSWORD: v.pipe(
+    v.string(),
+    v.minLength(8, "Password must be at least 8 characters"),
+    v.transform(strongPasswordTransform),
+  ),
 
   // Optional IMAP configuration
   MAILBOX_IMAP_HOST: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -146,9 +193,26 @@ export function loadConfig(): ServerConfig {
   try {
     const validatedEnv = v.parse(EnvSchema, process.env);
 
-    // We've validated these exist, so they're safe to use
+    // We've validated these exist and are secure, so they're safe to use
     const email = validatedEnv.MAILBOX_EMAIL;
     const password = validatedEnv.MAILBOX_PASSWORD;
+
+    // Security recommendations logging (non-sensitive info only)
+    if (password.length < 12) {
+      console.warn(
+        "⚠️  Security Recommendation: Consider using a password with 12+ characters for enhanced security",
+      );
+    }
+
+    // Validate connection security settings
+    const imapSecure = validatedEnv.MAILBOX_IMAP_SECURE !== "false";
+    const smtpSecure = validatedEnv.MAILBOX_SMTP_SECURE !== "false";
+
+    if (!imapSecure || !smtpSecure) {
+      console.warn(
+        "⚠️  Security Warning: Non-secure connections detected. Ensure you're connecting over encrypted channels in production.",
+      );
+    }
 
     return {
       email: {
@@ -173,7 +237,7 @@ export function loadConfig(): ServerConfig {
       },
       sieve: {
         host: validatedEnv.MAILBOX_SIEVE_HOST || "imap.mailbox.org",
-        port: validatedEnv.MAILBOX_SIEVE_PORT || 4190,
+        port: validatedEnv.MAILBOX_SIEVE_PORT || 2000,
         secure: validatedEnv.MAILBOX_SIEVE_SECURE === "true",
         user: email,
         password: password,
@@ -193,21 +257,26 @@ export function loadConfig(): ServerConfig {
       },
       pools: {
         imap: {
-          minConnections: 1, // Always 1 - no need to configure
-          maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 2,
+          // Use dynamic pool configuration with environment overrides
+          ...DynamicPoolManager.getRecommendedConfig("imap"),
+          // Allow environment variable overrides for specific values
+          maxConnections:
+            validatedEnv.POOL_MAX_CONNECTIONS ||
+            DynamicPoolManager.getRecommendedConfig("imap").maxConnections,
           acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
-          maxRetries: 3, // Hardcoded - sensible default
-          retryDelayMs: 1000, // Hardcoded - sensible default
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
         smtp: {
-          minConnections: 1, // Always 1 - no need to configure
-          maxConnections: Math.min(3, validatedEnv.POOL_MAX_CONNECTIONS || 8), // SMTP needs fewer connections
+          // Use dynamic pool configuration with environment overrides
+          ...DynamicPoolManager.getRecommendedConfig("smtp"),
+          // Allow environment variable overrides for specific values
+          maxConnections: validatedEnv.POOL_MAX_CONNECTIONS
+            ? Math.min(5, validatedEnv.POOL_MAX_CONNECTIONS)
+            : // Cap SMTP at 5 even with env override
+              DynamicPoolManager.getRecommendedConfig("smtp").maxConnections,
           acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
-          maxRetries: 3, // Hardcoded - sensible default
-          retryDelayMs: 1000, // Hardcoded - sensible default
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
       },

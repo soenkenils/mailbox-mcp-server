@@ -215,6 +215,19 @@ export class SieveService {
       );
     }
 
+    // Log the raw LISTSCRIPTS response for debugging
+    await this.logger.debug(
+      "Raw LISTSCRIPTS response",
+      {
+        operation: "listScripts",
+        service: "SieveService",
+      },
+      {
+        rawData: response.data as string,
+        dataLength: (response.data as string)?.length || 0,
+      },
+    );
+
     return this.parseScriptList(response.data as string);
   }
 
@@ -467,6 +480,19 @@ export class SieveService {
       );
     }
 
+    // Log the raw capability response for debugging
+    await this.logger.debug(
+      "Raw capability response",
+      {
+        operation: "getCapabilities",
+        service: "SieveService",
+      },
+      {
+        rawData: response.data as string,
+        dataLength: (response.data as string)?.length || 0,
+      },
+    );
+
     return this.parseCapabilities(response.data as string);
   }
 
@@ -559,16 +585,101 @@ export class SieveService {
     const scripts: SieveScript[] = [];
     const lines = data.split("\r\n");
 
+    this.logger.debug(
+      `Parsing script list from ${lines.length} lines`,
+      {
+        operation: "parseScriptList",
+        service: "SieveService",
+      },
+      {
+        lines: lines.slice(0, 10), // Show first 10 lines for debugging
+      },
+    );
+
     for (const line of lines) {
-      const match = line.match(/^"([^"]+)"\s*(ACTIVE)?/);
+      const trimmedLine = line.trim();
+      if (
+        !trimmedLine ||
+        trimmedLine.startsWith("OK") ||
+        trimmedLine.startsWith("NO")
+      ) {
+        continue;
+      }
+
+      this.logger.debug(`Processing script line: ${trimmedLine}`);
+
+      // Try different parsing patterns
+      let match: RegExpMatchArray | null;
+
+      // Pattern 1: "scriptname" ACTIVE
+      match = trimmedLine.match(/^"([^"]+)"\s*(ACTIVE)?/);
       if (match) {
-        scripts.push({
+        const script = {
           name: match[1],
           content: "",
           active: !!match[2],
-        });
+        };
+        scripts.push(script);
+        this.logger.debug(
+          `Parsed script (quoted): ${script.name} (active: ${script.active})`,
+        );
+        continue;
+      }
+
+      // Pattern 2: scriptname ACTIVE (without quotes)
+      match = trimmedLine.match(/^([^\s]+)\s*(ACTIVE)?/);
+      if (match) {
+        const script = {
+          name: match[1],
+          content: "",
+          active: !!match[2],
+        };
+        scripts.push(script);
+        this.logger.debug(
+          `Parsed script (unquoted): ${script.name} (active: ${script.active})`,
+        );
+        continue;
+      }
+
+      // Pattern 3: Just the script name on a line (may have ACTIVE on next line)
+      if (trimmedLine && !trimmedLine.includes(" ")) {
+        const script = {
+          name: trimmedLine.replace(/"/g, ""), // Remove quotes if present
+          content: "",
+          active: false, // We'll check next lines for ACTIVE marker
+        };
+        scripts.push(script);
+        this.logger.debug(`Parsed script (name only): ${script.name}`);
+        continue;
+      }
+
+      this.logger.debug(`Ignoring script list line: ${trimmedLine}`);
+    }
+
+    // Second pass: check for ACTIVE markers on separate lines
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line === "ACTIVE" && i > 0 && scripts.length > 0) {
+        // Mark the most recent script as active
+        scripts[scripts.length - 1].active = true;
+        this.logger.debug(
+          `Marked last script as active: ${scripts[scripts.length - 1].name}`,
+        );
       }
     }
+
+    this.logger.debug(
+      `Parsed ${scripts.length} scripts`,
+      {
+        operation: "parseScriptList",
+        service: "SieveService",
+      },
+      {
+        scriptNames: scripts.map(
+          (s) => `${s.name}${s.active ? " (ACTIVE)" : ""}`,
+        ),
+      },
+    );
 
     return scripts;
   }
@@ -583,22 +694,103 @@ export class SieveService {
 
     const lines = data.split("\r\n");
 
+    this.logger.debug(
+      `Parsing capabilities from ${lines.length} lines`,
+      {
+        operation: "parseCapabilities",
+        service: "SieveService",
+      },
+      {
+        lines: lines.slice(0, 10), // Show first 10 lines for debugging
+      },
+    );
+
     for (const line of lines) {
-      if (line.startsWith('"IMPLEMENTATION"')) {
-        capabilities.implementation = line.match(/"([^"]+)"/)?.[1] || "";
-      } else if (line.startsWith('"VERSION"')) {
-        capabilities.version = line.match(/"([^"]+)"/)?.[1] || "";
-      } else if (line.startsWith('"SASL"')) {
-        capabilities.saslMechanisms =
-          line.match(/"([^"]+)"/)?.[1]?.split(" ") || [];
-      } else if (line.startsWith('"SIEVE"')) {
-        capabilities.sieveExtensions =
-          line.match(/"([^"]+)"/)?.[1]?.split(" ") || [];
-      } else if (line === '"STARTTLS"') {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      // Handle quoted capability format: "CAPABILITY" "value"
+      if (trimmedLine.startsWith('"IMPLEMENTATION"')) {
+        const matches = trimmedLine.match(/"IMPLEMENTATION"\s+"([^"]+)"/);
+        capabilities.implementation = matches?.[1] || "";
+        this.logger.debug(
+          `Parsed implementation: ${capabilities.implementation}`,
+        );
+      } else if (trimmedLine.startsWith('"VERSION"')) {
+        const matches = trimmedLine.match(/"VERSION"\s+"([^"]+)"/);
+        capabilities.version = matches?.[1] || "";
+        this.logger.debug(`Parsed version: ${capabilities.version}`);
+      } else if (trimmedLine.startsWith('"SASL"')) {
+        const matches = trimmedLine.match(/"SASL"\s+"([^"]+)"/);
+        capabilities.saslMechanisms = matches?.[1]?.split(" ") || [];
+        this.logger.debug(
+          `Parsed SASL mechanisms: ${capabilities.saslMechanisms.join(", ")}`,
+        );
+      } else if (trimmedLine.startsWith('"SIEVE"')) {
+        const matches = trimmedLine.match(/"SIEVE"\s+"([^"]+)"/);
+        capabilities.sieveExtensions = matches?.[1]?.split(" ") || [];
+        this.logger.debug(
+          `Parsed SIEVE extensions: ${capabilities.sieveExtensions.join(", ")}`,
+        );
+      } else if (trimmedLine === '"STARTTLS"') {
         // STARTTLS is advertised as a single capability
         capabilities.sieveExtensions.push("STARTTLS");
+        this.logger.debug("Added STARTTLS extension");
+      }
+      // Handle unquoted capability format: IMPLEMENTATION value
+      else if (trimmedLine.startsWith("IMPLEMENTATION ")) {
+        capabilities.implementation = trimmedLine
+          .substring(14)
+          .trim()
+          .replace(/^"(.*)"$/, "$1");
+        this.logger.debug(
+          `Parsed unquoted implementation: ${capabilities.implementation}`,
+        );
+      } else if (trimmedLine.startsWith("VERSION ")) {
+        capabilities.version = trimmedLine
+          .substring(8)
+          .trim()
+          .replace(/^"(.*)"$/, "$1");
+        this.logger.debug(`Parsed unquoted version: ${capabilities.version}`);
+      } else if (trimmedLine.startsWith("SASL ")) {
+        const saslValue = trimmedLine
+          .substring(5)
+          .trim()
+          .replace(/^"(.*)"$/, "$1");
+        capabilities.saslMechanisms = saslValue.split(" ");
+        this.logger.debug(
+          `Parsed unquoted SASL mechanisms: ${capabilities.saslMechanisms.join(", ")}`,
+        );
+      } else if (trimmedLine.startsWith("SIEVE ")) {
+        const sieveValue = trimmedLine
+          .substring(6)
+          .trim()
+          .replace(/^"(.*)"$/, "$1");
+        capabilities.sieveExtensions = sieveValue.split(" ");
+        this.logger.debug(
+          `Parsed unquoted SIEVE extensions: ${capabilities.sieveExtensions.join(", ")}`,
+        );
+      } else if (trimmedLine === "STARTTLS") {
+        capabilities.sieveExtensions.push("STARTTLS");
+        this.logger.debug("Added unquoted STARTTLS extension");
+      } else {
+        this.logger.debug(`Ignoring capability line: ${trimmedLine}`);
       }
     }
+
+    this.logger.debug(
+      "Final parsed capabilities",
+      {
+        operation: "parseCapabilities",
+        service: "SieveService",
+      },
+      {
+        implementation: capabilities.implementation,
+        version: capabilities.version,
+        saslMechanisms: capabilities.saslMechanisms,
+        sieveExtensions: capabilities.sieveExtensions,
+      },
+    );
 
     return capabilities;
   }

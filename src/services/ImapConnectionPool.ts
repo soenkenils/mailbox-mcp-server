@@ -84,7 +84,14 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
       await connection.noop();
       return true;
     } catch (error) {
-      console.warn("IMAP connection validation failed:", error);
+      await this.logger.warning(
+        "IMAP connection validation failed",
+        {
+          operation: "validateConnection",
+          service: "ImapConnectionPool",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       return false;
     }
   }
@@ -95,7 +102,14 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
         await connection.logout();
       }
     } catch (error) {
-      console.warn("Error during IMAP logout:", error);
+      await this.logger.warning(
+        "Error during IMAP logout",
+        {
+          operation: "destroyConnection",
+          service: "ImapConnectionPool",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
     }
   }
 
