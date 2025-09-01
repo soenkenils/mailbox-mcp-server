@@ -234,10 +234,10 @@ export class DynamicPoolManager {
   static getRecommendedConfig(poolType: "imap" | "smtp"): DynamicPoolConfig {
     const baseConfig = {
       minConnections: 1,
-      acquireTimeoutMs: 15000,
+      acquireTimeoutMs: 3000, // Fast fail: 3 seconds instead of 15
       idleTimeoutMs: 30000,
-      maxRetries: 3,
-      retryDelayMs: 1000,
+      maxRetries: 5, // More retries to compensate
+      retryDelayMs: 200, // Much faster retry: 200ms instead of 1000ms
       healthCheckIntervalMs: 6000,
       // Dynamic scaling configuration
       adaptiveScaling: true,

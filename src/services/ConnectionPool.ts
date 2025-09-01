@@ -492,14 +492,14 @@ export abstract class ConnectionPool<T> {
   }
 
   private calculateExponentialBackoff(attempt: number): number {
-    // Exponential backoff: baseDelay * (2^attempt) + jitter
+    // Linear backoff for faster recovery: baseDelay * (1 + attempt)
     const baseDelay = this.config.retryDelayMs;
-    const exponentialDelay = baseDelay * 2 ** attempt;
-    // Add jitter (±25% randomization) to avoid thundering herd
-    const jitter = exponentialDelay * 0.25 * (Math.random() - 0.5);
-    const maxDelay = 30000; // Cap at 30 seconds
+    const linearDelay = baseDelay * (1 + attempt);
+    // Add small jitter (±10% randomization) to avoid thundering herd
+    const jitter = linearDelay * 0.1 * (Math.random() - 0.5);
+    const maxDelay = 2000; // Cap at 2 seconds for fast feedback
 
-    return Math.min(exponentialDelay + jitter, maxDelay);
+    return Math.min(linearDelay + jitter, maxDelay);
   }
 
   private recordError(error: string, context: string): void {

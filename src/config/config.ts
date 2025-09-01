@@ -23,16 +23,13 @@ export interface ServerConfig {
 
 // Custom validation functions for security
 const isStrongPassword = (value: string): boolean => {
-  // Minimum 8 characters, at least one uppercase, lowercase, number, and special char
+  // Minimum 8 characters, at least one uppercase, lowercase, and number
   const minLength = value.length >= 8;
   const hasUppercase = /[A-Z]/.test(value);
   const hasLowercase = /[a-z]/.test(value);
   const hasNumber = /\d/.test(value);
-  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(value);
 
-  return (
-    minLength && hasUppercase && hasLowercase && hasNumber && hasSpecialChar
-  );
+  return minLength && hasUppercase && hasLowercase && hasNumber;
 };
 
 const isSecureEmail = (value: string): boolean => {
@@ -45,7 +42,7 @@ const isSecureEmail = (value: string): boolean => {
 const strongPasswordTransform = (value: string) => {
   if (!isStrongPassword(value)) {
     throw new Error(
-      "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character",
+      "Password must be at least 8 characters long and contain uppercase, lowercase, and number",
     );
   }
   return value;

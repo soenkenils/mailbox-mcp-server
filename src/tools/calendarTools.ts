@@ -5,8 +5,8 @@ import {
   CalendarError,
   ErrorCode,
   type ErrorContext,
-  toMCPError,
   ValidationError,
+  toMCPError,
 } from "../types/errors.js";
 import {
   getCalendarEventsSchema,
