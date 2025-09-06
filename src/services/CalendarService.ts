@@ -77,7 +77,7 @@ export class CalendarService {
       if (this.isConnectionError(error)) {
         const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
         if (staleEvents) {
-          await this.logger.warning(
+          this.logger.warning(
             "Returning stale calendar events due to connection failure",
             {
               operation: "getCalendarEvents",
@@ -113,7 +113,7 @@ export class CalendarService {
       if (this.isConnectionError(error)) {
         const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
         if (staleEvents) {
-          await this.logger.warning(
+          this.logger.warning(
             "Returning stale calendar search results due to connection failure",
             {
               operation: "searchCalendar",
@@ -155,7 +155,7 @@ export class CalendarService {
       if (this.isConnectionError(error)) {
         const staleFreeBusy = this.tryGetStaleCache<FreeBusyInfo>(cacheKey);
         if (staleFreeBusy) {
-          await this.logger.warning(
+          this.logger.warning(
             "Returning stale free/busy info due to connection failure",
             {
               operation: "getFreeBusy",
@@ -191,7 +191,7 @@ export class CalendarService {
 
       return this.sortAndLimitEvents(allEvents, options);
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         "Error fetching calendar events",
         {
           operation: "getEvents",
@@ -217,7 +217,7 @@ export class CalendarService {
         (cal: DAVCalendar) => (cal.displayName as string) || cal.url,
       );
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         "Calendar discovery failed",
         {
           operation: "getCalendarList",
@@ -265,7 +265,7 @@ export class CalendarService {
 
       return await this.parseCalendarObjects(calendarObjects, calendar);
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error fetching events from calendar ${calendar}`,
         {
           operation: "fetchCalendarEvents",
