@@ -40,10 +40,10 @@ const isSecureEmail = (value: string): boolean => {
 };
 
 const strongPasswordTransform = (value: string) => {
-  if (!isStrongPassword(value)) {
-    throw new Error(
-      "Password must be at least 8 characters long and contain uppercase, lowercase, and number",
-    );
+  // App passwords from mailbox.org may not follow standard password patterns
+  // Just ensure it's not empty
+  if (!value || value.trim().length === 0) {
+    throw new Error("Password cannot be empty");
   }
   return value;
 };
@@ -66,7 +66,7 @@ const EnvSchema = v.object({
   ),
   MAILBOX_PASSWORD: v.pipe(
     v.string(),
-    v.minLength(8, "Password must be at least 8 characters"),
+    v.minLength(1, "Password is required"),
     v.transform(strongPasswordTransform),
   ),
 
