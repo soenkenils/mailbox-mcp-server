@@ -221,7 +221,7 @@ export class Logger {
         if (keys.length === 0) return "{}";
         if (keys.length > 10) return `{Object(${keys.length} keys)}`;
 
-        const pairs = keys.slice(0, 5).map((key) => {
+        const pairs = keys.slice(0, 10).map((key) => {
           const value = (data as Record<string, unknown>)[key];
           return `${key}: ${this.serializeData(value, depth + 1)}`;
         });
@@ -280,13 +280,13 @@ export class Logger {
   /**
    * Core logging method
    */
-  private async log(
+  private log(
     level: LogLevel,
     message: string,
     context: LogContext = {},
     logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
+  ): void {
     if (!this.shouldLog(level)) return;
 
     const entry: LogEntry = {
@@ -304,7 +304,8 @@ export class Logger {
     // Write to stderr (synchronous)
     this.writeToStderr(entry);
 
-    // Send MCP notification (asynchronous, don't await to avoid blocking)
+    // Send MCP notification (asynchronous, fire and forget)
+    // We don't await this to avoid blocking the application
     this.sendMcpNotification(entry).catch(() => {
       // Error already logged in sendMcpNotification
     });
@@ -313,97 +314,89 @@ export class Logger {
   /**
    * Log at debug level
    */
-  async debug(
+  debug(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.DEBUG, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.DEBUG, message, context, undefined, data);
   }
 
   /**
    * Log at info level
    */
-  async info(
+  info(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.INFO, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.INFO, message, context, undefined, data);
   }
 
   /**
    * Log at notice level
    */
-  async notice(
+  notice(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.NOTICE, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.NOTICE, message, context, undefined, data);
   }
 
   /**
    * Log at warning level
    */
-  async warning(
+  warning(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.WARNING, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.WARNING, message, context, undefined, data);
   }
 
   /**
    * Log at error level
    */
-  async error(
+  error(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.ERROR, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.ERROR, message, context, undefined, data);
   }
 
   /**
    * Log at critical level
    */
-  async critical(
+  critical(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.CRITICAL, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.CRITICAL, message, context, undefined, data);
   }
 
   /**
    * Log at alert level
    */
-  async alert(
+  alert(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.ALERT, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.ALERT, message, context, undefined, data);
   }
 
   /**
    * Log at emergency level
    */
-  async emergency(
+  emergency(
     message: string,
     context?: LogContext,
-    logger?: string,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.log(LogLevel.EMERGENCY, message, context, logger, data);
+  ): void {
+    this.log(LogLevel.EMERGENCY, message, context, undefined, data);
   }
 
   /**
@@ -423,6 +416,7 @@ export class Logger {
     const level = metrics.success ? LogLevel.INFO : LogLevel.WARNING;
     const message = `Performance: ${metrics.operation} ${metrics.success ? "completed" : "failed"} in ${metrics.duration}ms`;
 
+    // Use the synchronous log method
     this.log(
       level,
       message,
@@ -438,9 +432,7 @@ export class Logger {
         },
       },
       "performance",
-    ).catch(() => {
-      // Ignore logging errors for performance metrics
-    });
+    );
   }
 
   /**
@@ -471,6 +463,20 @@ export class Logger {
   }
 
   /**
+   * Internal method for child loggers to access logging functionality
+   * @internal
+   */
+  _logInternal(
+    level: LogLevel,
+    message: string,
+    context?: LogContext,
+    loggerName?: string,
+    data?: Record<string, unknown>,
+  ): void {
+    this.log(level, message, context, loggerName, data);
+  }
+
+  /**
    * Create a child logger with a specific logger name
    */
   child(loggerName: string): ChildLogger {
@@ -497,68 +503,81 @@ export class ChildLogger {
     private loggerName: string,
   ) {}
 
-  async debug(
+  /**
+   * Access to parent's log method for internal use
+   */
+  private log(
+    level: LogLevel,
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.debug(message, context, this.loggerName, data);
+  ): void {
+    // Use the internal method provided by parent
+    this.parent._logInternal(level, message, context, this.loggerName, data);
   }
 
-  async info(
+  debug(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.info(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.DEBUG, message, context, data);
   }
 
-  async notice(
+  info(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.notice(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.INFO, message, context, data);
   }
 
-  async warning(
+  notice(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.warning(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.NOTICE, message, context, data);
   }
 
-  async error(
+  warning(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.error(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.WARNING, message, context, data);
   }
 
-  async critical(
+  error(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.critical(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.ERROR, message, context, data);
   }
 
-  async alert(
+  critical(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.alert(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.CRITICAL, message, context, data);
   }
 
-  async emergency(
+  alert(
     message: string,
     context?: LogContext,
     data?: Record<string, unknown>,
-  ): Promise<void> {
-    return this.parent.emergency(message, context, this.loggerName, data);
+  ): void {
+    this.log(LogLevel.ALERT, message, context, data);
+  }
+
+  emergency(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void {
+    this.log(LogLevel.EMERGENCY, message, context, data);
   }
 
   startTimer(

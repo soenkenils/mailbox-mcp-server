@@ -54,18 +54,14 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
 
       // Set up error handling
       client.on("error", (error: Error) => {
-        this.logger
-          .error(
-            "IMAP connection error",
-            {
-              operation: "createConnection",
-              service: "ImapConnectionPool",
-            },
-            { error: error.message },
-          )
-          .catch(() => {
-            // Ignore logging errors
-          });
+        this.logger.error(
+          "IMAP connection error",
+          {
+            operation: "createConnection",
+            service: "ImapConnectionPool",
+          },
+          { error: error.message },
+        );
       });
 
       await client.connect();

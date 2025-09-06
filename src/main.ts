@@ -64,8 +64,8 @@ class MailboxMcpServer {
   }
 
   private setupErrorHandling(): void {
-    this.server.onerror = async (error) => {
-      await this.logger.error(
+    this.server.onerror = (error) => {
+      this.logger.error(
         "MCP Server error",
         {
           operation: "mcp_server_error",
@@ -76,7 +76,7 @@ class MailboxMcpServer {
     };
 
     process.on("SIGINT", async () => {
-      await this.logger.info("Received SIGINT, shutting down gracefully", {
+      this.logger.info("Received SIGINT, shutting down gracefully", {
         operation: "shutdown",
         service: "process",
       });
@@ -85,7 +85,7 @@ class MailboxMcpServer {
     });
 
     process.on("SIGTERM", async () => {
-      await this.logger.info("Received SIGTERM, shutting down gracefully", {
+      this.logger.info("Received SIGTERM, shutting down gracefully", {
         operation: "shutdown",
         service: "process",
       });

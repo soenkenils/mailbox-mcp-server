@@ -295,18 +295,14 @@ export class CalendarService {
         }
       }
     } catch (error) {
-      this.logger
-        .error(
-          "Error parsing calendar objects",
-          {
-            operation: "parseCalendarObjects",
-            service: "CalendarService",
-          },
-          { error: error instanceof Error ? error.message : String(error) },
-        )
-        .catch(() => {
-          // Ignore logging errors
-        });
+      this.logger.error(
+        "Error parsing calendar objects",
+        {
+          operation: "parseCalendarObjects",
+          service: "CalendarService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
     }
 
     return events;
@@ -327,18 +323,14 @@ export class CalendarService {
         }
       }
     } catch (error) {
-      this.logger
-        .error(
-          "Error parsing iCal data",
-          {
-            operation: "parseICalData",
-            service: "CalendarService",
-          },
-          { error: error instanceof Error ? error.message : String(error) },
-        )
-        .catch(() => {
-          // Ignore logging errors
-        });
+      this.logger.error(
+        "Error parsing iCal data",
+        {
+          operation: "parseICalData",
+          service: "CalendarService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
     }
 
     return events;
@@ -364,18 +356,14 @@ export class CalendarService {
         ...metadataInfo,
       };
     } catch (error) {
-      this.logger
-        .error(
-          "Error parsing VEVENT",
-          {
-            operation: "parseVEvent",
-            service: "CalendarService",
-          },
-          { error: error instanceof Error ? error.message : String(error) },
-        )
-        .catch(() => {
-          // Ignore logging errors
-        });
+      this.logger.error(
+        "Error parsing VEVENT",
+        {
+          operation: "parseVEvent",
+          service: "CalendarService",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
       return null;
     }
   }
