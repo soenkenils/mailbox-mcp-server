@@ -34,6 +34,15 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Connection pooling** for CalDAV with automatic retry logic
 - ✅ **Session-based caching** for improved performance
 
+### **Email Filter Management (Sieve/ManageSieve)**
+
+- ✅ **List and retrieve** existing Sieve filter scripts
+- ✅ **Create and update** email filtering rules with Sieve syntax
+- ✅ **Activate/deactivate** filter scripts
+- ✅ **Delete** unwanted filter scripts
+- ✅ **Syntax validation** before deploying filters
+- ✅ **Server capabilities** discovery for supported Sieve extensions
+
 ## Requirements
 
 - Node.js 20 or later
@@ -122,6 +131,55 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
+
+### **Sieve Filter Tools**
+
+Manage email filtering rules using the [Sieve language](https://tools.ietf.org/html/rfc5228) (RFC 5228) through the ManageSieve protocol.
+
+#### **Script Management**
+- **`list_sieve_scripts`** - List all Sieve filter scripts on the server
+- **`get_sieve_script`** - Retrieve the content of a specific Sieve script
+- **`create_sieve_filter`** - Create or update a Sieve filter script
+- **`delete_sieve_script`** - Delete a Sieve script from the server
+- **`activate_sieve_script`** - Activate a specific Sieve script (deactivates others)
+
+#### **Script Validation**
+- **`check_sieve_script`** - Validate Sieve script syntax without saving
+- **`get_sieve_capabilities`** - Get ManageSieve server capabilities and supported extensions
+
+#### **Example Use Cases**
+
+**Automatic Newsletter Filtering:**
+```sieve
+require ["fileinto"];
+
+if header :contains "From" [
+  "newsletter@example.com",
+  "news@company.com"
+] {
+  fileinto "Newsletter";
+  stop;
+}
+```
+
+**Transaction Email Organization:**
+```sieve
+require ["fileinto"];
+
+if anyof (
+  header :contains "From" ["paypal.de", "stripe.com"],
+  header :contains "Subject" ["Order", "Receipt", "Invoice"]
+) {
+  fileinto "Transactional";
+  stop;
+}
+```
+
+**Ask Claude to manage your filters:**
+- "Analyze my inbox and suggest email filters"
+- "Create a filter to move all GitHub notifications to a Developer folder"
+- "Show me all my active Sieve filters"
+- "Validate this Sieve script for syntax errors"
 
 ## Configuration
 

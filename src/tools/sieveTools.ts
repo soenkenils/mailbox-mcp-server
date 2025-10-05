@@ -188,7 +188,7 @@ export async function handleSieveTool(
         };
     }
   } catch (error) {
-    await logger.error(
+    logger.error(
       "Error handling Sieve tool",
       {
         operation: "handleSieveTool",
@@ -229,7 +229,7 @@ async function handleListSieveScripts(
 
   const scripts = await sieveService.listScripts();
 
-  await logger.info(
+  logger.info(
     "Listed Sieve scripts",
     {
       operation: "listSieveScripts",
@@ -265,7 +265,7 @@ async function handleGetSieveScript(
 
   const content = await sieveService.getScript(args.name);
 
-  await logger.info(
+  logger.info(
     "Retrieved Sieve script",
     {
       operation: "getSieveScript",
@@ -308,7 +308,7 @@ async function handleCreateSieveFilter(
     activationMsg = " and activated";
   }
 
-  await logger.info(
+  logger.info(
     "Created Sieve script",
     {
       operation: "createSieveFilter",
@@ -342,7 +342,7 @@ async function handleDeleteSieveScript(
 
   await sieveService.deleteScript(args.name);
 
-  await logger.info(
+  logger.info(
     "Deleted Sieve script",
     {
       operation: "deleteSieveScript",
@@ -374,7 +374,7 @@ async function handleActivateSieveScript(
 
   await sieveService.setActiveScript(args.name);
 
-  await logger.info(
+  logger.info(
     "Activated Sieve script",
     {
       operation: "activateSieveScript",
@@ -406,7 +406,7 @@ async function handleCheckSieveScript(
 
   await sieveService.checkScript(args.content);
 
-  await logger.info(
+  logger.info(
     "Validated Sieve script",
     {
       operation: "checkSieveScript",
@@ -438,7 +438,7 @@ async function handleGetSieveCapabilities(
 
   const capabilities = sieveService.getServerCapabilities();
 
-  await logger.info(
+  logger.info(
     "Retrieved Sieve capabilities",
     {
       operation: "getSieveCapabilities",

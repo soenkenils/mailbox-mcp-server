@@ -33,7 +33,7 @@ export class SieveService {
     }
 
     try {
-      await this.logger.info(
+      this.logger.info(
         "Connecting to ManageSieve server",
         {
           operation: "connect",
@@ -65,7 +65,7 @@ export class SieveService {
       // Get capabilities
       this.capabilities = await this.getCapabilities();
 
-      await this.logger.info(
+      this.logger.info(
         "Successfully connected to ManageSieve server",
         {
           operation: "connect",
@@ -79,7 +79,7 @@ export class SieveService {
     } catch (error) {
       this.connected = false;
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await this.logger.error(
+      this.logger.error(
         "Failed to connect to ManageSieve server",
         {
           operation: "connect",
@@ -112,13 +112,10 @@ export class SieveService {
         this.capabilities?.sieveExtensions.includes("STARTTLS") &&
         !this.config.secure
       ) {
-        await this.logger.info(
-          "Starting TLS upgrade for ManageSieve connection",
-          {
-            operation: "starttls",
-            service: "SieveService",
-          },
-        );
+        this.logger.info("Starting TLS upgrade for ManageSieve connection", {
+          operation: "starttls",
+          service: "SieveService",
+        });
 
         const tlsResponse = await this.sendCommand("STARTTLS");
         if (!tlsResponse.success) {
@@ -132,7 +129,7 @@ export class SieveService {
         await this.upgradeToTLS();
       }
 
-      await this.logger.info(
+      this.logger.info(
         "Authenticating with ManageSieve server",
         {
           operation: "authenticate",
@@ -160,17 +157,14 @@ export class SieveService {
 
       this.authenticated = true;
 
-      await this.logger.info(
-        "Successfully authenticated with ManageSieve server",
-        {
-          operation: "authenticate",
-          service: "SieveService",
-        },
-      );
+      this.logger.info("Successfully authenticated with ManageSieve server", {
+        operation: "authenticate",
+        service: "SieveService",
+      });
     } catch (error) {
       this.authenticated = false;
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await this.logger.error(
+      this.logger.error(
         "Authentication failed",
         {
           operation: "authenticate",
@@ -216,7 +210,7 @@ export class SieveService {
     }
 
     // Log the raw LISTSCRIPTS response for debugging
-    await this.logger.debug(
+    this.logger.debug(
       "Raw LISTSCRIPTS response",
       {
         operation: "listScripts",
@@ -481,7 +475,7 @@ export class SieveService {
     }
 
     // Log the raw capability response for debugging
-    await this.logger.debug(
+    this.logger.debug(
       "Raw capability response",
       {
         operation: "getCapabilities",
