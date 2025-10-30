@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ChildLogger,
   type LogContext,
-  LogLevel,
   Logger,
   type LoggerConfig,
+  LogLevel,
   PerformanceTimer,
 } from "../src/services/Logger.js";
 

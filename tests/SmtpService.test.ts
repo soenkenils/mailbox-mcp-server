@@ -43,9 +43,11 @@ const createMockEmailComposition = (
 });
 
 // Mock the SmtpConnectionPool
-vi.mock("../src/services/SmtpConnectionPool.js", () => ({
-  SmtpConnectionPool: vi.fn(),
-}));
+vi.mock("../src/services/SmtpConnectionPool.js", () => {
+  return {
+    SmtpConnectionPool: vi.fn(),
+  };
+});
 
 // Import the mocked class
 import { SmtpConnectionPool } from "../src/services/SmtpConnectionPool.js";
@@ -106,7 +108,7 @@ describe("SmtpService", () => {
     };
 
     // Set up the mock pool implementation
-    (SmtpConnectionPool as Mock).mockImplementation(function () {
+    (SmtpConnectionPool as Mock).mockImplementation(function() {
       return {
         acquire: vi.fn().mockResolvedValue(mockWrapper),
         release: vi.fn().mockResolvedValue(undefined),

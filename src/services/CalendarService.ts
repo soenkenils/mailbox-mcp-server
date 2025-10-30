@@ -1,6 +1,6 @@
 import dayjs from "dayjs";
 import ICAL from "ical.js";
-import { type DAVCalendar, type DAVObject, createDAVClient } from "tsdav";
+import { createDAVClient, type DAVCalendar, type DAVObject } from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   Attendee,

@@ -8,8 +8,8 @@ import {
   EmailError,
   ErrorCode,
   ErrorUtils,
-  type MCPError,
   MailboxError,
+  type MCPError,
   RateLimitError,
   ValidationError,
 } from "../src/types/errors.js";

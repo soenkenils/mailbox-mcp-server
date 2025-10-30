@@ -87,19 +87,21 @@ const mockFetchOne = vi.fn();
 const mockOn = vi.fn();
 
 // Mock the imapflow module
-vi.mock("imapflow", () => ({
-  ImapFlow: vi.fn().mockImplementation(function () {
-    return {
-    connect: mockConnect,
-    logout: mockLogout,
-    mailboxOpen: mockMailboxOpen,
-    search: mockSearch,
-    fetch: mockFetch,
-    fetchOne: mockFetchOne,
-    on: mockOn,
+vi.mock("imapflow", () => {
+  return {
+    ImapFlow: vi.fn(function() {
+      return {
+        connect: mockConnect,
+        logout: mockLogout,
+        mailboxOpen: mockMailboxOpen,
+        search: mockSearch,
+        fetch: mockFetch,
+        fetchOne: mockFetchOne,
+        on: mockOn,
+      };
+    }),
   };
-  }),
-}));
+});
 
 const setupMockDefaults = () => {
   // Reset all mocks

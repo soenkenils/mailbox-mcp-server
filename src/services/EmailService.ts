@@ -31,6 +31,7 @@ interface ImapEnvelopeAddress {
   name?: string;
   address: string;
 }
+
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailComposition,

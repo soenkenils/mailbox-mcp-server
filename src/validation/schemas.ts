@@ -50,10 +50,7 @@ const folderNameSchema = v.pipe(
   v.trim(),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.check(
-    (str) => !/[\/\\<>:"|?*]/.test(str),
-    "Invalid folder name characters",
-  ),
+  v.check((str) => !/[/\\<>:"|?*]/.test(str), "Invalid folder name characters"),
   v.transform(sanitizeString),
 );
 
