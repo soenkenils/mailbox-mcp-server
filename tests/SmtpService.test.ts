@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import type {
   SmtpConnectionWrapper,
@@ -108,37 +108,35 @@ describe("SmtpService", () => {
     };
 
     // Set up the mock pool implementation
-    (SmtpConnectionPool as Mock).mockImplementation(function() {
-      return {
-        acquire: vi.fn().mockResolvedValue(mockWrapper),
-        release: vi.fn().mockResolvedValue(undefined),
-        destroy: vi.fn().mockResolvedValue(undefined),
-        getSmtpMetrics: vi.fn().mockReturnValue({
-          totalVerificationFailures: 0,
-          connectionsNeedingVerification: 0,
-          verificationIntervalMs: 1000,
-          maxVerificationFailures: 2,
-          totalConnections: 1,
-          activeConnections: 0,
-          idleConnections: 1,
-        }),
-        getMetrics: vi.fn().mockReturnValue({
-          totalConnections: 1,
-          activeConnections: 0,
-          idleConnections: 1,
-          totalErrors: 0,
-          totalCreated: 1,
-          totalDestroyed: 0,
-          totalAcquired: 1,
-          totalReleased: 1,
-        }),
-        verifyAllConnections: vi.fn().mockResolvedValue({
-          verified: 1,
-          failed: 0,
-        }),
-        connectionConfig: mockConnection,
-      };
-    });
+    (SmtpConnectionPool as Mock).mockImplementation(() => ({
+      acquire: vi.fn().mockResolvedValue(mockWrapper),
+      release: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      getSmtpMetrics: vi.fn().mockReturnValue({
+        totalVerificationFailures: 0,
+        connectionsNeedingVerification: 0,
+        verificationIntervalMs: 1000,
+        maxVerificationFailures: 2,
+        totalConnections: 1,
+        activeConnections: 0,
+        idleConnections: 1,
+      }),
+      getMetrics: vi.fn().mockReturnValue({
+        totalConnections: 1,
+        activeConnections: 0,
+        idleConnections: 1,
+        totalErrors: 0,
+        totalCreated: 1,
+        totalDestroyed: 0,
+        totalAcquired: 1,
+        totalReleased: 1,
+      }),
+      verifyAllConnections: vi.fn().mockResolvedValue({
+        verified: 1,
+        failed: 0,
+      }),
+      connectionConfig: mockConnection,
+    }));
 
     smtpService = new SmtpService(mockConnection, mockPoolConfig);
 

@@ -8,50 +8,48 @@ import { createEmailTools } from "../src/tools/emailTools.js";
 
 // Mock external libraries for integration tests only
 vi.mock("imapflow", () => ({
-  ImapFlow: vi.fn(function() {
-    return {
-      connect: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-      search: vi.fn().mockResolvedValue([1, 2, 3]),
-      fetch: vi.fn().mockResolvedValue([
-        {
-          uid: 1,
-          envelope: {
-            subject: "Test Email 1",
-            from: [{ name: "Test Sender", address: "test@example.com" }],
-            to: [{ name: "Test Recipient", address: "recipient@example.com" }],
-            date: new Date("2024-01-01T10:00:00Z"),
-          },
-          source: Buffer.from("Test email content"),
+  ImapFlow: vi.fn(() => ({
+    connect: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([1, 2, 3]),
+    fetch: vi.fn().mockResolvedValue([
+      {
+        uid: 1,
+        envelope: {
+          subject: "Test Email 1",
+          from: [{ name: "Test Sender", address: "test@example.com" }],
+          to: [{ name: "Test Recipient", address: "recipient@example.com" }],
+          date: new Date("2024-01-01T10:00:00Z"),
         },
-      ]),
-      mailboxOpen: vi.fn().mockResolvedValue({
-        path: "INBOX",
-        uidValidity: 1,
-        uidNext: 100,
-        exists: 10,
-        recent: 0,
-      }),
-      noop: vi.fn().mockResolvedValue(undefined),
-      logout: vi.fn().mockResolvedValue(undefined),
-      usable: true,
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      emit: vi.fn().mockReturnValue(true),
-      addListener: vi.fn().mockReturnThis(),
-      removeListener: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listeners: vi.fn().mockReturnValue([]),
-      listenerCount: vi.fn().mockReturnValue(0),
-      eventNames: vi.fn().mockReturnValue([]),
-      getMaxListeners: vi.fn().mockReturnValue(10),
-      setMaxListeners: vi.fn().mockReturnThis(),
-      prependListener: vi.fn().mockReturnThis(),
-      prependOnceListener: vi.fn().mockReturnThis(),
-      rawListeners: vi.fn().mockReturnValue([]),
-    };
-  }),
+        source: Buffer.from("Test email content"),
+      },
+    ]),
+    mailboxOpen: vi.fn().mockResolvedValue({
+      path: "INBOX",
+      uidValidity: 1,
+      uidNext: 100,
+      exists: 10,
+      recent: 0,
+    }),
+    noop: vi.fn().mockResolvedValue(undefined),
+    logout: vi.fn().mockResolvedValue(undefined),
+    usable: true,
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+    once: vi.fn().mockReturnThis(),
+    emit: vi.fn().mockReturnValue(true),
+    addListener: vi.fn().mockReturnThis(),
+    removeListener: vi.fn().mockReturnThis(),
+    removeAllListeners: vi.fn().mockReturnThis(),
+    listeners: vi.fn().mockReturnValue([]),
+    listenerCount: vi.fn().mockReturnValue(0),
+    eventNames: vi.fn().mockReturnValue([]),
+    getMaxListeners: vi.fn().mockReturnValue(10),
+    setMaxListeners: vi.fn().mockReturnThis(),
+    prependListener: vi.fn().mockReturnThis(),
+    prependOnceListener: vi.fn().mockReturnThis(),
+    rawListeners: vi.fn().mockReturnValue([]),
+  })),
 }));
 
 vi.mock("tsdav", () => ({

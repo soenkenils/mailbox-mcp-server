@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { type ServerConfig, loadConfig } from "./config/config.js";
+import { loadConfig, type ServerConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
 import {
   type DynamicPoolConfig,
@@ -15,7 +15,7 @@ import {
 } from "./services/DynamicPoolManager.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";
-import { LogLevel, createLogger, logger } from "./services/Logger.js";
+import { createLogger, LogLevel, logger } from "./services/Logger.js";
 import { SmtpService } from "./services/SmtpService.js";
 import {
   createCalendarTools,

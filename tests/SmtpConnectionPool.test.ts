@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   SmtpConnectionPool,
   type SmtpConnectionWrapper,
@@ -59,7 +59,7 @@ class MockTransporter {
 // Mock nodemailer
 vi.mock("nodemailer", () => ({
   default: {
-    createTransport: vi.fn(function() { return new MockTransporter(); }),
+    createTransport: vi.fn(() => new MockTransporter()),
   },
 }));
 
