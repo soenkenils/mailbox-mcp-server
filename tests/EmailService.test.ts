@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
@@ -89,15 +89,17 @@ const mockOn = vi.fn();
 // Mock the imapflow module
 vi.mock("imapflow", () => {
   return {
-    ImapFlow: vi.fn(() => ({
-      connect: mockConnect,
-      logout: mockLogout,
-      mailboxOpen: mockMailboxOpen,
-      search: mockSearch,
-      fetch: mockFetch,
-      fetchOne: mockFetchOne,
-      on: mockOn,
-    })),
+    ImapFlow: vi.fn(function() {
+      return {
+        connect: mockConnect,
+        logout: mockLogout,
+        mailboxOpen: mockMailboxOpen,
+        search: mockSearch,
+        fetch: mockFetch,
+        fetchOne: mockFetchOne,
+        on: mockOn,
+      };
+    }),
   };
 });
 

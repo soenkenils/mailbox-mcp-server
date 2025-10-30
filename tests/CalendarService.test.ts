@@ -1,12 +1,12 @@
 import type { createDAVClient } from "tsdav";
 import {
+  type Mock,
   afterAll,
   beforeAll,
   beforeEach,
   describe,
   expect,
   it,
-  type Mock,
   vi,
 } from "vitest";
 import { CalendarService } from "../src/services/CalendarService.js";
@@ -95,7 +95,7 @@ vi.mock("tsdav", () => {
   }
 
   return {
-    createDAVClient: vi.fn(() => new MockDAVClient()),
+    createDAVClient: vi.fn(function() { return new MockDAVClient(); }),
     DAVClient: MockDAVClient,
   };
 });
