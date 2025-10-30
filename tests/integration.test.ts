@@ -8,7 +8,8 @@ import { createEmailTools } from "../src/tools/emailTools.js";
 
 // Mock external libraries for integration tests only
 vi.mock("imapflow", () => ({
-  ImapFlow: vi.fn().mockImplementation(() => ({
+  ImapFlow: vi.fn().mockImplementation(function () {
+    return {
     connect: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     search: vi.fn().mockResolvedValue([1, 2, 3]),
@@ -49,7 +50,8 @@ vi.mock("imapflow", () => ({
     prependListener: vi.fn().mockReturnThis(),
     prependOnceListener: vi.fn().mockReturnThis(),
     rawListeners: vi.fn().mockReturnValue([]),
-  })),
+  };
+  }),
 }));
 
 vi.mock("tsdav", () => ({

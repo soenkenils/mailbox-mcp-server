@@ -39,7 +39,18 @@
 	},
 	"javascript": {
 		"formatter": {
-			"quoteStyle": "double"
+			"quoteStyle": "double",
+			"arrowParentheses": "asNeeded"
 		}
-	}
+	},
+	"overrides": [
+		{
+			"include": ["**/*.test.ts", "**/__tests__/**"],
+			"javascript": {
+				"formatter": {
+					"enabled": true
+				}
+			}
+		}
+	]
 }

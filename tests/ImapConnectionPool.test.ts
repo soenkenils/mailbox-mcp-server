@@ -67,7 +67,9 @@ class MockImapFlow {
 
 // Mock the imapflow module
 vi.mock("imapflow", () => ({
-  ImapFlow: vi.fn().mockImplementation(() => new MockImapFlow()),
+  ImapFlow: vi.fn().mockImplementation(function () {
+    return new MockImapFlow();
+  }),
 }));
 
 describe("ImapConnectionPool", () => {
@@ -80,7 +82,9 @@ describe("ImapConnectionPool", () => {
 
     // Reset the mock implementation to ensure clean state
     const { ImapFlow } = await import("imapflow");
-    vi.mocked(ImapFlow).mockImplementation(() => new MockImapFlow());
+    vi.mocked(ImapFlow).mockImplementation(function () {
+      return new MockImapFlow();
+    });
 
     connection = {
       host: "imap.example.com",
@@ -123,7 +127,9 @@ describe("ImapConnectionPool", () => {
       mockImapFlow.setShouldFailConnect(true);
 
       const { ImapFlow } = await import("imapflow");
-      vi.mocked(ImapFlow).mockImplementation(() => mockImapFlow);
+      vi.mocked(ImapFlow).mockImplementation(function () {
+        return mockImapFlow;
+      });
 
       await expect(pool.acquire()).rejects.toThrow(
         "Failed to create connection",
@@ -208,7 +214,9 @@ describe("ImapConnectionPool", () => {
       mockImapFlow.setShouldFailMailboxOpen(true);
 
       const { ImapFlow } = await import("imapflow");
-      vi.mocked(ImapFlow).mockImplementation(() => mockImapFlow);
+      vi.mocked(ImapFlow).mockImplementation(function () {
+        return mockImapFlow;
+      });
 
       await expect(pool.acquireForFolder("INBOX")).rejects.toThrow(
         "Failed to select folder INBOX",

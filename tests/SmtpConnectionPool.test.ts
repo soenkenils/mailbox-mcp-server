@@ -59,7 +59,9 @@ class MockTransporter {
 // Mock nodemailer
 vi.mock("nodemailer", () => ({
   default: {
-    createTransport: vi.fn().mockImplementation(() => new MockTransporter()),
+    createTransport: vi.fn().mockImplementation(function () {
+      return new MockTransporter();
+    }),
   },
 }));
 
@@ -74,7 +76,9 @@ describe("SmtpConnectionPool", () => {
     // Ensure the nodemailer mock is properly set up
     const nodemailer = await import("nodemailer");
     (nodemailer.default.createTransport as Mock).mockImplementation(
-      () => new MockTransporter(),
+      function () {
+        return new MockTransporter();
+      },
     );
 
     connection = {
