@@ -35,7 +35,7 @@ const mockFetchCalendars = vi.fn();
 const mockFetchCalendarObjects = vi.fn();
 
 // Mock ical.js with proper default export
-vi.mock("ical.js", function () {
+vi.mock("ical.js", () => {
   const mockICal = {
     parse: vi
       .fn()
@@ -87,7 +87,7 @@ vi.mock("ical.js", function () {
 });
 
 // Mock tsdav with inline implementation
-vi.mock("tsdav", function () {
+vi.mock("tsdav", () => {
   // Define the mock client class inside the factory function
   class MockDAVClient {
     fetchCalendars = mockFetchCalendars;
@@ -95,9 +95,7 @@ vi.mock("tsdav", function () {
   }
 
   return {
-    createDAVClient: vi.fn().mockImplementation(function () {
-      return new MockDAVClient();
-    }),
+    createDAVClient: vi.fn(function() { return new MockDAVClient(); }),
     DAVClient: MockDAVClient,
   };
 });
