@@ -76,8 +76,14 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
         return false;
       }
 
-      // Try a simple operation to verify the connection
-      await connection.noop();
+      // Try a simple operation to verify the connection with a timeout
+      // to prevent hanging on stuck connections
+      const noopPromise = connection.noop();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Connection validation timeout")), 3000);
+      });
+
+      await Promise.race([noopPromise, timeoutPromise]);
       return true;
     } catch (error) {
       await this.logger.warning(

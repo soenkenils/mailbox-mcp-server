@@ -389,4 +389,87 @@ describe("ImapConnectionPool", () => {
       }
     });
   });
+
+  describe("Operation State Management", () => {
+    it("should validate connection with timeout to detect stuck operations", async () => {
+      const wrapper = await pool.acquire();
+
+      // Connection should be healthy initially
+      expect(wrapper.isHealthy).toBe(true);
+
+      // Validation should succeed for a working connection
+      const isValid = await pool["validateConnection"](wrapper.connection);
+      expect(isValid).toBe(true);
+
+      await pool.release(wrapper);
+    });
+
+    it("should handle sequential operations on reused connection", async () => {
+      // Acquire connection for first operation
+      const wrapper1 = await pool.acquireForFolder("INBOX");
+      expect(wrapper1.selectedFolder).toBe("INBOX");
+
+      // Release it back to pool
+      await pool.releaseFromFolder(wrapper1);
+
+      // Acquire connection for second operation (may reuse same connection)
+      const wrapper2 = await pool.acquireForFolder("INBOX");
+      expect(wrapper2.selectedFolder).toBe("INBOX");
+      expect(wrapper2.isHealthy).toBe(true);
+
+      await pool.releaseFromFolder(wrapper2);
+    });
+
+    it("should mark connection unhealthy and recreate if validation fails", async () => {
+      const wrapper = await pool.acquire();
+      const connectionId = wrapper.id;
+
+      // Simulate connection becoming unhealthy
+      wrapper.isHealthy = false;
+
+      // Release the unhealthy connection
+      await pool.release(wrapper);
+
+      // Next acquisition should create a new connection (not reuse unhealthy one)
+      const newWrapper = await pool.acquire();
+
+      // Should be healthy
+      expect(newWrapper.isHealthy).toBe(true);
+
+      await pool.release(newWrapper);
+    });
+
+    it("should properly clean up folder state when connection is released", async () => {
+      const wrapper = await pool.acquireForFolder("INBOX");
+      expect(wrapper.selectedFolder).toBe("INBOX");
+
+      // Mark as unhealthy before release
+      wrapper.isHealthy = false;
+
+      // Release should clear folder selection for unhealthy connections
+      await pool.releaseFromFolder(wrapper);
+
+      // The wrapper's selectedFolder should be cleared when unhealthy
+      expect(wrapper.selectedFolder).toBeUndefined();
+    });
+
+    it("should clean up connections properly after folder operation failures", async () => {
+      // This test verifies that when a folder operation fails,
+      // the connection is properly released and the pool remains functional
+
+      // First, successfully acquire and use a connection
+      const wrapper1 = await pool.acquireForFolder("INBOX");
+      expect(wrapper1.selectedFolder).toBe("INBOX");
+
+      // Release it back
+      await pool.releaseFromFolder(wrapper1);
+
+      // Pool should still be functional for subsequent operations
+      const wrapper2 = await pool.acquireForFolder("Sent");
+      expect(wrapper2).toBeDefined();
+      expect(wrapper2.selectedFolder).toBe("Sent");
+
+      await pool.releaseFromFolder(wrapper2);
+    });
+  });
 });

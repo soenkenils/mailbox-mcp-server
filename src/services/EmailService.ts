@@ -317,17 +317,42 @@ export class EmailService {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      for await (const message of wrapper.connection.fetch(uids, {
+      const iterator = wrapper.connection.fetch(uids, {
         envelope: true,
         uid: true,
         flags: true,
-      })) {
-        const emailMessage = this.parseEmailMessage(
-          message as unknown as ImapMessage,
-          folder,
-        );
-        if (emailMessage) {
-          messages.push(emailMessage);
+      });
+
+      try {
+        for await (const message of iterator) {
+          const emailMessage = this.parseEmailMessage(
+            message as unknown as ImapMessage,
+            folder,
+          );
+          if (emailMessage) {
+            messages.push(emailMessage);
+          }
+        }
+      } finally {
+        // Ensure iterator is properly closed even if an error occurs during parsing
+        try {
+          if (iterator && typeof iterator.return === "function") {
+            await iterator.return();
+          }
+        } catch (error) {
+          await this.logger.warning(
+            "Failed to close fetch iterator for message headers",
+            {
+              operation: "fetchMessageHeaders",
+              service: "EmailService",
+            },
+            {
+              folder,
+              uidCount: uids.length,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          wrapper.isHealthy = false;
         }
       }
     }
@@ -402,7 +427,8 @@ export class EmailService {
     wrapper: ImapConnectionWrapper,
     uid: number,
   ): Promise<ImapMessage | null> {
-    for await (const msg of wrapper.connection.fetch(
+    // Create iterator explicitly so we can properly close it
+    const iterator = wrapper.connection.fetch(
       `${uid}:${uid}`,
       {
         source: true,
@@ -411,10 +437,39 @@ export class EmailService {
         flags: true,
       },
       { uid: true },
-    )) {
-      return msg as unknown as ImapMessage;
+    );
+
+    try {
+      // Get the first (and should be only) message
+      for await (const msg of iterator) {
+        return msg as unknown as ImapMessage;
+      }
+      return null;
+    } finally {
+      // Explicitly close the iterator to prevent connection state issues
+      // This is critical for connection reuse - without this, the connection
+      // may be left in a state where it's waiting for the iterator to complete
+      try {
+        if (iterator && typeof iterator.return === "function") {
+          await iterator.return();
+        }
+      } catch (error) {
+        // If iterator cleanup fails, mark the connection as unhealthy
+        // to prevent reuse of a potentially corrupted connection
+        await this.logger.warning(
+          "Failed to properly close fetch iterator",
+          {
+            operation: "performFetch",
+            service: "EmailService",
+          },
+          {
+            uid,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        wrapper.isHealthy = false;
+      }
     }
-    return null;
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {

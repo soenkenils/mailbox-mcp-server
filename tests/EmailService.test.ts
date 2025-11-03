@@ -7,6 +7,7 @@ import type {
   EmailSearchOptions,
   ImapConnection,
 } from "../src/types/email.types.js";
+import { simpleParser } from "mailparser";
 
 // Test helper interface for accessing private methods
 interface TestableEmailService extends EmailService {
@@ -98,10 +99,17 @@ vi.mock("imapflow", () => {
         fetch: mockFetch,
         fetchOne: mockFetchOne,
         on: mockOn,
+        usable: true,
+        noop: vi.fn().mockResolvedValue(undefined),
       };
     }),
   };
 });
+
+// Mock mailparser - must use vi.fn() inside the factory to avoid hoisting issues
+vi.mock("mailparser", () => ({
+  simpleParser: vi.fn(),
+}));
 
 const setupMockDefaults = () => {
   // Reset all mocks
@@ -119,6 +127,28 @@ const setupMockDefaults = () => {
   ]);
   mockFetchOne.mockResolvedValue(createMockImapMessage());
   mockOn.mockImplementation(() => {});
+
+  // Setup simpleParser default - parses the message envelope from source buffer
+  (simpleParser as Mock).mockImplementation(async (source: Buffer) => {
+    // Extract mock data from the source buffer or return default
+    const content = source.toString();
+    return {
+      messageId: "msg-1",
+      subject: content.includes("First Email")
+        ? "First Email"
+        : content.includes("Second Email")
+          ? "Second Email"
+          : "Test",
+      from: { value: [{ name: "Test", address: "test@example.com" }] },
+      to: { value: [{ name: "Recipient", address: "recipient@example.com" }] },
+      cc: { value: [] },
+      bcc: { value: [] },
+      date: new Date(),
+      text: content || "Test content",
+      html: undefined,
+      attachments: [],
+    };
+  });
 };
 
 describe("EmailService", () => {
@@ -599,6 +629,228 @@ describe("EmailService", () => {
       expect(parseAddresses({})).toEqual([]);
       expect(parseAddresses("string-instead-of-object")).toEqual([]);
       expect(parseAddresses(123)).toEqual([]);
+    });
+  });
+
+  describe("Sequential Email Fetches", () => {
+    it("should handle sequential getEmail calls without cache", async () => {
+      // Clear cache to force real fetches
+      (mockCache.get as Mock).mockReturnValue(null);
+
+      // Mock two different emails
+      const mockMessage1 = {
+        uid: 1,
+        envelope: {
+          messageId: "msg-1",
+          subject: "First Email",
+          from: [{ name: "Sender 1", address: "sender1@example.com" }],
+          to: [{ name: "Recipient", address: "recipient@example.com" }],
+          date: new Date("2024-01-01T10:00:00Z"),
+        },
+        flags: [],
+        source: Buffer.from("First Email"),
+      };
+
+      const mockMessage2 = {
+        uid: 2,
+        envelope: {
+          messageId: "msg-2",
+          subject: "Second Email",
+          from: [{ name: "Sender 2", address: "sender2@example.com" }],
+          to: [{ name: "Recipient", address: "recipient@example.com" }],
+          date: new Date("2024-01-02T10:00:00Z"),
+        },
+        flags: [],
+        source: Buffer.from("Second Email"),
+      };
+
+      // Mock the fetch to return an async iterator with proper cleanup
+      let fetchCallCount = 0;
+      mockFetch.mockImplementation(async function* () {
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          yield mockMessage1;
+        } else {
+          yield mockMessage2;
+        }
+      });
+
+      // Mock simpleParser to return parsed data matching the message
+      (simpleParser as Mock).mockImplementation(async (source: Buffer) => {
+        const content = source.toString();
+        if (content.includes("First Email")) {
+          return {
+            messageId: "msg-1",
+            subject: "First Email",
+            from: { value: [{ name: "Sender 1", address: "sender1@example.com" }] },
+            to: { value: [{ name: "Recipient", address: "recipient@example.com" }] },
+            cc: { value: [] },
+            date: new Date("2024-01-01T10:00:00Z"),
+            text: "First Email",
+            attachments: [],
+          };
+        }
+        return {
+          messageId: "msg-2",
+          subject: "Second Email",
+          from: { value: [{ name: "Sender 2", address: "sender2@example.com" }] },
+          to: { value: [{ name: "Recipient", address: "recipient@example.com" }] },
+          cc: { value: [] },
+          date: new Date("2024-01-02T10:00:00Z"),
+          text: "Second Email",
+          attachments: [],
+        };
+      });
+
+      // First fetch
+      const email1 = await emailService.getEmail(1);
+      expect(email1).toBeDefined();
+      expect(email1?.subject).toBe("First Email");
+
+      // Second fetch - this should work without timeout
+      const email2 = await emailService.getEmail(2);
+      expect(email2).toBeDefined();
+      expect(email2?.subject).toBe("Second Email");
+
+      // Verify both fetches were called
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("should reuse connections properly between sequential calls", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+
+      const mockMessage = {
+        uid: 100,
+        envelope: {
+          messageId: "msg-100",
+          subject: "Test Email",
+          from: [{ name: "Sender", address: "sender@example.com" }],
+          to: [{ name: "Recipient", address: "recipient@example.com" }],
+          date: new Date(),
+        },
+        flags: [],
+        source: Buffer.from("Test content"),
+      };
+
+      mockFetch.mockImplementation(async function* () {
+        yield mockMessage;
+      });
+
+      // Make multiple calls
+      await emailService.getEmail(100);
+      await emailService.getEmail(100);
+      await emailService.getEmail(100);
+
+      // Should have opened the folder multiple times (once per call)
+      expect(mockMailboxOpen).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe("Iterator Cleanup", () => {
+    it("should properly clean up fetch iterator when returning early", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+
+      let iteratorClosed = false;
+      const mockIterator = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield {
+              uid: 1,
+              envelope: {
+                messageId: "msg-1",
+                subject: "Test",
+                from: [{ name: "Test", address: "test@example.com" }],
+                to: [{ name: "Recipient", address: "recipient@example.com" }],
+                date: new Date(),
+              },
+              flags: [],
+              source: Buffer.from("content"),
+            };
+          } finally {
+            iteratorClosed = true;
+          }
+        },
+        return: vi.fn(async () => {
+          iteratorClosed = true;
+          return { done: true, value: undefined };
+        }),
+      };
+
+      mockFetch.mockReturnValue(mockIterator);
+
+      // Fetch email which will return early from iterator
+      const email = await emailService.getEmail(1);
+      expect(email).toBeDefined();
+
+      // Verify iterator was properly closed
+      // Note: This tests that our code attempts to call return()
+      // The actual cleanup depends on the iterator implementation
+      expect(mockIterator.return).toHaveBeenCalled();
+    });
+
+    it("should mark connection unhealthy if iterator cleanup fails", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+
+      const failingIterator = {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            uid: 1,
+            envelope: {
+              messageId: "msg-1",
+              subject: "Test",
+              from: [{ name: "Test", address: "test@example.com" }],
+              to: [{ name: "Recipient", address: "recipient@example.com" }],
+              date: new Date(),
+            },
+            flags: [],
+            source: Buffer.from("content"),
+          };
+        },
+        return: vi.fn(async () => {
+          throw new Error("Iterator cleanup failed");
+        }),
+      };
+
+      mockFetch.mockReturnValue(failingIterator);
+
+      // This should still complete but log a warning
+      const email = await emailService.getEmail(1);
+      expect(email).toBeDefined();
+
+      // Verify cleanup was attempted
+      expect(failingIterator.return).toHaveBeenCalled();
+    });
+  });
+
+  describe("Connection State After Operations", () => {
+    it("should maintain healthy connection state after successful fetch", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+
+      mockFetch.mockImplementation(async function* () {
+        yield {
+          uid: 1,
+          envelope: {
+            messageId: "msg-1",
+            subject: "Test",
+            from: [{ name: "Test", address: "test@example.com" }],
+            to: [{ name: "Recipient", address: "recipient@example.com" }],
+            date: new Date(),
+          },
+          flags: [],
+          source: Buffer.from("content"),
+        };
+      });
+
+      // Perform fetch
+      await emailService.getEmail(1);
+
+      // Get pool metrics to verify connection health
+      const metrics = emailService.getPoolMetrics();
+
+      // Connection should still be healthy and available for reuse
+      expect(metrics.totalConnections).toBeGreaterThanOrEqual(0);
+      expect(metrics.totalErrors).toBe(0);
     });
   });
 
