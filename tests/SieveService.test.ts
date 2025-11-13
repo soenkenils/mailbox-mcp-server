@@ -1,6 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SieveService } from "../src/services/SieveService.js";
-import type { SieveConnection } from "../src/types/sieve.types.js";
+import type {
+  SieveCapabilities,
+  SieveConnection,
+  SieveScript,
+} from "../src/types/sieve.types.js";
+
+// Testable subclass to access private methods
+class TestableSieveService extends SieveService {
+  public testParseScriptList(data: string): SieveScript[] {
+    return (this as any).parseScriptList(data);
+  }
+
+  public testParseCapabilities(data: string): SieveCapabilities {
+    return (this as any).parseCapabilities(data);
+  }
+}
 
 // Mock the logger
 vi.mock("../src/services/Logger.js", () => ({
@@ -290,5 +305,326 @@ if header :contains "From" "müller@example.de" {
       expect(specialScript).toContain("müller");
       expect(specialScript).toContain("Spëcial");
     });
+  });
+
+  describe("parseScriptList - branch coverage", () => {
+    let testableService: TestableSieveService;
+
+    beforeEach(() => {
+      testableService = new TestableSieveService(mockConfig);
+    });
+
+    it.each([
+      [
+        "quoted script with ACTIVE",
+        '"script1" ACTIVE\r\nOK',
+        [{ name: "script1", content: "", active: true }],
+      ],
+      [
+        "quoted script without ACTIVE",
+        '"script2"\r\nOK',
+        [{ name: "script2", content: "", active: false }],
+      ],
+      [
+        "multiple quoted scripts",
+        '"script1" ACTIVE\r\n"script2"\r\n"script3" ACTIVE\r\nOK',
+        [
+          { name: "script1", content: "", active: true },
+          { name: "script2", content: "", active: false },
+          { name: "script3", content: "", active: true },
+        ],
+      ],
+    ])(
+      "should parse %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveScript[],
+      ) => {
+        const result = testableService.testParseScriptList(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it.each([
+      [
+        "unquoted script with ACTIVE",
+        "script1 ACTIVE\r\nOK",
+        [{ name: "script1", content: "", active: true }],
+      ],
+      [
+        "unquoted script without ACTIVE",
+        "script2\r\nOK",
+        [{ name: "script2", content: "", active: false }],
+      ],
+      [
+        "mixed quoted and unquoted",
+        '"quoted" ACTIVE\r\nunquoted\r\nOK',
+        [
+          { name: "quoted", content: "", active: true },
+          { name: "unquoted", content: "", active: false },
+        ],
+      ],
+    ])(
+      "should parse %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveScript[],
+      ) => {
+        const result = testableService.testParseScriptList(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it("should handle ACTIVE on separate line as script name", () => {
+      // Note: The parser treats "ACTIVE" on its own line as a script name
+      // This is the current behavior - ACTIVE must be on same line as script name
+      const input = "script1\r\nACTIVE\r\nOK";
+      const result = testableService.testParseScriptList(input);
+
+      // Parser creates two scripts: "script1" and "ACTIVE"
+      expect(result.length).toBe(2);
+      expect(result[0].name).toBe("script1");
+      expect(result[1].name).toBe("ACTIVE");
+      // The second-pass marks the last script (ACTIVE) as active
+      expect(result[1].active).toBe(true);
+    });
+
+    it.each([
+      ["empty response", "OK", []],
+      ["only OK line", "OK Listscripts completed\r\n", []],
+      ["only NO line", "NO Failed\r\n", []],
+      ["whitespace lines", "\r\n\r\n\r\nOK", []],
+    ])(
+      "should handle %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveScript[],
+      ) => {
+        const result = testableService.testParseScriptList(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it("should skip lines starting with OK or NO", () => {
+      // OK and NO lines are status responses, not script names
+      const input = '"script1"\r\nOK Some text\r\n"script2"\r\n';
+      const result = testableService.testParseScriptList(input);
+
+      // Both scripts are parsed (OK line is skipped)
+      expect(result.length).toBe(2);
+      expect(result[0].name).toBe("script1");
+      expect(result[1].name).toBe("script2");
+    });
+  });
+
+  describe("parseCapabilities - branch coverage", () => {
+    let testableService: TestableSieveService;
+
+    beforeEach(() => {
+      testableService = new TestableSieveService(mockConfig);
+    });
+
+    it.each([
+      [
+        "quoted IMPLEMENTATION",
+        '"IMPLEMENTATION" "Dovecot Pigeonhole"\r\nOK',
+        {
+          implementation: "Dovecot Pigeonhole",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "quoted VERSION",
+        '"VERSION" "1.0"\r\nOK',
+        {
+          implementation: "",
+          version: "1.0",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "quoted SASL",
+        '"SASL" "PLAIN LOGIN"\r\nOK',
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: ["PLAIN", "LOGIN"],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "quoted SIEVE",
+        '"SIEVE" "fileinto envelope body"\r\nOK',
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["fileinto", "envelope", "body"],
+        },
+      ],
+      [
+        "quoted STARTTLS",
+        '"STARTTLS"\r\nOK',
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["STARTTLS"],
+        },
+      ],
+    ])(
+      "should parse %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveCapabilities,
+      ) => {
+        const result = testableService.testParseCapabilities(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it.each([
+      [
+        "unquoted IMPLEMENTATION",
+        'IMPLEMENTATION "Dovecot"\r\nOK',
+        {
+          implementation: "Dovecot",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "unquoted VERSION",
+        'VERSION "2.0"\r\nOK',
+        {
+          implementation: "",
+          version: "2.0",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "unquoted SASL",
+        'SASL "PLAIN"\r\nOK',
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: ["PLAIN"],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "unquoted SIEVE",
+        'SIEVE "fileinto"\r\nOK',
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["fileinto"],
+        },
+      ],
+      [
+        "unquoted STARTTLS",
+        "STARTTLS\r\nOK",
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["STARTTLS"],
+        },
+      ],
+    ])(
+      "should parse %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveCapabilities,
+      ) => {
+        const result = testableService.testParseCapabilities(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it.each([
+      [
+        "complete quoted capabilities",
+        '"IMPLEMENTATION" "Dovecot Pigeonhole"\r\n"VERSION" "1.0"\r\n"SASL" "PLAIN LOGIN"\r\n"SIEVE" "fileinto envelope"\r\n"STARTTLS"\r\nOK',
+        {
+          implementation: "Dovecot Pigeonhole",
+          version: "1.0",
+          saslMechanisms: ["PLAIN", "LOGIN"],
+          sieveExtensions: ["fileinto", "envelope", "STARTTLS"],
+        },
+      ],
+      [
+        "complete unquoted capabilities",
+        'IMPLEMENTATION "Cyrus"\r\nVERSION "2.0"\r\nSASL "PLAIN"\r\nSIEVE "fileinto"\r\nSTARTTLS\r\nOK',
+        {
+          implementation: "Cyrus",
+          version: "2.0",
+          saslMechanisms: ["PLAIN"],
+          sieveExtensions: ["fileinto", "STARTTLS"],
+        },
+      ],
+      [
+        "mixed quoted and unquoted",
+        '"IMPLEMENTATION" "Dovecot"\r\nVERSION "1.0"\r\n"SASL" "PLAIN"\r\nSIEVE "fileinto"\r\nOK',
+        {
+          implementation: "Dovecot",
+          version: "1.0",
+          saslMechanisms: ["PLAIN"],
+          sieveExtensions: ["fileinto"],
+        },
+      ],
+    ])(
+      "should parse %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveCapabilities,
+      ) => {
+        const result = testableService.testParseCapabilities(input);
+        expect(result).toEqual(expected);
+      },
+    );
+
+    it.each([
+      ["empty response", "OK", {
+        implementation: "",
+        version: "",
+        saslMechanisms: [],
+        sieveExtensions: [],
+      }],
+      ["whitespace lines", "\r\n\r\n\r\nOK", {
+        implementation: "",
+        version: "",
+        saslMechanisms: [],
+        sieveExtensions: [],
+      }],
+      ["unknown capability line", "UNKNOWN_CAP value\r\nOK", {
+        implementation: "",
+        version: "",
+        saslMechanisms: [],
+        sieveExtensions: [],
+      }],
+    ])(
+      "should handle %s",
+      (
+        _description: string,
+        input: string,
+        expected: SieveCapabilities,
+      ) => {
+        const result = testableService.testParseCapabilities(input);
+        expect(result).toEqual(expected);
+      },
+    );
   });
 });

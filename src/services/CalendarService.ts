@@ -466,6 +466,11 @@ export class CalendarService {
   private extractStatus(
     attendee: unknown,
   ): "needs-action" | "accepted" | "declined" | "tentative" {
+    // Handle null/undefined or non-object attendees
+    if (!attendee || typeof attendee !== "object") {
+      return "needs-action";
+    }
+
     const typedAttendee = attendee as {
       getParameter?: (name: string) => string;
     };

@@ -28,6 +28,19 @@ class TestableCalendarService extends CalendarService {
   public async discoverCalendars() {
     return super.discoverCalendars();
   }
+
+  // Expose private methods for branch coverage testing
+  public testIsConnectionError(error: unknown): boolean {
+    return (this as any).isConnectionError(error);
+  }
+
+  public testFilterEventsByQuery(events: any[], query?: string): any[] {
+    return (this as any).filterEventsByQuery(events, query);
+  }
+
+  public testExtractStatus(attendee: unknown): string {
+    return (this as any).extractStatus(attendee);
+  }
 }
 
 // Define mock functions at the top level
@@ -488,6 +501,147 @@ describe("CalendarService", () => {
         .catch(() => []); // If it throws, return empty array
 
       expect(Array.isArray(result)).toBe(true);
+    });
+  });
+
+  // Phase 1: Branch Coverage Tests - Data-Driven Testing
+  describe("isConnectionError - branch coverage", () => {
+    it.each([
+      ["connection failed", true],
+      ["timeout occurred", true],
+      ["ECONNRESET", true],
+      ["ENOTFOUND domain", true],
+      ["ECONNREFUSED by server", true],
+      ["Circuit breaker is open", true],
+      ["invalid credentials", false],
+      ["permission denied", false],
+      ["unknown error", false],
+    ])("should detect '%s' as connection error: %s", (message, expected) => {
+      const error = new Error(message);
+      expect(calendarService.testIsConnectionError(error)).toBe(expected);
+    });
+
+    it.each([
+      ["string", "error message"],
+      ["number", 123],
+      ["null", null],
+      ["undefined", undefined],
+      ["object", { message: "error" }],
+      ["array", ["error"]],
+    ])("should return false for non-Error type: %s", (type, value) => {
+      expect(calendarService.testIsConnectionError(value)).toBe(false);
+    });
+  });
+
+  describe("filterEventsByQuery - branch coverage", () => {
+    const events = [
+      {
+        id: "1",
+        summary: "Team Meeting",
+        description: "Discuss project roadmap",
+        location: "Conference Room A",
+        start: new Date(),
+        end: new Date(),
+      },
+      {
+        id: "2",
+        summary: "Lunch Break",
+        description: null,
+        location: "Cafeteria",
+        start: new Date(),
+        end: new Date(),
+      },
+      {
+        id: "3",
+        summary: "Code Review",
+        description: "Review PR #123",
+        location: null,
+        start: new Date(),
+        end: new Date(),
+      },
+      {
+        id: "4",
+        summary: "Client Call",
+        description: "Quarterly update",
+        location: "Virtual",
+        start: new Date(),
+        end: new Date(),
+      },
+    ];
+
+    it.each([
+      ["by summary", "Meeting", 1, "1"],
+      ["by description when present", "roadmap", 1, "1"],
+      ["by location when present", "Cafeteria", 1, "2"],
+      ["case insensitive summary", "CODE", 1, "3"],
+      ["case insensitive location", "virtual", 1, "4"],
+      ["no matches", "xyz-not-found", 0, null],
+      ["empty string", "", 4, null],
+    ])(
+      "should filter %s",
+      (scenario, query, expectedCount, expectedFirstId) => {
+        const results = calendarService.testFilterEventsByQuery(events, query);
+        expect(results).toHaveLength(expectedCount);
+        if (expectedFirstId) {
+          expect(results[0].id).toBe(expectedFirstId);
+        }
+      },
+    );
+
+    it("should return all events when query is undefined", () => {
+      const results = calendarService.testFilterEventsByQuery(events, undefined);
+      expect(results).toEqual(events);
+      expect(results).toHaveLength(4);
+    });
+
+    it("should return all events when query is null", () => {
+      const results = calendarService.testFilterEventsByQuery(events, null as any);
+      expect(results).toEqual(events);
+    });
+  });
+
+  describe("extractStatus - branch coverage", () => {
+    it.each([
+      ["ACCEPTED", "accepted"],
+      ["accepted", "accepted"],
+      ["Accepted", "accepted"],
+      ["DECLINED", "declined"],
+      ["declined", "declined"],
+      ["Declined", "declined"],
+      ["TENTATIVE", "tentative"],
+      ["tentative", "tentative"],
+      ["Tentative", "tentative"],
+      ["NEEDS-ACTION", "needs-action"],
+      ["needs-action", "needs-action"],
+      ["Needs-Action", "needs-action"],
+      ["UNKNOWN_STATUS", "needs-action"],
+      ["invalid", "needs-action"],
+      ["", "needs-action"],
+    ])("should map partstat '%s' to '%s'", (input, expected) => {
+      const attendee = {
+        getParameter: (name: string) => (name === "partstat" ? input : null),
+      };
+      expect(calendarService.testExtractStatus(attendee)).toBe(expected);
+    });
+
+    it("should default to needs-action when getParameter returns null", () => {
+      const attendee = {
+        getParameter: () => null,
+      };
+      expect(calendarService.testExtractStatus(attendee)).toBe("needs-action");
+    });
+
+    it("should default to needs-action when getParameter is undefined", () => {
+      const attendee = {};
+      expect(calendarService.testExtractStatus(attendee)).toBe("needs-action");
+    });
+
+    it("should default to needs-action for null attendee", () => {
+      expect(calendarService.testExtractStatus(null)).toBe("needs-action");
+    });
+
+    it("should default to needs-action for undefined attendee", () => {
+      expect(calendarService.testExtractStatus(undefined)).toBe("needs-action");
     });
   });
 });
