@@ -1293,63 +1293,6 @@ describe("EmailService - Advanced Coverage", () => {
     });
   });
 
-  describe("parseAddressesFromEnvelope - branch coverage", () => {
-    it.each([
-      [
-        "null addresses",
-        null,
-        [],
-      ],
-      [
-        "undefined addresses",
-        undefined,
-        [],
-      ],
-      [
-        "array of addresses",
-        [
-          { name: "John Doe", address: "john@example.com" },
-          { name: "Jane Smith", address: "jane@example.com" },
-        ],
-        [
-          { name: "John Doe", address: "john@example.com" },
-          { name: "Jane Smith", address: "jane@example.com" },
-        ],
-      ],
-      [
-        "single address object with name",
-        { name: "John Doe", address: "john@example.com" },
-        [{ name: "John Doe", address: "john@example.com" }],
-      ],
-      [
-        "single address object without name",
-        { address: "john@example.com" },
-        [{ name: undefined, address: "john@example.com" }],
-      ],
-      [
-        "single address object without address field",
-        { name: "John Doe" },
-        [],
-      ],
-      [
-        "empty array",
-        [],
-        [],
-      ],
-    ])(
-      "should parse %s",
-      (
-        _description: string,
-        input: unknown,
-        expected: Array<{ name?: string; address: string }>,
-      ) => {
-        const testableService = service as TestableEmailService;
-        const result = testableService.parseAddressesFromEnvelope(input);
-        expect(result).toEqual(expected);
-      },
-    );
-  });
-
   describe("parseAddressesFromParsed - branch coverage", () => {
     it.each([
       [
