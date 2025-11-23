@@ -1,4 +1,19 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * Tests for SmtpConnectionPool - SMTP-specific connection pool implementation
+ *
+ * NOTE: Some tests may appear similar to ImapConnectionPool tests (e.g., connection
+ * lifecycle, error handling). This is intentional and necessary because:
+ * - Each pool tests its own protocol-specific implementation (SMTP vs IMAP)
+ * - Connection properties differ (isValid vs usable)
+ * - Cleanup operations differ (close() vs logout())
+ * - Validation methods differ (verify() vs noop())
+ * - SMTP has periodic verification features not present in IMAP
+ *
+ * The similarity reflects testing the same abstract patterns with different concrete
+ * implementations, which is appropriate for protocol-specific adapters.
+ */
+
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SmtpConnectionPool,
   type SmtpConnectionWrapper,

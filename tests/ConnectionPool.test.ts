@@ -1,3 +1,17 @@
+/**
+ * Tests for ConnectionPool - Base connection pool implementation
+ *
+ * This tests the abstract ConnectionPool base class with a mock connection type.
+ * Protocol-specific implementations (ImapConnectionPool, SmtpConnectionPool) have
+ * their own test files that test protocol-specific behavior while also testing
+ * some similar patterns with protocol-specific details.
+ *
+ * Test organization:
+ * - ConnectionPool.test.ts - Base class behavior with generic mocks
+ * - ImapConnectionPool.test.ts - IMAP-specific implementation and behavior
+ * - SmtpConnectionPool.test.ts - SMTP-specific implementation and behavior
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConnectionPool,
