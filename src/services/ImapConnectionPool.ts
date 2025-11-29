@@ -121,13 +121,23 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
     try {
       // Ensure the correct folder is selected
       if (wrapper.selectedFolder !== folder) {
-        await wrapper.connection.mailboxOpen(folder);
+        // Add timeout protection to prevent hanging on mailboxOpen
+        const openPromise = wrapper.connection.mailboxOpen(folder);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("Folder selection timed out after 5000ms")),
+            5000,
+          );
+        });
+
+        await Promise.race([openPromise, timeoutPromise]);
         wrapper.selectedFolder = folder;
       }
 
       return wrapper;
     } catch (error) {
-      // If folder selection fails, release the connection and throw
+      // If folder selection fails, mark connection as unhealthy and release
+      wrapper.isHealthy = false;
       await this.release(wrapper);
       throw new Error(
         `Failed to select folder ${folder}: ${error instanceof Error ? error.message : String(error)}`,

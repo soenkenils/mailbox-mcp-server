@@ -419,6 +419,11 @@ export class EmailService {
           error: error instanceof Error ? error.message : String(error),
         },
       );
+      // CRITICAL: Mark connection as unhealthy when fetch times out
+      // The background performFetch() may still be running, leaving the
+      // IMAP connection in a corrupted state. Marking it unhealthy ensures
+      // it won't be reused and will be destroyed on next validation.
+      wrapper.isHealthy = false;
       return null;
     }
   }

@@ -101,8 +101,11 @@ export abstract class ConnectionPool<T> {
       // Try to find an available idle connection
       const idleConnection = this.findIdleConnection();
       if (idleConnection) {
+        // Activate the connection - if this fails, the error will be caught below
+        // and waitingRequests will be decremented in the catch block
+        const activated = await this.activateConnection(idleConnection);
         this.metrics.waitingRequests--;
-        return await this.activateConnection(idleConnection);
+        return activated;
       }
 
       // Try to create a new connection if under max limit
@@ -145,6 +148,49 @@ export abstract class ConnectionPool<T> {
     if (this.waitingQueue.length > 0) {
       const request = this.waitingQueue.shift();
       if (!request) return; // Safety check
+
+      // CRITICAL FIX: If connection is unhealthy, destroy it immediately
+      // and create a new connection for the waiting request instead of
+      // trying to validate/activate it (which could hang if the connection
+      // is stuck from a timed-out operation)
+      if (!wrapper.isHealthy) {
+        await this.logger.warning(
+          "Destroying unhealthy connection instead of reusing for waiting request",
+          {
+            operation: "release",
+            service: "ConnectionPool",
+          },
+          { connectionId: wrapper.id },
+        );
+
+        // Destroy the unhealthy connection (don't await to avoid blocking)
+        this.destroyConnectionWrapper(wrapper).catch((error) => {
+          this.logger.warning(
+            "Error destroying unhealthy connection in background",
+            {
+              operation: "release",
+              service: "ConnectionPool",
+            },
+            {
+              connectionId: wrapper.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        });
+
+        // Try to create a new connection for the waiting request
+        try {
+          const newWrapper = await this.createNewConnection();
+          request.resolve(newWrapper);
+        } catch (error) {
+          request.reject(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
+        return;
+      }
+
+      // Connection is healthy, try to activate it for the waiting request
       try {
         const activatedWrapper = await this.activateConnection(wrapper);
         request.resolve(activatedWrapper);
