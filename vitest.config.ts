@@ -8,11 +8,9 @@ export default defineConfig({
     silent: false, // Keep test names visible
     reporters: ['verbose'],
     pool: 'forks', // Most compatible with Bun runtime
-    poolOptions: {
-      forks: {
-        isolate: true,      // Ensure test isolation
-        singleFork: false,  // Allow parallel execution
-      },
+    forks: {
+      isolate: true,      // Ensure test isolation
+      singleFork: false,  // Allow parallel execution
     },
     include: ['tests/**/*.{test,spec}.{js,ts}'],
     exclude: [
