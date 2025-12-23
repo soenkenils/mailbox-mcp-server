@@ -233,7 +233,7 @@ describe("EmailService - Advanced Coverage", () => {
     it("should return standard IMAP folders", () => {
       const folders = service.getDefaultFolders();
       expect(folders).toHaveLength(4);
-      expect(folders.map((f) => f.name)).toEqual([
+      expect(folders.map(f => f.name)).toEqual([
         "INBOX",
         "Sent",
         "Drafts",
@@ -244,7 +244,7 @@ describe("EmailService - Advanced Coverage", () => {
     it("should have correct special use flags", () => {
       const folders = service.getDefaultFolders();
       const folderMap = Object.fromEntries(
-        folders.map((f) => [f.name, f.specialUse]),
+        folders.map(f => [f.name, f.specialUse]),
       );
 
       expect(folderMap.INBOX).toBeUndefined();
@@ -469,9 +469,9 @@ describe("EmailService - Advanced Coverage", () => {
         const result = service.getOfflineCapabilities();
 
         expect(result).toEqual(capabilities);
-        expect(
-          mockOfflineService.getOfflineCapabilities,
-        ).toHaveBeenCalledTimes(1);
+        expect(mockOfflineService.getOfflineCapabilities).toHaveBeenCalledTimes(
+          1,
+        );
       });
     });
 
@@ -878,9 +878,7 @@ describe("EmailService - Advanced Coverage", () => {
   describe("createDraft", () => {
     it("should create draft with plain text in default Drafts folder", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.append = vi
-        .fn()
-        .mockResolvedValue({ uid: 456 });
+      mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
 
@@ -903,9 +901,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should create draft with HTML content", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.append = vi
-        .fn()
-        .mockResolvedValue({ uid: 456 });
+      mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
 
@@ -925,9 +921,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should create draft in custom folder", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.append = vi
-        .fn()
-        .mockResolvedValue({ uid: 456 });
+      mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
 
@@ -946,9 +940,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should include CC and BCC recipients", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.append = vi
-        .fn()
-        .mockResolvedValue({ uid: 456 });
+      mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
 
@@ -969,9 +961,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should clear cache after creating draft", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.append = vi
-        .fn()
-        .mockResolvedValue({ uid: 456 });
+      mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
 
       const clearSpy = vi.spyOn(service as any, "clearFolderCache");
@@ -1171,7 +1161,7 @@ describe("EmailService - Advanced Coverage", () => {
       const result = await service.getFolders();
 
       expect(result).toHaveLength(4); // INBOX, Sent, Drafts, Trash
-      expect(result.map((f) => f.name)).toEqual([
+      expect(result.map(f => f.name)).toEqual([
         "INBOX",
         "Sent",
         "Drafts",
@@ -1295,16 +1285,8 @@ describe("EmailService - Advanced Coverage", () => {
 
   describe("parseAddressesFromParsed - branch coverage", () => {
     it.each([
-      [
-        "null addresses",
-        null,
-        [],
-      ],
-      [
-        "undefined addresses",
-        undefined,
-        [],
-      ],
+      ["null addresses", null, []],
+      ["undefined addresses", undefined, []],
       [
         "array of addresses",
         [
@@ -1331,11 +1313,7 @@ describe("EmailService - Advanced Coverage", () => {
         { name: "Alice Brown" },
         [],
       ],
-      [
-        "empty array",
-        [],
-        [],
-      ],
+      ["empty array", [], []],
     ])(
       "should parse %s",
       (

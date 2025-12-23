@@ -539,7 +539,7 @@ export class CalendarService {
     const searchTerm = query.toLowerCase();
 
     return events.filter(
-      (event) =>
+      event =>
         event.summary.toLowerCase().includes(searchTerm) ||
         event.description?.toLowerCase().includes(searchTerm) ||
         event.location?.toLowerCase().includes(searchTerm),
@@ -632,6 +632,12 @@ export class CalendarService {
 
   // Reset circuit breaker (for administrative purposes)
   resetCircuitBreaker(): void {
+    this.circuitBreaker.reset();
+  }
+
+  // Clean up resources
+  async disconnect(): Promise<void> {
+    this.client = null;
     this.circuitBreaker.reset();
   }
 }

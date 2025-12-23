@@ -180,7 +180,7 @@ export class DynamicPoolManager {
     return {
       averageWaitTime:
         history.reduce((sum, stat) => sum + stat.averageWaitTime, 0) / count,
-      peakConnections: Math.max(...history.map((stat) => stat.peakConnections)),
+      peakConnections: Math.max(...history.map(stat => stat.peakConnections)),
       utilizationRate:
         history.reduce((sum, stat) => sum + stat.utilizationRate, 0) / count,
       errorRate: history.reduce((sum, stat) => sum + stat.errorRate, 0) / count,

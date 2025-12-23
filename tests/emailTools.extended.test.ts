@@ -298,7 +298,9 @@ describe("Email Tools - Extended Coverage", () => {
         ["\\Seen"],
         "add",
       );
-      expect(result.content[0].text).toContain("✅ Email flags updated successfully!");
+      expect(result.content[0].text).toContain(
+        "✅ Email flags updated successfully!",
+      );
       expect(result.isError).toBe(false);
     });
 
@@ -370,7 +372,9 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("❌ Failed to update email flags");
+      expect(result.content[0].text).toContain(
+        "❌ Failed to update email flags",
+      );
     });
   });
 
@@ -395,7 +399,9 @@ describe("Email Tools - Extended Coverage", () => {
         "INBOX",
         false,
       );
-      expect(result.content[0].text).toContain("✅ Email deleted successfully!");
+      expect(result.content[0].text).toContain(
+        "✅ Email deleted successfully!",
+      );
       expect(result.isError).toBe(false);
     });
 

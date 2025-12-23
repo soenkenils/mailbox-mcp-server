@@ -39,8 +39,10 @@ export class MemoryCache implements LocalCache {
     entry.lastAccessed = Date.now();
 
     // Adaptive TTL: extend TTL for frequently accessed items
+    // Cap at 1 hour maximum to prevent unbounded growth
+    const MAX_TTL = 3600000; // 1 hour
     if (entry.accessCount > 3 && entry.priority >= 2) {
-      entry.ttl = Math.min(entry.ttl * 1.2, entry.ttl + 300000); // Max 5 min extension
+      entry.ttl = Math.min(entry.ttl * 1.2, MAX_TTL);
     }
 
     this.stats.hits++;
@@ -102,6 +104,10 @@ export class MemoryCache implements LocalCache {
 
   size(): number {
     return this.cache.size;
+  }
+
+  keys(): IterableIterator<string> {
+    return this.cache.keys();
   }
 
   cleanup(): void {

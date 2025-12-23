@@ -11,6 +11,23 @@ import { SieveService } from "../services/SieveService.js";
 
 const logger = createLogger("SieveTools");
 
+/** Sieve tool names - exported for tool routing */
+export const SIEVE_TOOLS = [
+  "list_sieve_scripts",
+  "get_sieve_script",
+  "create_sieve_filter",
+  "delete_sieve_script",
+  "activate_sieve_script",
+  "check_sieve_script",
+  "get_sieve_capabilities",
+] as const;
+
+export type SieveToolName = (typeof SIEVE_TOOLS)[number];
+
+export function isSieveTool(name: string): name is SieveToolName {
+  return SIEVE_TOOLS.includes(name as SieveToolName);
+}
+
 // Validation schemas
 const ListSieveScriptsSchema = v.object({});
 
@@ -245,9 +262,7 @@ async function handleListSieveScripts(
       {
         type: "text",
         text: `Found ${scripts.length} Sieve scripts:\n\n${scripts
-          .map(
-            (script) => `• ${script.name}${script.active ? " (ACTIVE)" : ""}`,
-          )
+          .map(script => `• ${script.name}${script.active ? " (ACTIVE)" : ""}`)
           .join("\n")}`,
       },
     ],

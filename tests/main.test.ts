@@ -304,7 +304,7 @@ describe("main.ts module structure and logic", () => {
         mockSmtpService,
       );
       const implementedEmailToolNames = implementedEmailTools.map(
-        (tool) => tool.name,
+        tool => tool.name,
       );
 
       // Simulate the server's isEmailTool function
@@ -339,7 +339,7 @@ describe("main.ts module structure and logic", () => {
       // Get all implemented calendar tools
       const implementedCalendarTools = createCalendarTools(mockCalendarService);
       const implementedCalendarToolNames = implementedCalendarTools.map(
-        (tool) => tool.name,
+        tool => tool.name,
       );
 
       // Simulate the server's isCalendarTool function

@@ -49,6 +49,7 @@ export abstract class ConnectionPool<T> {
     resolve: (connection: ConnectionWrapper<T>) => void;
     reject: (error: Error) => void;
     requestedAt: Date;
+    settled: boolean;
   }>;
   protected metrics: PoolMetrics;
   protected logger = createLogger("ConnectionPool");
@@ -147,7 +148,7 @@ export abstract class ConnectionPool<T> {
     // Process waiting queue
     if (this.waitingQueue.length > 0) {
       const request = this.waitingQueue.shift();
-      if (!request) return; // Safety check
+      if (!request || request.settled) return; // Skip if already settled (e.g., timed out)
 
       // CRITICAL FIX: If connection is unhealthy, destroy it immediately
       // and create a new connection for the waiting request instead of
@@ -164,7 +165,7 @@ export abstract class ConnectionPool<T> {
         );
 
         // Destroy the unhealthy connection (don't await to avoid blocking)
-        this.destroyConnectionWrapper(wrapper).catch((error) => {
+        this.destroyConnectionWrapper(wrapper).catch(error => {
           this.logger.warning(
             "Error destroying unhealthy connection in background",
             {
@@ -316,7 +317,7 @@ export abstract class ConnectionPool<T> {
         error: error.message,
       },
     );
-    await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+    await new Promise(resolve => setTimeout(resolve, backoffDelay));
   }
 
   protected async activateConnection(
@@ -341,32 +342,38 @@ export abstract class ConnectionPool<T> {
 
   private async waitForConnection(): Promise<ConnectionWrapper<T>> {
     return new Promise((resolve, reject) => {
+      const request = {
+        resolve: (wrapper: ConnectionWrapper<T>) => {
+          if (request.settled) return;
+          request.settled = true;
+          clearTimeout(timeoutId);
+          resolve(wrapper);
+        },
+        reject: (error: Error) => {
+          if (request.settled) return;
+          request.settled = true;
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+        requestedAt: new Date(),
+        settled: false,
+      };
+
       const timeoutId = setTimeout(() => {
-        const index = this.waitingQueue.findIndex(
-          (req) => req.resolve === resolve,
-        );
+        if (request.settled) return;
+        const index = this.waitingQueue.indexOf(request);
         if (index !== -1) {
           this.waitingQueue.splice(index, 1);
           this.metrics.waitingRequests--;
         }
-        reject(
+        request.reject(
           new Error(
             `Connection acquire timeout after ${this.config.acquireTimeoutMs}ms`,
           ),
         );
       }, this.config.acquireTimeoutMs);
 
-      this.waitingQueue.push({
-        resolve: (wrapper) => {
-          clearTimeout(timeoutId);
-          resolve(wrapper);
-        },
-        reject: (error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        },
-        requestedAt: new Date(),
-      });
+      this.waitingQueue.push(request);
     });
   }
 

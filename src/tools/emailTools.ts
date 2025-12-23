@@ -22,6 +22,26 @@ import {
   validateInput,
 } from "../validation/schemas.js";
 
+/** Email tool names - exported for tool routing */
+export const EMAIL_TOOLS = [
+  "search_emails",
+  "get_email",
+  "get_email_thread",
+  "send_email",
+  "create_draft",
+  "move_email",
+  "mark_email",
+  "delete_email",
+  "get_folders",
+  "create_directory",
+] as const;
+
+export type EmailToolName = (typeof EMAIL_TOOLS)[number];
+
+export function isEmailTool(name: string): name is EmailToolName {
+  return EMAIL_TOOLS.includes(name as EmailToolName);
+}
+
 export function createEmailTools(
   emailService: EmailService,
   smtpService?: SmtpService,
@@ -381,10 +401,10 @@ export async function handleEmailTool(
               type: "text",
               text: `Found ${emails.length} emails:\n\n${emails
                 .map(
-                  (email) =>
+                  email =>
                     `**${email.subject}**
-From: ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
-To: ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}
+From: ${email.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
+To: ${email.to.map(t => `${t.name || ""} <${t.address}>`).join(", ")}
 Date: ${email.date.toISOString()}
 UID: ${email.uid}
 Folder: ${email.folder}
@@ -439,7 +459,7 @@ Folder: ${email.folder}
           email.attachments && email.attachments.length > 0
             ? `\n\n**Attachments:**\n${email.attachments
                 .map(
-                  (att) =>
+                  att =>
                     `- ${att.filename} (${att.contentType}, ${att.size} bytes)`,
                 )
                 .join("\n")}`
@@ -451,11 +471,11 @@ Folder: ${email.folder}
               type: "text",
               text: `**Subject:** ${email.subject}
 
-**From:** ${email.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
-**To:** ${email.to.map((t) => `${t.name || ""} <${t.address}>`).join(", ")}
+**From:** ${email.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
+**To:** ${email.to.map(t => `${t.name || ""} <${t.address}>`).join(", ")}
 ${
   email.cc?.length
-    ? `**CC:** ${email.cc.map((c) => `${c.name || ""} <${c.address}>`).join(", ")}\n`
+    ? `**CC:** ${email.cc.map(c => `${c.name || ""} <${c.address}>`).join(", ")}\n`
     : ""
 }**Date:** ${email.date.toISOString()}
 **UID:** ${email.uid}
@@ -491,17 +511,17 @@ ${email.text || email.html || "No content available"}${attachmentInfo}`,
             {
               type: "text",
               text: `**Thread:** ${thread.subject}
-**Participants:** ${thread.participants.map((p) => `${p.name || ""} <${p.address}>`).join(", ")}
+**Participants:** ${thread.participants.map(p => `${p.name || ""} <${p.address}>`).join(", ")}
 **Last Activity:** ${thread.lastActivity.toISOString()}
 **Messages:** ${thread.messages.length}
 
 **Messages in Thread:**
 ${thread.messages
   .map(
-    (msg) =>
+    msg =>
       `---
 **Subject:** ${msg.subject}
-**From:** ${msg.from.map((f) => `${f.name || ""} <${f.address}>`).join(", ")}
+**From:** ${msg.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
 **Date:** ${msg.date.toISOString()}
 **Content:** ${(msg.text || msg.html || "No content").substring(0, 200)}...
 `,
@@ -652,7 +672,7 @@ ${thread.messages
               type: "text",
               text: `📁 Available Email Folders (${folders.length}):\n\n${folders
                 .map(
-                  (folder) =>
+                  folder =>
                     `**${folder.name}**
 Path: ${folder.path}
 Flags: ${folder.flags.join(", ") || "None"}

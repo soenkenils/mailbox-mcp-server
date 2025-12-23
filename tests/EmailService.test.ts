@@ -90,7 +90,7 @@ const mockOn = vi.fn();
 // Mock the imapflow module
 vi.mock("imapflow", () => {
   return {
-    ImapFlow: vi.fn(function() {
+    ImapFlow: vi.fn(function () {
       return {
         connect: mockConnect,
         logout: mockLogout,
@@ -315,7 +315,7 @@ describe("EmailService", () => {
         query: "from:correctiv.org OR from:krautreporter.de",
       });
       expect(result).toHaveLength(2);
-      expect(result.map((m) => m.subject)).toEqual([
+      expect(result.map(m => m.subject)).toEqual([
         "Newsletter from Correctiv",
         "Article from Krautreporter",
       ]);
@@ -682,8 +682,12 @@ describe("EmailService", () => {
           return {
             messageId: "msg-1",
             subject: "First Email",
-            from: { value: [{ name: "Sender 1", address: "sender1@example.com" }] },
-            to: { value: [{ name: "Recipient", address: "recipient@example.com" }] },
+            from: {
+              value: [{ name: "Sender 1", address: "sender1@example.com" }],
+            },
+            to: {
+              value: [{ name: "Recipient", address: "recipient@example.com" }],
+            },
             cc: { value: [] },
             date: new Date("2024-01-01T10:00:00Z"),
             text: "First Email",
@@ -693,8 +697,12 @@ describe("EmailService", () => {
         return {
           messageId: "msg-2",
           subject: "Second Email",
-          from: { value: [{ name: "Sender 2", address: "sender2@example.com" }] },
-          to: { value: [{ name: "Recipient", address: "recipient@example.com" }] },
+          from: {
+            value: [{ name: "Sender 2", address: "sender2@example.com" }],
+          },
+          to: {
+            value: [{ name: "Recipient", address: "recipient@example.com" }],
+          },
           cc: { value: [] },
           date: new Date("2024-01-02T10:00:00Z"),
           text: "Second Email",

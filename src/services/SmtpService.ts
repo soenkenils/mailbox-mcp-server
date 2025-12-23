@@ -55,7 +55,7 @@ export class SmtpService {
         subject: composition.subject,
         text: composition.text,
         html: composition.html,
-        attachments: composition.attachments?.map((att) => ({
+        attachments: composition.attachments?.map(att => ({
           filename: att.filename,
           content: att.content,
           contentType: att.contentType,
@@ -120,7 +120,7 @@ export class SmtpService {
     addresses: Array<{ name?: string; address: string }>,
   ): string {
     return addresses
-      .map((addr) => {
+      .map(addr => {
         if (addr.name) {
           return `"${addr.name}" <${addr.address}>`;
         }
@@ -133,7 +133,7 @@ export class SmtpService {
     const localPart = email.split("@")[0];
     return localPart
       .split(/[._-]/)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ");
   }
 

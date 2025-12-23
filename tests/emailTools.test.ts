@@ -23,7 +23,7 @@ describe("Email Tools", () => {
       const tools = createEmailTools(mockEmailService);
 
       expect(tools).toHaveLength(10);
-      expect(tools.map((t) => t.name)).toEqual([
+      expect(tools.map(t => t.name)).toEqual([
         "search_emails",
         "get_email",
         "get_email_thread",
@@ -39,7 +39,7 @@ describe("Email Tools", () => {
 
     it("should have proper schema for search_emails tool", () => {
       const tools = createEmailTools(mockEmailService);
-      const searchTool = tools.find((t) => t.name === "search_emails");
+      const searchTool = tools.find(t => t.name === "search_emails");
 
       expect(searchTool?.inputSchema.properties).toHaveProperty("query");
       expect(searchTool?.inputSchema.properties).toHaveProperty("folder");
@@ -50,7 +50,7 @@ describe("Email Tools", () => {
 
     it("should have proper schema for get_email tool", () => {
       const tools = createEmailTools(mockEmailService);
-      const getTool = tools.find((t) => t.name === "get_email");
+      const getTool = tools.find(t => t.name === "get_email");
 
       expect(getTool?.inputSchema.required).toContain("uid");
       expect(getTool?.inputSchema.properties).toHaveProperty("uid");

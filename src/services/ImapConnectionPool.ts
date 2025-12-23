@@ -80,7 +80,10 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
       // to prevent hanging on stuck connections
       const noopPromise = connection.noop();
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Connection validation timeout")), 3000);
+        setTimeout(
+          () => reject(new Error("Connection validation timeout")),
+          3000,
+        );
       });
 
       await Promise.race([noopPromise, timeoutPromise]);

@@ -108,7 +108,9 @@ vi.mock("tsdav", () => {
   }
 
   return {
-    createDAVClient: vi.fn(function() { return new MockDAVClient(); }),
+    createDAVClient: vi.fn(function () {
+      return new MockDAVClient();
+    }),
     DAVClient: MockDAVClient,
   };
 });
@@ -589,13 +591,19 @@ describe("CalendarService", () => {
     );
 
     it("should return all events when query is undefined", () => {
-      const results = calendarService.testFilterEventsByQuery(events, undefined);
+      const results = calendarService.testFilterEventsByQuery(
+        events,
+        undefined,
+      );
       expect(results).toEqual(events);
       expect(results).toHaveLength(4);
     });
 
     it("should return all events when query is null", () => {
-      const results = calendarService.testFilterEventsByQuery(events, null as any);
+      const results = calendarService.testFilterEventsByQuery(
+        events,
+        null as any,
+      );
       expect(results).toEqual(events);
     });
   });

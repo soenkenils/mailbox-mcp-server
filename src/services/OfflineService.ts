@@ -186,19 +186,19 @@ export class OfflineService {
     // Apply client-side filtering since we're working with cached data
     if (options.query) {
       const query = options.query;
-      filtered = filtered.filter((email) =>
+      filtered = filtered.filter(email =>
         this.matchesOfflineQuery(email, query),
       );
     }
 
     if (options.since) {
       const since = options.since;
-      filtered = filtered.filter((email) => email.date >= since);
+      filtered = filtered.filter(email => email.date >= since);
     }
 
     if (options.before) {
       const before = options.before;
-      filtered = filtered.filter((email) => email.date <= before);
+      filtered = filtered.filter(email => email.date <= before);
     }
 
     // Apply pagination
@@ -220,12 +220,12 @@ export class OfflineService {
     return (
       email.subject.toLowerCase().includes(lowerQuery) ||
       email.from.some(
-        (addr) =>
+        addr =>
           addr.address.toLowerCase().includes(lowerQuery) ||
           addr.name?.toLowerCase().includes(lowerQuery),
       ) ||
       email.to.some(
-        (addr) =>
+        addr =>
           addr.address.toLowerCase().includes(lowerQuery) ||
           addr.name?.toLowerCase().includes(lowerQuery),
       ) ||

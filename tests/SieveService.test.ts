@@ -336,11 +336,7 @@ if header :contains "From" "müller@example.de" {
       ],
     ])(
       "should parse %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveScript[],
-      ) => {
+      (_description: string, input: string, expected: SieveScript[]) => {
         const result = testableService.testParseScriptList(input);
         expect(result).toEqual(expected);
       },
@@ -367,11 +363,7 @@ if header :contains "From" "müller@example.de" {
       ],
     ])(
       "should parse %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveScript[],
-      ) => {
+      (_description: string, input: string, expected: SieveScript[]) => {
         const result = testableService.testParseScriptList(input);
         expect(result).toEqual(expected);
       },
@@ -398,11 +390,7 @@ if header :contains "From" "müller@example.de" {
       ["whitespace lines", "\r\n\r\n\r\nOK", []],
     ])(
       "should handle %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveScript[],
-      ) => {
+      (_description: string, input: string, expected: SieveScript[]) => {
         const result = testableService.testParseScriptList(input);
         expect(result).toEqual(expected);
       },
@@ -480,11 +468,7 @@ if header :contains "From" "müller@example.de" {
       ],
     ])(
       "should parse %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveCapabilities,
-      ) => {
+      (_description: string, input: string, expected: SieveCapabilities) => {
         const result = testableService.testParseCapabilities(input);
         expect(result).toEqual(expected);
       },
@@ -543,11 +527,7 @@ if header :contains "From" "müller@example.de" {
       ],
     ])(
       "should parse %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveCapabilities,
-      ) => {
+      (_description: string, input: string, expected: SieveCapabilities) => {
         const result = testableService.testParseCapabilities(input);
         expect(result).toEqual(expected);
       },
@@ -586,42 +566,46 @@ if header :contains "From" "müller@example.de" {
       ],
     ])(
       "should parse %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveCapabilities,
-      ) => {
+      (_description: string, input: string, expected: SieveCapabilities) => {
         const result = testableService.testParseCapabilities(input);
         expect(result).toEqual(expected);
       },
     );
 
     it.each([
-      ["empty response", "OK", {
-        implementation: "",
-        version: "",
-        saslMechanisms: [],
-        sieveExtensions: [],
-      }],
-      ["whitespace lines", "\r\n\r\n\r\nOK", {
-        implementation: "",
-        version: "",
-        saslMechanisms: [],
-        sieveExtensions: [],
-      }],
-      ["unknown capability line", "UNKNOWN_CAP value\r\nOK", {
-        implementation: "",
-        version: "",
-        saslMechanisms: [],
-        sieveExtensions: [],
-      }],
+      [
+        "empty response",
+        "OK",
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "whitespace lines",
+        "\r\n\r\n\r\nOK",
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
+      [
+        "unknown capability line",
+        "UNKNOWN_CAP value\r\nOK",
+        {
+          implementation: "",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: [],
+        },
+      ],
     ])(
       "should handle %s",
-      (
-        _description: string,
-        input: string,
-        expected: SieveCapabilities,
-      ) => {
+      (_description: string, input: string, expected: SieveCapabilities) => {
         const result = testableService.testParseCapabilities(input);
         expect(result).toEqual(expected);
       },

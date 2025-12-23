@@ -193,7 +193,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
 
       if (!smtpWrapper.inUse) {
         const promise = this.validateConnection(smtpWrapper.connection)
-          .then((isValid) => {
+          .then(isValid => {
             if (isValid) {
               smtpWrapper.lastVerified = new Date();
               smtpWrapper.verificationFailures = 0;
@@ -210,7 +210,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
               ) {
                 // Schedule destruction asynchronously
                 this.destroyConnection(smtpWrapper.connection)
-                  .catch(async (err) => {
+                  .catch(async err => {
                     await this.logger.warning(
                       "Error destroying connection",
                       {

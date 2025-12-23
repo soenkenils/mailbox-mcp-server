@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarService } from "../src/services/CalendarService.js";
-import { createCalendarTools, handleCalendarTool } from "../src/tools/calendarTools.js";
+import {
+  createCalendarTools,
+  handleCalendarTool,
+} from "../src/tools/calendarTools.js";
 import type { CalendarEvent } from "../src/types/calendar.types.js";
 
 vi.mock("../src/services/CalendarService.js");
@@ -41,7 +44,7 @@ describe("Calendar Tools", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
 
       expect(tools).toHaveLength(3);
-      expect(tools.map((t) => t.name)).toEqual([
+      expect(tools.map(t => t.name)).toEqual([
         "get_calendar_events",
         "search_calendar",
         "get_free_busy",
@@ -50,7 +53,7 @@ describe("Calendar Tools", () => {
 
     it("should have proper schema for get_calendar_events tool", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
-      const getTool = tools.find((t) => t.name === "get_calendar_events");
+      const getTool = tools.find(t => t.name === "get_calendar_events");
 
       expect(getTool?.inputSchema.properties).toHaveProperty("start");
       expect(getTool?.inputSchema.properties).toHaveProperty("end");
@@ -61,7 +64,7 @@ describe("Calendar Tools", () => {
 
     it("should have proper schema for search_calendar tool", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
-      const searchTool = tools.find((t) => t.name === "search_calendar");
+      const searchTool = tools.find(t => t.name === "search_calendar");
 
       expect(searchTool?.inputSchema.required).toContain("query");
       expect(searchTool?.inputSchema.properties).toHaveProperty("query");
@@ -71,7 +74,7 @@ describe("Calendar Tools", () => {
 
     it("should have proper schema for get_free_busy tool", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
-      const freeBusyTool = tools.find((t) => t.name === "get_free_busy");
+      const freeBusyTool = tools.find(t => t.name === "get_free_busy");
 
       expect(freeBusyTool?.inputSchema.required).toContain("start");
       expect(freeBusyTool?.inputSchema.required).toContain("end");
@@ -81,7 +84,9 @@ describe("Calendar Tools", () => {
 
   describe("handleCalendarTool - get_calendar_events", () => {
     it("should retrieve calendar events with date range", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -106,7 +111,9 @@ describe("Calendar Tools", () => {
     });
 
     it("should use default dates when not provided", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -119,7 +126,9 @@ describe("Calendar Tools", () => {
     });
 
     it("should filter by specific calendar", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       await handleCalendarTool(
         "get_calendar_events",
@@ -141,7 +150,9 @@ describe("Calendar Tools", () => {
     });
 
     it("should apply limit and offset for pagination", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       await handleCalendarTool(
         "get_calendar_events",
@@ -179,7 +190,9 @@ describe("Calendar Tools", () => {
 
     it("should display all-day events correctly", async () => {
       const allDayEvent = { ...mockEvent, allDay: true };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([allDayEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        allDayEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -195,7 +208,9 @@ describe("Calendar Tools", () => {
 
     it("should display recurring events correctly", async () => {
       const recurringEvent = { ...mockEvent, recurring: true };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([recurringEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        recurringEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -210,7 +225,9 @@ describe("Calendar Tools", () => {
     });
 
     it("should display attendee count", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -229,7 +246,9 @@ describe("Calendar Tools", () => {
         ...mockEvent,
         description: "A".repeat(200),
       };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([longDescriptionEvent]);
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        longDescriptionEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -246,7 +265,9 @@ describe("Calendar Tools", () => {
 
   describe("handleCalendarTool - search_calendar", () => {
     it("should search calendar events by query", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       const result = await handleCalendarTool(
         "search_calendar",
@@ -272,7 +293,9 @@ describe("Calendar Tools", () => {
     });
 
     it("should use default date range (1 year) when not provided", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       await handleCalendarTool(
         "search_calendar",
@@ -283,13 +306,18 @@ describe("Calendar Tools", () => {
       );
 
       expect(mockCalendarService.searchCalendar).toHaveBeenCalled();
-      const callArgs = vi.mocked(mockCalendarService.searchCalendar!).mock.calls[0][0];
-      const daysDiff = (callArgs.end!.getTime() - callArgs.start!.getTime()) / (1000 * 60 * 60 * 24);
+      const callArgs = vi.mocked(mockCalendarService.searchCalendar!).mock
+        .calls[0][0];
+      const daysDiff =
+        (callArgs.end!.getTime() - callArgs.start!.getTime()) /
+        (1000 * 60 * 60 * 24);
       expect(daysDiff).toBeCloseTo(365, 0);
     });
 
     it("should apply limit and offset", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([mockEvent]);
+      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+        mockEvent,
+      ]);
 
       await handleCalendarTool(
         "search_calendar",
@@ -353,7 +381,9 @@ describe("Calendar Tools", () => {
         ],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(freeBusyInfo);
+      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+        freeBusyInfo,
+      );
 
       const result = await handleCalendarTool(
         "get_free_busy",
@@ -385,7 +415,9 @@ describe("Calendar Tools", () => {
         free: [],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(freeBusyInfo);
+      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+        freeBusyInfo,
+      );
 
       await handleCalendarTool(
         "get_free_busy",
@@ -417,7 +449,9 @@ describe("Calendar Tools", () => {
         ],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(freeBusyInfo);
+      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+        freeBusyInfo,
+      );
 
       const result = await handleCalendarTool(
         "get_free_busy",
@@ -445,7 +479,9 @@ describe("Calendar Tools", () => {
         free: [],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(freeBusyInfo);
+      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+        freeBusyInfo,
+      );
 
       const result = await handleCalendarTool(
         "get_free_busy",

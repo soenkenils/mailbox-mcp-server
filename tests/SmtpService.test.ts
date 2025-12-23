@@ -108,7 +108,7 @@ describe("SmtpService", () => {
     };
 
     // Set up the mock pool implementation
-    (SmtpConnectionPool as Mock).mockImplementation(function() {
+    (SmtpConnectionPool as Mock).mockImplementation(function () {
       return {
         acquire: vi.fn().mockResolvedValue(mockWrapper),
         release: vi.fn().mockResolvedValue(undefined),

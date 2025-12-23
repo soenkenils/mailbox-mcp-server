@@ -9,7 +9,7 @@ export const sanitizeString = (str: string): string => {
   return str
     .trim()
     .split("")
-    .filter((char) => {
+    .filter(char => {
       const code = char.charCodeAt(0);
       return (
         !(code >= 0 && code <= 31) &&
@@ -41,7 +41,7 @@ const emailSchema = v.pipe(
   v.email("Invalid email format"),
   v.maxLength(254, "Email address too long"),
   v.transform(sanitizeString),
-  v.transform((email) => email.toLowerCase()),
+  v.transform(email => email.toLowerCase()),
 );
 
 // Folder name validation - prevent path traversal
@@ -50,7 +50,7 @@ const folderNameSchema = v.pipe(
   v.trim(),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.check((str) => !/[/\\<>:"|?*]/.test(str), "Invalid folder name characters"),
+  v.check(str => !/[/\\<>:"|?*]/.test(str), "Invalid folder name characters"),
   v.transform(sanitizeString),
 );
 
@@ -79,7 +79,7 @@ const htmlContentSchema = v.pipe(
 const dateSchema = v.pipe(
   v.string("Date must be a string"),
   v.trim(),
-  v.check((value) => {
+  v.check(value => {
     // Support multiple ISO 8601 formats:
     // - YYYY-MM-DD
     // - YYYY-MM-DDTHH:mm
@@ -90,7 +90,7 @@ const dateSchema = v.pipe(
       /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
     return isoDateRegex.test(value);
   }, "Invalid date format - must be ISO 8601 (YYYY-MM-DD, YYYY-MM-DDTHH:mm, YYYY-MM-DDTHH:mm:ss, etc.)"),
-  v.check((value) => {
+  v.check(value => {
     // Validate that the date is actually parseable and valid
     const date = new Date(value);
     return !Number.isNaN(date.getTime());
@@ -223,7 +223,7 @@ export const sendEmailSchema = v.pipe(
     html: v.optional(htmlContentSchema),
   }),
   v.check(
-    (data) => !!(data.text || data.html),
+    data => !!(data.text || data.html),
     "Either text or HTML content is required",
   ),
 );
@@ -307,7 +307,7 @@ export const getCalendarEventsSchema = v.pipe(
     ),
     offset: v.optional(offsetSchema, 0),
   }),
-  v.check((data) => {
+  v.check(data => {
     if (data.start && data.end) {
       return new Date(data.start) < new Date(data.end);
     }
@@ -332,7 +332,7 @@ export const searchCalendarSchema = v.pipe(
     ),
     offset: v.optional(offsetSchema, 0),
   }),
-  v.check((data) => {
+  v.check(data => {
     if (data.start && data.end) {
       return new Date(data.start) < new Date(data.end);
     }
@@ -347,7 +347,7 @@ export const getFreeBusySchema = v.pipe(
     calendar: v.optional(calendarNameSchema),
   }),
   v.check(
-    (data) => new Date(data.start) < new Date(data.end),
+    data => new Date(data.start) < new Date(data.end),
     "Start date must be before end date",
   ),
 );
@@ -385,7 +385,7 @@ export function validateInput<T>(
   } catch (error) {
     if (error instanceof v.ValiError) {
       // Use a simpler approach to extract error messages
-      const messages = error.issues.map((issue) => issue.message);
+      const messages = error.issues.map(issue => issue.message);
       throw new Error(`Validation failed: ${messages.join("; ")}`);
     }
     throw error;

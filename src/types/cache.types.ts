@@ -31,6 +31,7 @@ export interface LocalCache {
   size(): number;
   cleanup(): void;
   getStats(): CacheStats;
+  keys(): IterableIterator<string>;
 }
 
 export interface CacheStats {

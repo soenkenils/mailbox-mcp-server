@@ -15,6 +15,19 @@ import {
   validateInput,
 } from "../validation/schemas.js";
 
+/** Calendar tool names - exported for tool routing */
+export const CALENDAR_TOOLS = [
+  "get_calendar_events",
+  "search_calendar",
+  "get_free_busy",
+] as const;
+
+export type CalendarToolName = (typeof CALENDAR_TOOLS)[number];
+
+export function isCalendarTool(name: string): name is CalendarToolName {
+  return CALENDAR_TOOLS.includes(name as CalendarToolName);
+}
+
 export function createCalendarTools(calendarService: CalendarService): Tool[] {
   return [
     {
@@ -165,7 +178,7 @@ export async function handleCalendarTool(
               type: "text",
               text: `Found ${events.length} calendar events:\n\n${events
                 .map(
-                  (event) =>
+                  event =>
                     `**${event.summary}**
 Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}
 End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}
@@ -210,7 +223,7 @@ ${
               type: "text",
               text: `Found ${events.length} events matching "${validatedArgs.query}":\n\n${events
                 .map(
-                  (event) =>
+                  event =>
                     `**${event.summary}**
 Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm")} ${event.allDay ? "(All Day)" : ""}
 End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm")}
@@ -239,12 +252,12 @@ ${event.location ? `Location: ${event.location}\n` : ""}${
         );
 
         const busySlots = freeBusy.busy.map(
-          (slot) =>
+          slot =>
             `${dayjs(slot.start).format("YYYY-MM-DD HH:mm")} - ${dayjs(slot.end).format("HH:mm")}${slot.summary ? ` (${slot.summary})` : ""}`,
         );
 
         const freeSlots = freeBusy.free.map(
-          (slot) =>
+          slot =>
             `${dayjs(slot.start).format("YYYY-MM-DD HH:mm")} - ${dayjs(slot.end).format("HH:mm")}`,
         );
 

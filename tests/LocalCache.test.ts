@@ -82,7 +82,7 @@ describe("MemoryCache", () => {
 
       expect(cache.has("test-key")).toBe(true);
 
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       expect(cache.has("test-key")).toBe(false);
       expect(cache.get("test-key")).toBeNull();
@@ -135,7 +135,7 @@ describe("MemoryCache", () => {
 
       expect(cache.size()).toBe(2);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       cache.cleanup();
 
@@ -150,7 +150,7 @@ describe("MemoryCache", () => {
 
       expect(cache.size()).toBe(2);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Call cleanupWithStaleRetention (used by automatic cleanup timer)
       (cache as TestableMemoryCache).cleanupWithStaleRetention();
@@ -171,7 +171,7 @@ describe("MemoryCache", () => {
       expect(cache.getStale("test-key")).toBe("test-data");
 
       // Wait for expiration
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // getStale() should still return the data even when expired
       expect(cache.getStale("test-key")).toBe("test-data");
@@ -200,7 +200,7 @@ describe("MemoryCache", () => {
       cache.set("complex-key", complexData, 50);
 
       // Wait for expiration
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Check stale first before get() deletes the entry
       expect(cache.getStale("complex-key")).toEqual(complexData);
@@ -231,11 +231,11 @@ describe("MemoryCache", () => {
       cache.set("fresh", "data", 1000);
       cache.set("stale", "data", 50);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const stats = (cache as TestableMemoryCache).getStats();
-      const freshEntry = stats.entries.find((e) => e.key === "fresh");
-      const staleEntry = stats.entries.find((e) => e.key === "stale");
+      const freshEntry = stats.entries.find(e => e.key === "fresh");
+      const staleEntry = stats.entries.find(e => e.key === "stale");
 
       expect(freshEntry.isExpired).toBe(false);
       expect(staleEntry.isExpired).toBe(true);

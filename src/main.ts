@@ -20,16 +20,19 @@ import { SmtpService } from "./services/SmtpService.js";
 import {
   createCalendarTools,
   handleCalendarTool,
+  isCalendarTool,
 } from "./tools/calendarTools.js";
-import { createEmailTools, handleEmailTool } from "./tools/emailTools.js";
-import { getSieveTools, handleSieveTool } from "./tools/sieveTools.js";
 import {
-  ConfigurationError,
-  ErrorCode,
-  ErrorUtils,
-  type MCPError,
-  ValidationError,
-} from "./types/errors.js";
+  createEmailTools,
+  handleEmailTool,
+  isEmailTool,
+} from "./tools/emailTools.js";
+import {
+  getSieveTools,
+  handleSieveTool,
+  isSieveTool,
+} from "./tools/sieveTools.js";
+import { ErrorUtils, ValidationError } from "./types/errors.js";
 
 class MailboxMcpServer {
   private server: Server;
@@ -40,7 +43,7 @@ class MailboxMcpServer {
   private config!: ServerConfig;
   private logger = createLogger("MailboxMcpServer");
 
-  constructor() {
+  private constructor() {
     this.server = new Server(
       {
         name: "mailbox-mcp-server",
@@ -53,18 +56,28 @@ class MailboxMcpServer {
         },
       },
     );
+  }
+
+  /**
+   * Factory method to create and initialize the server.
+   * Separates construction from async initialization for better testability.
+   */
+  static async create(): Promise<MailboxMcpServer> {
+    const instance = new MailboxMcpServer();
 
     // Configure logger with MCP server
-    logger.setMcpServer(this.server);
+    logger.setMcpServer(instance.server);
 
-    this.setupErrorHandling();
-    this.loadConfiguration();
-    this.initializeServices();
-    this.setupToolHandlers();
+    instance.setupErrorHandling();
+    instance.loadConfiguration();
+    instance.initializeServices();
+    instance.setupToolHandlers();
+
+    return instance;
   }
 
   private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
+    this.server.onerror = error => {
       this.logger.error(
         "MCP Server error",
         {
@@ -75,23 +88,18 @@ class MailboxMcpServer {
       );
     };
 
-    process.on("SIGINT", async () => {
-      this.logger.info("Received SIGINT, shutting down gracefully", {
+    // Unified shutdown handler for both signals
+    const handleShutdown = async (signal: string) => {
+      this.logger.info(`Received ${signal}, shutting down gracefully`, {
         operation: "shutdown",
         service: "process",
       });
       await this.cleanup();
       process.exit(0);
-    });
+    };
 
-    process.on("SIGTERM", async () => {
-      this.logger.info("Received SIGTERM, shutting down gracefully", {
-        operation: "shutdown",
-        service: "process",
-      });
-      await this.cleanup();
-      process.exit(0);
-    });
+    process.on("SIGINT", () => handleShutdown("SIGINT"));
+    process.on("SIGTERM", () => handleShutdown("SIGTERM"));
   }
 
   private loadConfiguration(): void {
@@ -195,39 +203,6 @@ class MailboxMcpServer {
     }
   }
 
-  private isEmailTool(toolName: string): boolean {
-    return [
-      "search_emails",
-      "get_email",
-      "get_email_thread",
-      "send_email",
-      "create_draft",
-      "move_email",
-      "mark_email",
-      "delete_email",
-      "get_folders",
-      "create_directory",
-    ].includes(toolName);
-  }
-
-  private isCalendarTool(toolName: string): boolean {
-    return ["get_calendar_events", "search_calendar", "get_free_busy"].includes(
-      toolName,
-    );
-  }
-
-  private isSieveTool(toolName: string): boolean {
-    return [
-      "list_sieve_scripts",
-      "get_sieve_script",
-      "create_sieve_filter",
-      "delete_sieve_script",
-      "activate_sieve_script",
-      "check_sieve_script",
-      "get_sieve_capabilities",
-    ].includes(toolName);
-  }
-
   private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
     if (!args || typeof args !== "object") {
       return args;
@@ -267,20 +242,18 @@ class MailboxMcpServer {
   }
 
   private setupToolHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      // Create tool definitions in parallel for better performance
-      const [emailTools, calendarTools, sieveTools] = await Promise.all([
-        Promise.resolve(createEmailTools(this.emailService, this.smtpService)),
-        Promise.resolve(createCalendarTools(this.calendarService)),
-        Promise.resolve(getSieveTools()),
-      ]);
+    this.server.setRequestHandler(ListToolsRequestSchema, () => {
+      // Tool definitions are synchronous
+      const emailTools = createEmailTools(this.emailService, this.smtpService);
+      const calendarTools = createCalendarTools(this.calendarService);
+      const sieveTools = getSieveTools();
 
       return {
         tools: [...emailTools, ...calendarTools, ...sieveTools],
       };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async request => {
       const { name, arguments: args } = request.params;
       const timer = this.logger.startTimer(`tool:${name}`);
 
@@ -299,20 +272,20 @@ class MailboxMcpServer {
       try {
         let result: CallToolResult;
 
-        if (this.isEmailTool(name)) {
+        if (isEmailTool(name)) {
           result = await handleEmailTool(
             name,
             cleanArgs,
             this.emailService,
             this.smtpService,
           );
-        } else if (this.isCalendarTool(name)) {
+        } else if (isCalendarTool(name)) {
           result = await handleCalendarTool(
             name,
             cleanArgs,
             this.calendarService,
           );
-        } else if (this.isSieveTool(name)) {
+        } else if (isSieveTool(name)) {
           result = await handleSieveTool(
             { params: { name, arguments: cleanArgs } } as CallToolRequest,
             this.config,
@@ -434,14 +407,10 @@ class MailboxMcpServer {
         service: "MailboxMcpServer",
       });
 
-      // Log pool metrics before cleanup - fetch in parallel for better performance
-      const [emailMetrics, smtpMetrics, performanceMetrics] = await Promise.all(
-        [
-          Promise.resolve(this.emailService.getPoolMetrics()),
-          Promise.resolve(this.smtpService.getPoolMetrics()),
-          Promise.resolve(logger.getPerformanceMetrics()),
-        ],
-      );
+      // Log pool metrics before cleanup (sync calls, no Promise.all needed)
+      const emailMetrics = this.emailService.getPoolMetrics();
+      const smtpMetrics = this.smtpService.getPoolMetrics();
+      const performanceMetrics = logger.getPerformanceMetrics();
 
       this.logger.info(
         "Final connection pool metrics",
@@ -479,6 +448,7 @@ class MailboxMcpServer {
       await Promise.all([
         this.emailService.disconnect(),
         this.smtpService.close(),
+        this.calendarService.disconnect(),
       ]);
       this.cache.destroy();
 
@@ -507,12 +477,12 @@ class MailboxMcpServer {
 }
 
 async function main(): Promise<void> {
-  const server = new MailboxMcpServer();
+  const server = await MailboxMcpServer.create();
   await server.start();
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
+  main().catch(error => {
     const mcpError = ErrorUtils.toMCPError(error as Error, {
       operation: "main",
       service: "MailboxMcpServer",

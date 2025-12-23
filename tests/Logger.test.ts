@@ -43,7 +43,7 @@ describe("Logger", () => {
       logger.info("Test notification", { operation: "test" }, { foo: "bar" });
 
       // Wait for async notification
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(mockSendLoggingMessage).toHaveBeenCalledWith({
         level: LogLevel.INFO,
@@ -59,7 +59,7 @@ describe("Logger", () => {
     it("should not send MCP notifications when server is not set", async () => {
       logger.info("Test without server");
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(mockSendLoggingMessage).not.toHaveBeenCalled();
     });
@@ -71,14 +71,12 @@ describe("Logger", () => {
       logger.error("Test error message");
 
       // Wait for async notification to fail
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       // Should log the MCP failure to stderr
       const calls = mockConsoleError.mock.calls;
       expect(
-        calls.some((call) =>
-          call[0].includes("Failed to send MCP notification"),
-        ),
+        calls.some(call => call[0].includes("Failed to send MCP notification")),
       ).toBe(true);
     });
   });
@@ -109,7 +107,7 @@ describe("Logger", () => {
 
       expect(mockConsoleError).toHaveBeenCalledTimes(8);
 
-      const outputs = mockConsoleError.mock.calls.map((call) => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
       expect(outputs[0]).toContain("[DEBUG]");
       expect(outputs[1]).toContain("[INFO]");
       expect(outputs[2]).toContain("[NOTICE]");
@@ -130,7 +128,7 @@ describe("Logger", () => {
       logger.error("error - should log");
 
       expect(mockConsoleError).toHaveBeenCalledTimes(2);
-      const outputs = mockConsoleError.mock.calls.map((call) => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
       expect(outputs[0]).toContain("warning - should log");
       expect(outputs[1]).toContain("error - should log");
     });
@@ -251,7 +249,7 @@ describe("Logger", () => {
       child.emergency("emergency");
 
       expect(mockConsoleError).toHaveBeenCalledTimes(8);
-      const outputs = mockConsoleError.mock.calls.map((call) => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
       for (const output of outputs) {
         expect(output).toContain("[TestChild]");
       }
@@ -368,7 +366,7 @@ describe("Logger", () => {
       logger.setMcpServer(mockMcpServer);
       logger.info("no MCP");
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(mockSendLoggingMessage).not.toHaveBeenCalled();
     });

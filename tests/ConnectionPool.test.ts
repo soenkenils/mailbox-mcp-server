@@ -220,8 +220,8 @@ describe("ConnectionPool", () => {
       const results = await Promise.allSettled(additionalPromises);
 
       // All additional requests should fail due to pool being full
-      const successful = results.filter((r) => r.status === "fulfilled");
-      const failed = results.filter((r) => r.status === "rejected");
+      const successful = results.filter(r => r.status === "fulfilled");
+      const failed = results.filter(r => r.status === "rejected");
 
       expect(successful.length).toBe(0);
       expect(failed.length).toBe(2);
@@ -250,7 +250,7 @@ describe("ConnectionPool", () => {
       const waitingPromise = pool.acquire();
 
       // Give it time to enter the waiting queue
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
       expect(pool.getWaitingQueue().length).toBe(1);
 
       // Release one connection
@@ -280,7 +280,7 @@ describe("ConnectionPool", () => {
       pool.validateConnection = validateSpy;
 
       // Wait for health check to run (mocked shorter interval)
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       // Restore original method
       pool.validateConnection = originalValidate;
@@ -292,7 +292,7 @@ describe("ConnectionPool", () => {
 
     it("should maintain minimum connections", async () => {
       // Pool should create minimum connections during health check
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       const metrics = pool.getMetrics();
       expect(metrics.totalConnections).toBeGreaterThanOrEqual(
@@ -331,7 +331,7 @@ describe("ConnectionPool", () => {
       const waitingPromise = pool.acquire();
 
       // Give it time to enter the waiting queue
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       // Start shutdown
       const shutdownPromise = pool.destroy();
@@ -409,11 +409,11 @@ describe("ConnectionPool", () => {
   describe("enhanced metrics", () => {
     it("should track detailed connection metrics", async () => {
       const wrapper1 = await pool.acquire();
-      await new Promise((resolve) => setTimeout(resolve, 10)); // Small delay
+      await new Promise(resolve => setTimeout(resolve, 10)); // Small delay
       const wrapper2 = await pool.acquire();
 
       await pool.release(wrapper1);
-      await new Promise((resolve) => setTimeout(resolve, 50)); // Make wrapper1 idle for a bit
+      await new Promise(resolve => setTimeout(resolve, 50)); // Make wrapper1 idle for a bit
 
       const metrics = pool.getMetrics();
 
@@ -547,7 +547,7 @@ describe("ConnectionPool", () => {
       const wrapper = await pool.acquire();
       const initialLastUsed = wrapper.lastUsed;
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
       await pool.release(wrapper);
 
       expect(wrapper.lastUsed.getTime()).toBeGreaterThan(
@@ -557,7 +557,7 @@ describe("ConnectionPool", () => {
 
     it("should calculate average age correctly", async () => {
       const wrapper1 = await pool.acquire();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, 50));
       const wrapper2 = await pool.acquire();
 
       // Force metrics update
@@ -577,7 +577,7 @@ describe("ConnectionPool", () => {
       expect(initialMetrics.lastHealthCheck).toBeInstanceOf(Date);
 
       // Wait a bit to ensure timestamp changes
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       // Manually trigger health check instead of waiting for timer
       await (

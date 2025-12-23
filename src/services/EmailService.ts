@@ -576,7 +576,7 @@ export class EmailService {
       const needsInMemoryQueryFilter = query.includes(" OR ");
 
       if (needsInMemoryQueryFilter) {
-        filtered = filtered.filter((msg) => this.matchesQuery(msg, query));
+        filtered = filtered.filter(msg => this.matchesQuery(msg, query));
       }
     }
 
@@ -589,8 +589,8 @@ export class EmailService {
 
     // Handle OR operations
     if (lowercaseQuery.includes(" or ")) {
-      const orParts = lowercaseQuery.split(" or ").map((part) => part.trim());
-      return orParts.some((part) => this.matchesSingleQuery(message, part));
+      const orParts = lowercaseQuery.split(" or ").map(part => part.trim());
+      return orParts.some(part => this.matchesSingleQuery(message, part));
     }
 
     return this.matchesSingleQuery(message, lowercaseQuery);
@@ -600,7 +600,7 @@ export class EmailService {
     // Handle from: queries
     if (query.startsWith("from:")) {
       const emailDomain = query.substring(5).trim();
-      return message.from.some((from) =>
+      return message.from.some(from =>
         from.address.toLowerCase().includes(emailDomain),
       );
     }
@@ -608,7 +608,7 @@ export class EmailService {
     // Handle to: queries
     if (query.startsWith("to:")) {
       const emailDomain = query.substring(3).trim();
-      return message.to.some((to) =>
+      return message.to.some(to =>
         to.address.toLowerCase().includes(emailDomain),
       );
     }
@@ -618,12 +618,12 @@ export class EmailService {
     return (
       message.subject.toLowerCase().includes(searchText) ||
       message.from.some(
-        (from) =>
+        from =>
           from.address.toLowerCase().includes(searchText) ||
           from.name?.toLowerCase().includes(searchText),
       ) ||
       message.to.some(
-        (to) =>
+        to =>
           to.address.toLowerCase().includes(searchText) ||
           to.name?.toLowerCase().includes(searchText),
       )
@@ -669,7 +669,7 @@ export class EmailService {
       date: parsed.date || new Date(),
       text: parsed.text,
       html: parsed.html || undefined,
-      attachments: parsed.attachments?.map((att) => ({
+      attachments: parsed.attachments?.map(att => ({
         filename: att.filename || "unnamed",
         contentType: att.contentType,
         size: att.size,
@@ -691,7 +691,7 @@ export class EmailService {
       }
       return [];
     }
-    return addresses.map((addr) => ({
+    return addresses.map(addr => ({
       name: addr.name,
       address: addr.address,
     }));
@@ -708,7 +708,7 @@ export class EmailService {
       }
       return [];
     }
-    return addresses.map((addr) => ({
+    return addresses.map(addr => ({
       name: addr.name,
       address: addr.address,
     }));
@@ -754,7 +754,7 @@ export class EmailService {
       wrapper = await this.pool.acquire();
       const folders = await wrapper.connection.list();
 
-      const result = folders.map((folder) => ({
+      const result = folders.map(folder => ({
         name: folder.name,
         path: folder.path,
         delimiter: folder.delimiter || "/",
@@ -1091,7 +1091,7 @@ export class EmailService {
     addresses: Array<{ name?: string; address: string }>,
   ): string {
     return addresses
-      .map((addr) => {
+      .map(addr => {
         if (addr.name) {
           return `"${addr.name}" <${addr.address}>`;
         }
@@ -1101,15 +1101,29 @@ export class EmailService {
   }
 
   private clearFolderCache(folder: string): void {
-    // Clear all cache entries that might be affected by folder changes
+    // Clear all cache entries that are associated with the specified folder
+    // Check if keys() method exists (for backwards compatibility)
+    if (typeof this.cache.keys !== "function") {
+      return;
+    }
+
     const keysToDelete: string[] = [];
 
-    // This is a simple implementation - in a more sophisticated cache,
-    // you'd want to track keys by folder
-    for (let i = 0; i < 1000; i++) {
-      const searchKey = `email_search:${JSON.stringify({ folder })}`;
-      if (this.cache.has?.(searchKey)) {
-        keysToDelete.push(searchKey);
+    for (const key of this.cache.keys()) {
+      // Match email search keys containing this folder
+      if (
+        key.startsWith("email_search:") &&
+        key.includes(`"folder":"${folder}"`)
+      ) {
+        keysToDelete.push(key);
+      }
+      // Match individual email keys for this folder
+      if (key.startsWith(`email:${folder}:`)) {
+        keysToDelete.push(key);
+      }
+      // Match thread keys for this folder
+      if (key.startsWith(`thread:${folder}:`)) {
+        keysToDelete.push(key);
       }
     }
 

@@ -15,14 +15,10 @@ export class SieveService {
   private authenticated = false;
   private capabilities: SieveCapabilities | null = null;
   private buffer = "";
-  private responseResolvers: Map<
-    number,
-    {
-      resolve: (response: SieveResponse) => void;
-      reject: (error: Error) => void;
-    }
-  > = new Map();
-  private commandId = 0;
+  private pendingCommand: {
+    resolve: (response: SieveResponse) => void;
+    reject: (error: Error) => void;
+  } | null = null;
   private logger = createLogger("SieveService");
 
   constructor(private config: SieveConnection) {}
@@ -194,7 +190,10 @@ export class SieveService {
       this.authenticated = false;
       this.capabilities = null;
       this.buffer = "";
-      this.responseResolvers.clear();
+      if (this.pendingCommand) {
+        this.pendingCommand.reject(new SieveError("Connection closed"));
+        this.pendingCommand = null;
+      }
     }
   }
 
@@ -351,7 +350,7 @@ export class SieveService {
         this.processBuffer();
       });
 
-      this.socket?.on("error", (error) => {
+      this.socket?.on("error", error => {
         clearTimeout(timeout);
         this.connected = false;
         this.logger.error(
@@ -391,7 +390,18 @@ export class SieveService {
 
   private async waitForGreeting(): Promise<void> {
     return new Promise((resolve, reject) => {
+      let greetingReceived = false;
+      let greetingHandler: ((data: Buffer) => void) | null = null;
+
+      const cleanup = () => {
+        if (greetingHandler && this.socket) {
+          this.socket.removeListener("data", greetingHandler);
+          greetingHandler = null;
+        }
+      };
+
       const timeout = setTimeout(() => {
+        cleanup();
         this.logger.error(
           "Timeout waiting for server greeting",
           {
@@ -407,6 +417,8 @@ export class SieveService {
       }, 15000);
 
       const checkGreeting = () => {
+        if (greetingReceived) return;
+
         this.logger.debug(
           `Checking greeting in buffer: ${this.buffer.substring(0, 100)}...`,
           {
@@ -418,7 +430,9 @@ export class SieveService {
         const lines = this.buffer.split("\r\n");
         for (const line of lines) {
           if (line.trim().startsWith("OK")) {
+            greetingReceived = true;
             clearTimeout(timeout);
+            cleanup();
             this.logger.info(`Received server greeting: ${line}`, {
               operation: "greeting",
               service: "SieveService",
@@ -427,7 +441,9 @@ export class SieveService {
             return;
           }
           if (line.trim().startsWith("NO") || line.trim().startsWith("BYE")) {
+            greetingReceived = true;
             clearTimeout(timeout);
+            cleanup();
             this.logger.error(`Server rejected connection: ${line}`, {
               operation: "greeting",
               service: "SieveService",
@@ -442,8 +458,7 @@ export class SieveService {
       checkGreeting();
 
       // Set up temporary data handler for greeting only
-      let greetingReceived = false;
-      const greetingHandler = (data: Buffer) => {
+      greetingHandler = (data: Buffer) => {
         if (greetingReceived) return;
 
         const dataStr = data.toString();
@@ -454,11 +469,6 @@ export class SieveService {
 
         this.buffer += dataStr;
         checkGreeting();
-
-        if (this.buffer.includes("OK")) {
-          greetingReceived = true;
-          this.socket?.removeListener("data", greetingHandler);
-        }
       };
 
       this.socket?.on("data", greetingHandler);
@@ -495,33 +505,31 @@ export class SieveService {
       throw new SieveError("Not connected to server");
     }
 
-    const id = ++this.commandId;
+    // ManageSieve protocol is sequential - only one command at a time
+    if (this.pendingCommand) {
+      throw new SieveError("Another command is already in progress");
+    }
 
     return new Promise((resolve, reject) => {
-      this.responseResolvers.set(id, { resolve, reject });
-
       const timeout = setTimeout(() => {
-        this.responseResolvers.delete(id);
+        this.pendingCommand = null;
         reject(new SieveError(`Command timeout: ${command}`));
       }, 30000);
 
-      this.socket?.write(`${command}\r\n`);
-
-      // Create wrapped resolve to clear timeout
-      const originalResolve = resolve;
-      const resolveWithCleanup = (response: SieveResponse) => {
-        clearTimeout(timeout);
-        originalResolve(response);
-      };
-
-      // Replace resolve with cleanup version
-      this.responseResolvers.set(id, {
-        resolve: resolveWithCleanup,
+      this.pendingCommand = {
+        resolve: (response: SieveResponse) => {
+          clearTimeout(timeout);
+          this.pendingCommand = null;
+          resolve(response);
+        },
         reject: (error: Error) => {
           clearTimeout(timeout);
+          this.pendingCommand = null;
           reject(error);
         },
-      });
+      };
+
+      this.socket?.write(`${command}\r\n`);
     });
   }
 
@@ -564,13 +572,8 @@ export class SieveService {
   }
 
   private resolveCommand(response: SieveResponse): void {
-    if (this.responseResolvers.size > 0) {
-      const entry = this.responseResolvers.entries().next();
-      if (entry.value) {
-        const [id, resolver] = entry.value;
-        this.responseResolvers.delete(id);
-        resolver.resolve(response);
-      }
+    if (this.pendingCommand) {
+      this.pendingCommand.resolve(response);
     }
   }
 
@@ -670,7 +673,7 @@ export class SieveService {
       },
       {
         scriptNames: scripts.map(
-          (s) => `${s.name}${s.active ? " (ACTIVE)" : ""}`,
+          s => `${s.name}${s.active ? " (ACTIVE)" : ""}`,
         ),
       },
     );
@@ -827,7 +830,7 @@ export class SieveService {
             this.processBuffer();
           });
 
-          tlsSocket.on("error", (error) => {
+          tlsSocket.on("error", error => {
             this.connected = false;
             this.logger.error(`TLS socket error: ${error.message}`, {
               operation: "tlsSocketError",
@@ -842,7 +845,7 @@ export class SieveService {
           resolve();
         });
 
-        tlsSocket.on("error", (error) => {
+        tlsSocket.on("error", error => {
           clearTimeout(timeout);
           reject(new SieveError(`TLS upgrade failed: ${error.message}`));
         });

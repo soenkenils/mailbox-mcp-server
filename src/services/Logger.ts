@@ -213,7 +213,7 @@ export class Logger {
       if (Array.isArray(data)) {
         if (data.length === 0) return "[]";
         if (data.length > 5) return `[Array(${data.length})]`;
-        return `[${data.map((item) => this.serializeData(item, depth + 1)).join(", ")}]`;
+        return `[${data.map(item => this.serializeData(item, depth + 1)).join(", ")}]`;
       }
 
       if (typeof data === "object") {
@@ -221,7 +221,7 @@ export class Logger {
         if (keys.length === 0) return "{}";
         if (keys.length > 10) return `{Object(${keys.length} keys)}`;
 
-        const pairs = keys.slice(0, 10).map((key) => {
+        const pairs = keys.slice(0, 10).map(key => {
           const value = (data as Record<string, unknown>)[key];
           return `${key}: ${this.serializeData(value, depth + 1)}`;
         });
@@ -445,7 +445,7 @@ export class Logger {
     averageDuration: number;
     recentMetrics: PerformanceMetrics[];
   } {
-    const successful = this.performanceMetrics.filter((m) => m.success).length;
+    const successful = this.performanceMetrics.filter(m => m.success).length;
     const failed = this.performanceMetrics.length - successful;
     const averageDuration =
       this.performanceMetrics.length > 0

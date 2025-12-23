@@ -123,7 +123,7 @@ describe("CircuitBreaker", () => {
       const operation = vi.fn().mockResolvedValue("success");
 
       // Wait for recovery timeout
-      await new Promise((resolve) =>
+      await new Promise(resolve =>
         setTimeout(resolve, config.recoveryTimeout + 100),
       );
 
@@ -148,7 +148,7 @@ describe("CircuitBreaker", () => {
           circuitBreaker.execute(failingOperation),
         ).rejects.toThrow();
       }
-      await new Promise((resolve) =>
+      await new Promise(resolve =>
         setTimeout(resolve, config.recoveryTimeout + 100),
       );
     });
@@ -176,7 +176,7 @@ describe("CircuitBreaker", () => {
       for (let i = 0; i < config.failureThreshold; i++) {
         await expect(circuitBreaker.execute(failingOp)).rejects.toThrow();
       }
-      await new Promise((resolve) =>
+      await new Promise(resolve =>
         setTimeout(resolve, config.recoveryTimeout + 100),
       );
 

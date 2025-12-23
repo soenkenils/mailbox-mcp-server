@@ -8,7 +8,7 @@ import { createEmailTools } from "../src/tools/emailTools.js";
 
 // Mock external libraries for integration tests only
 vi.mock("imapflow", () => ({
-  ImapFlow: vi.fn(function() {
+  ImapFlow: vi.fn(function () {
     return {
       connect: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
@@ -141,7 +141,7 @@ describe("Integration Tests", () => {
       expect(emailTools).toHaveLength(10);
       expect(calendarTools).toHaveLength(3);
 
-      const allToolNames = [...emailTools, ...calendarTools].map((t) => t.name);
+      const allToolNames = [...emailTools, ...calendarTools].map(t => t.name);
       expect(allToolNames).toEqual([
         "search_emails",
         "get_email",
@@ -187,7 +187,7 @@ describe("Integration Tests", () => {
       expect(cache.has("test-key")).toBe(true);
 
       // Wait for TTL to expire
-      await new Promise((resolve) =>
+      await new Promise(resolve =>
         setTimeout(resolve, config.cache.email.searchTtl + 100),
       );
 
@@ -234,12 +234,12 @@ describe("Integration Tests", () => {
       // Verify tool structure and integration
       expect(
         emailTools.every(
-          (tool) => tool.name && tool.description && tool.inputSchema,
+          tool => tool.name && tool.description && tool.inputSchema,
         ),
       ).toBe(true);
       expect(
         calendarTools.every(
-          (tool) => tool.name && tool.description && tool.inputSchema,
+          tool => tool.name && tool.description && tool.inputSchema,
         ),
       ).toBe(true);
 

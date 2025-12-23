@@ -59,7 +59,9 @@ class MockTransporter {
 // Mock nodemailer
 vi.mock("nodemailer", () => ({
   default: {
-    createTransport: vi.fn(function() { return new MockTransporter(); }),
+    createTransport: vi.fn(function () {
+      return new MockTransporter();
+    }),
   },
 }));
 
