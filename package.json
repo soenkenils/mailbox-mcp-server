@@ -41,25 +41,25 @@
     "@biomejs/biome": "2.3.2",
     "@types/dotenv": "^6.1.1",
     "@types/mailparser": "^3.4.6",
-    "@types/node": "^24.9.2",
+    "@types/node": "^24.10.4",
     "@types/node-fetch": "^2.6.13",
     "dotenv": "^16.6.1",
-    "tsx": "^4.20.6",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.5",
-    "@vitest/coverage-v8": "4.0.5"
+    "vitest": "^4.0.16",
+    "@vitest/coverage-v8": "^4.0.16"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.2",
-    "@types/nodemailer": "^7.0.3",
-    "dayjs": "^1.11.18",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@types/nodemailer": "^7.0.4",
+    "dayjs": "^1.11.19",
     "ical.js": "^2.2.1",
-    "imapflow": "^1.1.1",
-    "mailparser": "^3.7.5",
+    "imapflow": "^1.2.3",
+    "mailparser": "^3.9.1",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^7.0.10",
-    "tsdav": "^2.1.5",
-    "valibot": "^1.1.0"
+    "nodemailer": "^7.0.12",
+    "tsdav": "^2.1.6",
+    "valibot": "^1.2.0"
   },
   "directories": {
     "doc": "docs",
