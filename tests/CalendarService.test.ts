@@ -30,10 +30,6 @@ class TestableCalendarService extends CalendarService {
   }
 
   // Expose private methods for branch coverage testing
-  public testIsConnectionError(error: unknown): boolean {
-    return (this as any).isConnectionError(error);
-  }
-
   public testFilterEventsByQuery(events: any[], query?: string): any[] {
     return (this as any).filterEventsByQuery(events, query);
   }
@@ -507,34 +503,6 @@ describe("CalendarService", () => {
   });
 
   // Phase 1: Branch Coverage Tests - Data-Driven Testing
-  describe("isConnectionError - branch coverage", () => {
-    it.each([
-      ["connection failed", true],
-      ["timeout occurred", true],
-      ["ECONNRESET", true],
-      ["ENOTFOUND domain", true],
-      ["ECONNREFUSED by server", true],
-      ["Circuit breaker is open", true],
-      ["invalid credentials", false],
-      ["permission denied", false],
-      ["unknown error", false],
-    ])("should detect '%s' as connection error: %s", (message, expected) => {
-      const error = new Error(message);
-      expect(calendarService.testIsConnectionError(error)).toBe(expected);
-    });
-
-    it.each([
-      ["string", "error message"],
-      ["number", 123],
-      ["null", null],
-      ["undefined", undefined],
-      ["object", { message: "error" }],
-      ["array", ["error"]],
-    ])("should return false for non-Error type: %s", (type, value) => {
-      expect(calendarService.testIsConnectionError(value)).toBe(false);
-    });
-  });
-
   describe("filterEventsByQuery - branch coverage", () => {
     const events = [
       {

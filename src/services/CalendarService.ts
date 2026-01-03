@@ -15,6 +15,7 @@ import {
   type CircuitBreakerMetrics,
 } from "./CircuitBreaker.js";
 import { createLogger } from "./Logger.js";
+import { withCacheFallback } from "../utils/cacheFallback.js";
 
 export class CalendarService {
   private connection: CalDavConnection;
@@ -61,70 +62,43 @@ export class CalendarService {
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
     const cacheKey = `calendar_events:${JSON.stringify(options)}`;
-    const cached = this.cache.get<CalendarEvent[]>(cacheKey);
 
-    if (cached) {
-      return cached;
-    }
-
-    // Try to get fresh data, fallback to stale cache on connection failure
-    try {
-      const events = await this.fetchCalendarEvents(options);
-      this.cache.set(cacheKey, events, 900000); // 15 minutes TTL
-      return events;
-    } catch (error) {
-      // Fallback: Return stale cache if available
-      if (this.isConnectionError(error)) {
-        const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
-        if (staleEvents) {
-          this.logger.warning(
-            "Returning stale calendar events due to connection failure",
-            {
-              operation: "getCalendarEvents",
-              service: "CalendarService",
-            },
-          );
-          return staleEvents;
-        }
-      }
-      throw error;
-    }
+    return withCacheFallback({
+      cacheKey,
+      cache: this.cache,
+      fetch: async () => {
+        const events = await this.fetchCalendarEvents(options);
+        return events;
+      },
+      defaultValue: [],
+      logger: this.logger,
+      operation: "getCalendarEvents",
+      service: "CalendarService",
+      ttl: 900000, // 15 minutes TTL
+      logContext: { options },
+    });
   }
 
   async searchCalendar(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
     const cacheKey = `calendar_search:${JSON.stringify(options)}`;
-    const cached = this.cache.get<CalendarEvent[]>(cacheKey);
 
-    if (cached) {
-      return cached;
-    }
-
-    // Try to get fresh data, fallback to stale cache on connection failure
-    try {
-      const events = await this.fetchCalendarEvents(options);
-      const filteredEvents = this.filterEventsByQuery(events, options.query);
-
-      this.cache.set(cacheKey, filteredEvents, 900000); // 15 minutes TTL
-      return filteredEvents;
-    } catch (error) {
-      // Fallback: Return stale cache if available
-      if (this.isConnectionError(error)) {
-        const staleEvents = this.tryGetStaleCache<CalendarEvent[]>(cacheKey);
-        if (staleEvents) {
-          this.logger.warning(
-            "Returning stale calendar search results due to connection failure",
-            {
-              operation: "searchCalendar",
-              service: "CalendarService",
-            },
-          );
-          return staleEvents;
-        }
-      }
-      throw error;
-    }
+    return withCacheFallback({
+      cacheKey,
+      cache: this.cache,
+      fetch: async () => {
+        const events = await this.fetchCalendarEvents(options);
+        const filteredEvents = this.filterEventsByQuery(events, options.query);
+        return filteredEvents;
+      },
+      defaultValue: [],
+      logger: this.logger,
+      operation: "searchCalendar",
+      service: "CalendarService",
+      ttl: 900000, // 15 minutes TTL
+      logContext: { query: options.query },
+    });
   }
 
   async getFreeBusy(
@@ -133,40 +107,36 @@ export class CalendarService {
     calendar?: string,
   ): Promise<FreeBusyInfo> {
     const cacheKey = `freebusy:${start.toISOString()}:${end.toISOString()}:${calendar || "all"}`;
-    const cached = this.cache.get<FreeBusyInfo>(cacheKey);
 
-    if (cached) {
-      return cached;
-    }
+    return withCacheFallback({
+      cacheKey,
+      cache: this.cache,
+      fetch: async () => {
+        const events = await this.fetchCalendarEvents({
+          start,
+          end,
+          calendar,
+        });
 
-    // Try to get fresh data, fallback to stale cache on connection failure
-    try {
-      const events = await this.fetchCalendarEvents({
+        const freeBusy = this.calculateFreeBusy(events, start, end);
+        return freeBusy;
+      },
+      defaultValue: {
         start,
         end,
+        busy: [],
+        free: [{ start, end }],
+      },
+      logger: this.logger,
+      operation: "getFreeBusy",
+      service: "CalendarService",
+      ttl: 300000, // 5 minutes TTL
+      logContext: {
+        start: start.toISOString(),
+        end: end.toISOString(),
         calendar,
-      });
-
-      const freeBusy = this.calculateFreeBusy(events, start, end);
-      this.cache.set(cacheKey, freeBusy, 300000); // 5 minutes TTL
-      return freeBusy;
-    } catch (error) {
-      // Fallback: Return stale cache if available
-      if (this.isConnectionError(error)) {
-        const staleFreeBusy = this.tryGetStaleCache<FreeBusyInfo>(cacheKey);
-        if (staleFreeBusy) {
-          this.logger.warning(
-            "Returning stale free/busy info due to connection failure",
-            {
-              operation: "getFreeBusy",
-              service: "CalendarService",
-            },
-          );
-          return staleFreeBusy;
-        }
-      }
-      throw error;
-    }
+      },
+    });
   }
 
   private async fetchCalendarEvents(
@@ -603,26 +573,6 @@ export class CalendarService {
     }
 
     return { start, end, busy, free };
-  }
-
-  private isConnectionError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-      return false;
-    }
-    const message = error.message.toLowerCase();
-    return (
-      message.includes("connection") ||
-      message.includes("timeout") ||
-      message.includes("econnreset") ||
-      message.includes("enotfound") ||
-      message.includes("econnrefused") ||
-      message.includes("circuit breaker is open")
-    );
-  }
-
-  private tryGetStaleCache<T>(key: string): T | null {
-    // Try to get data from cache even if expired
-    return this.cache.getStale<T>(key);
   }
 
   // Get circuit breaker metrics

@@ -179,56 +179,6 @@ describe("EmailService - Advanced Coverage", () => {
     });
   });
 
-  describe("isConnectionError", () => {
-    it("should return false for non-Error objects", () => {
-      expect(service.isConnectionError("string error")).toBe(false);
-      expect(service.isConnectionError(null)).toBe(false);
-      expect(service.isConnectionError(undefined)).toBe(false);
-      expect(service.isConnectionError(42)).toBe(false);
-      expect(service.isConnectionError({})).toBe(false);
-    });
-
-    it("should return true for error with 'connection' in message", () => {
-      const error = new Error("Connection failed");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return true for error with 'timeout' in message", () => {
-      const error = new Error("Request timeout");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return true for error with 'econnreset' in message", () => {
-      const error = new Error("Network error: ECONNRESET");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return true for error with 'enotfound' in message", () => {
-      const error = new Error("Host ENOTFOUND");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return true for error with 'econnrefused' in message", () => {
-      const error = new Error("ECONNREFUSED by server");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return true for error with 'circuit breaker is open' in message", () => {
-      const error = new Error("Circuit breaker is open");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-
-    it("should return false for other error messages", () => {
-      const error = new Error("Invalid credentials");
-      expect(service.isConnectionError(error)).toBe(false);
-    });
-
-    it("should be case insensitive", () => {
-      const error = new Error("CONNECTION FAILED");
-      expect(service.isConnectionError(error)).toBe(true);
-    });
-  });
-
   describe("getDefaultFolders", () => {
     it("should return standard IMAP folders", () => {
       const folders = service.getDefaultFolders();
@@ -387,28 +337,6 @@ describe("EmailService - Advanced Coverage", () => {
 
       expect(content).toContain("Subject: Test Subject");
       expect(content.endsWith("\r\n\r\n")).toBe(true);
-    });
-  });
-
-  describe("tryGetStaleCache", () => {
-    it("should return stale cache data when available", () => {
-      const staleData = { value: "stale" };
-      const mockGetStale = vi.fn().mockReturnValue(staleData);
-      (service as any).cache.getStale = mockGetStale;
-
-      const result = service.tryGetStaleCache<typeof staleData>("test-key");
-
-      expect(result).toEqual(staleData);
-      expect(mockGetStale).toHaveBeenCalledWith("test-key");
-    });
-
-    it("should return null when no stale data available", () => {
-      const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.getStale = mockGetStale;
-
-      const result = service.tryGetStaleCache<any>("test-key");
-
-      expect(result).toBeNull();
     });
   });
 
@@ -1138,7 +1066,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       expect(result).toEqual(staleFolders);
       expect(mockLogger.warning).toHaveBeenCalledWith(
-        "Returning stale cached folders due to connection failure",
+        "Returning stale cached data due to connection failure",
         expect.any(Object),
         expect.any(Object),
       );
@@ -1168,7 +1096,8 @@ describe("EmailService - Advanced Coverage", () => {
         "Trash",
       ]);
       expect(mockLogger.warning).toHaveBeenCalledWith(
-        "Returning default folders due to connection failure",
+        "No cached data available, returning default value due to connection failure",
+        expect.any(Object),
         expect.any(Object),
       );
     });

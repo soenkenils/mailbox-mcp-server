@@ -57,6 +57,7 @@ import {
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
 import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
+import { withCacheFallback } from "../utils/cacheFallback.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
@@ -83,119 +84,54 @@ export class EmailService {
 
   async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
     const cacheKey = `email_search:${JSON.stringify(options)}`;
-    const cached = this.cache.get<EmailMessage[]>(cacheKey);
 
-    if (cached) {
-      return cached;
-    }
+    return withCacheFallback({
+      cacheKey,
+      cache: this.cache,
+      fetch: async () => {
+        const folder = options.folder || "INBOX";
+        let wrapper: ImapConnectionWrapper | null = null;
 
-    // Try to get fresh data, fallback to stale cache on connection failure
-    try {
-      const folder = options.folder || "INBOX";
-      let wrapper: ImapConnectionWrapper | null = null;
-
-      try {
-        wrapper = await this.pool.acquireForFolder(folder);
-        const messages = await this.performEmailSearch(wrapper, options);
-
-        this.cache.set(cacheKey, messages, 300000); // 5 minutes TTL
-        return messages;
-      } finally {
-        if (wrapper) {
-          await this.pool.releaseFromFolder(wrapper);
+        try {
+          wrapper = await this.pool.acquireForFolder(folder);
+          const messages = await this.performEmailSearch(wrapper, options);
+          return messages;
+        } finally {
+          if (wrapper) {
+            await this.pool.releaseFromFolder(wrapper);
+          }
         }
-      }
-    } catch (error) {
-      const context: ErrorContext = {
-        operation: "searchEmails",
-        service: "EmailService",
-        details: { folder: options.folder, query: options.query },
-      };
-
-      await this.logger.error(
-        "Error searching emails",
-        {
-          operation: "searchEmails",
-          service: "EmailService",
-        },
-        {
-          error: error instanceof Error ? error.message : String(error),
-          options,
-        },
-      );
-
-      // Convert to structured error
-      const mcpError = ErrorUtils.toMCPError(error as Error, context);
-
-      // Fallback: Try to return stale cached data if available for connection errors
-      if (mcpError instanceof ConnectionError) {
-        const staleData = this.tryGetStaleCache<EmailMessage[]>(cacheKey);
-        if (staleData) {
-          await this.logger.warning(
-            "Returning stale cached data due to connection failure",
-            {
-              operation: "searchEmails",
-              service: "EmailService",
-            },
-            { cacheKey },
-          );
-          return staleData;
-        }
-
-        // Return empty results if no cache available for connection errors
-        await this.logger.warning(
-          "No cached data available, returning empty results due to connection failure",
-          {
-            operation: "searchEmails",
-            service: "EmailService",
-          },
-        );
-        return [];
-      }
-
-      throw mcpError;
-    }
+      },
+      defaultValue: [],
+      logger: this.logger,
+      operation: "searchEmails",
+      service: "EmailService",
+      ttl: 300000, // 5 minutes TTL
+      logContext: { folder: options.folder, query: options.query },
+    });
   }
 
   async getEmail(uid: number, folder = "INBOX"): Promise<EmailMessage | null> {
     const cacheKey = `email:${folder}:${uid}`;
-    const cached = this.cache.get<EmailMessage>(cacheKey);
-
-    if (cached) {
-      return cached;
-    }
-
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      wrapper = await this.pool.acquireForFolder(folder);
-      const message = await this.fetchEmailByUid(wrapper, uid, folder);
-
-      if (message) {
-        this.cache.set(cacheKey, message, 600000); // 10 minutes TTL
-      }
-
-      return message;
-    } catch (error) {
-      const context: ErrorContext = {
+      return await withCacheFallback({
+        cacheKey,
+        cache: this.cache,
+        fetch: async () => {
+          wrapper = await this.pool.acquireForFolder(folder);
+          const message = await this.fetchEmailByUid(wrapper, uid, folder);
+          return message;
+        },
+        defaultValue: null,
+        logger: this.logger,
         operation: "getEmail",
         service: "EmailService",
-        details: { uid, folder },
-      };
-
-      await this.logger.error(
-        `Error fetching email UID ${uid}`,
-        {
-          operation: "getEmail",
-          service: "EmailService",
-        },
-        {
-          uid,
-          folder,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-
+        ttl: 600000, // 10 minutes TTL
+        logContext: { uid, folder },
+      });
+    } catch (error) {
       // Mark connection as unhealthy if fetch operation timed out
       if (
         wrapper &&
@@ -212,38 +148,7 @@ export class EmailService {
           { uid, folder },
         );
       }
-
-      // Convert to structured error
-      const mcpError = ErrorUtils.toMCPError(error as Error, context);
-
-      // Fallback: Try to return stale cached data if available for connection errors
-      if (mcpError instanceof ConnectionError) {
-        const staleData = this.tryGetStaleCache<EmailMessage>(cacheKey);
-        if (staleData) {
-          await this.logger.warning(
-            `Returning stale cached email UID ${uid} due to connection failure`,
-            {
-              operation: "getEmail",
-              service: "EmailService",
-            },
-            { uid, folder, cacheKey },
-          );
-          return staleData;
-        }
-
-        // For connection errors, return null instead of throwing
-        await this.logger.warning(
-          `Email UID ${uid} not available due to connection failure`,
-          {
-            operation: "getEmail",
-            service: "EmailService",
-          },
-          { uid, folder },
-        );
-        return null;
-      }
-
-      throw mcpError;
+      throw error;
     } finally {
       if (wrapper) {
         await this.pool.releaseFromFolder(wrapper);
@@ -742,65 +647,32 @@ export class EmailService {
 
   async getFolders(): Promise<EmailFolder[]> {
     const cacheKey = "email_folders";
-    const cached = this.cache.get<EmailFolder[]>(cacheKey);
-
-    if (cached) {
-      return cached;
-    }
-
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      wrapper = await this.pool.acquire();
-      const folders = await wrapper.connection.list();
+      return await withCacheFallback({
+        cacheKey,
+        cache: this.cache,
+        fetch: async () => {
+          wrapper = await this.pool.acquire();
+          const folders = await wrapper.connection.list();
 
-      const result = folders.map(folder => ({
-        name: folder.name,
-        path: folder.path,
-        delimiter: folder.delimiter || "/",
-        flags: Array.isArray(folder.flags) ? folder.flags : [],
-        specialUse: folder.specialUse,
-      }));
+          const result = folders.map(folder => ({
+            name: folder.name,
+            path: folder.path,
+            delimiter: folder.delimiter || "/",
+            flags: Array.isArray(folder.flags) ? folder.flags : [],
+            specialUse: folder.specialUse,
+          }));
 
-      this.cache.set(cacheKey, result, 900000); // Cache for 15 minutes
-      return result;
-    } catch (error) {
-      await this.logger.error(
-        "Error fetching folders",
-        {
-          operation: "getFolders",
-          service: "EmailService",
+          return result;
         },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-
-      // Fallback: Try to return stale cached data
-      const staleData = this.tryGetStaleCache<EmailFolder[]>(cacheKey);
-      if (staleData) {
-        await this.logger.warning(
-          "Returning stale cached folders due to connection failure",
-          {
-            operation: "getFolders",
-            service: "EmailService",
-          },
-          { cacheKey },
-        );
-        return staleData;
-      }
-
-      // Fallback: Return standard folder list if no cache available
-      if (this.isConnectionError(error)) {
-        await this.logger.warning(
-          "Returning default folders due to connection failure",
-          {
-            operation: "getFolders",
-            service: "EmailService",
-          },
-        );
-        return this.getDefaultFolders();
-      }
-
-      throw error;
+        defaultValue: this.getDefaultFolders(),
+        logger: this.logger,
+        operation: "getFolders",
+        service: "EmailService",
+        ttl: 900000, // Cache for 15 minutes
+      });
     } finally {
       if (wrapper) {
         await this.pool.release(wrapper);
@@ -1130,27 +1002,6 @@ export class EmailService {
     for (const key of keysToDelete) {
       this.cache.delete(key);
     }
-  }
-
-  private tryGetStaleCache<T>(key: string): T | null {
-    // Try to get data from cache even if expired
-    return this.cache.getStale<T>(key);
-  }
-
-  private isConnectionError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-      return false;
-    }
-
-    const message = error.message.toLowerCase();
-    return (
-      message.includes("connection") ||
-      message.includes("timeout") ||
-      message.includes("econnreset") ||
-      message.includes("enotfound") ||
-      message.includes("econnrefused") ||
-      message.includes("circuit breaker is open")
-    );
   }
 
   private getDefaultFolders(): EmailFolder[] {
