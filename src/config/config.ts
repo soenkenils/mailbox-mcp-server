@@ -1,6 +1,5 @@
 import * as v from "valibot";
 import type { ConnectionPoolConfig } from "../services/ConnectionPool.js";
-import { DynamicPoolManager } from "../services/DynamicPoolManager.js";
 import type { CacheConfig } from "../types/cache.types.js";
 import type { CalDavConnection } from "../types/calendar.types.js";
 import type { ImapConnection, SmtpConnection } from "../types/email.types.js";
@@ -254,26 +253,23 @@ export function loadConfig(): ServerConfig {
       },
       pools: {
         imap: {
-          // Use dynamic pool configuration with environment overrides
-          ...DynamicPoolManager.getRecommendedConfig("imap"),
-          // Allow environment variable overrides for specific values
-          maxConnections:
-            validatedEnv.POOL_MAX_CONNECTIONS ||
-            DynamicPoolManager.getRecommendedConfig("imap").maxConnections,
-          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
+          minConnections: 1,
+          maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 3,
+          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 3000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
+          maxRetries: 5,
+          retryDelayMs: 200,
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
         smtp: {
-          // Use dynamic pool configuration with environment overrides
-          ...DynamicPoolManager.getRecommendedConfig("smtp"),
-          // Allow environment variable overrides for specific values
+          minConnections: 1,
           maxConnections: validatedEnv.POOL_MAX_CONNECTIONS
             ? Math.min(5, validatedEnv.POOL_MAX_CONNECTIONS)
-            : // Cap SMTP at 5 even with env override
-              DynamicPoolManager.getRecommendedConfig("smtp").maxConnections,
-          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
+            : 2,
+          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 3000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
+          maxRetries: 5,
+          retryDelayMs: 200,
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
       },

@@ -1,8 +1,11 @@
 # CLAUDE.md
 
+ALWAYS verify your changes by running the tests with `bun run test`!
+
 ## Project Overview
 
 This is a Model Context Protocol (MCP) server for mailbox.org integration, providing:
+
 - IMAP email access and management
 - SMTP email sending
 - CalDAV calendar operations

@@ -9,10 +9,6 @@ import {
 
 import { loadConfig, type ServerConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
-import {
-  type DynamicPoolConfig,
-  dynamicPoolManager,
-} from "./services/DynamicPoolManager.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";
 import { createLogger, LogLevel, logger } from "./services/Logger.js";
@@ -154,17 +150,6 @@ class MailboxMcpServer {
       this.calendarService = new CalendarService(
         this.config.calendar,
         this.cache,
-      );
-
-      // Register pools with dynamic pool manager for adaptive scaling
-      // Type assertion needed due to interface compatibility between ConnectionPoolConfig and DynamicPoolConfig
-      dynamicPoolManager.registerPool(
-        "imap",
-        this.config.pools.imap as unknown as DynamicPoolConfig,
-      );
-      dynamicPoolManager.registerPool(
-        "smtp",
-        this.config.pools.smtp as unknown as DynamicPoolConfig,
       );
 
       this.logger.info(
