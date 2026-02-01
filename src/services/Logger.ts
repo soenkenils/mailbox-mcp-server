@@ -72,6 +72,53 @@ export interface LogEntry {
 }
 
 /**
+ * Common interface for logging functionality
+ * Implemented by both Logger and ChildLogger
+ */
+export interface LoggerLike {
+  debug(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  info(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  notice(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  warning(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  error(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  critical(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  alert(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+  emergency(
+    message: string,
+    context?: LogContext,
+    data?: Record<string, unknown>,
+  ): void;
+}
+
+/**
  * Logger configuration
  */
 export interface LoggerConfig {

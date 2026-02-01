@@ -50,6 +50,7 @@ import {
   type ErrorContext,
   ErrorUtils,
 } from "../types/errors.js";
+import { withCacheFallback } from "../utils/cacheFallback.js";
 import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
@@ -57,7 +58,6 @@ import {
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
 import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
@@ -138,7 +138,7 @@ export class EmailService {
         error instanceof Error &&
         error.message.includes("timed out")
       ) {
-        wrapper.isHealthy = false;
+        (wrapper as ImapConnectionWrapper).isHealthy = false;
         await this.logger.warning(
           "Marking connection as unhealthy due to timeout",
           {
@@ -657,11 +657,15 @@ export class EmailService {
           wrapper = await this.pool.acquire();
           const folders = await wrapper.connection.list();
 
-          const result = folders.map(folder => ({
+          const result: EmailFolder[] = folders.map(folder => ({
             name: folder.name,
             path: folder.path,
             delimiter: folder.delimiter || "/",
-            flags: Array.isArray(folder.flags) ? folder.flags : [],
+            flags: Array.isArray(folder.flags)
+              ? folder.flags
+              : folder.flags instanceof Set
+                ? Array.from(folder.flags)
+                : [],
             specialUse: folder.specialUse,
           }));
 

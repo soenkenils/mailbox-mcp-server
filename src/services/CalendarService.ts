@@ -9,13 +9,13 @@ import type {
   CalendarSearchOptions,
   FreeBusyInfo,
 } from "../types/calendar.types.js";
+import { withCacheFallback } from "../utils/cacheFallback.js";
 import {
   CircuitBreaker,
   type CircuitBreakerConfig,
   type CircuitBreakerMetrics,
 } from "./CircuitBreaker.js";
 import { createLogger } from "./Logger.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
 
 export class CalendarService {
   private connection: CalDavConnection;

@@ -1,6 +1,6 @@
+import type { LoggerLike } from "../services/Logger.js";
 import type { LocalCache } from "../types/cache.types.js";
 import { ConnectionError } from "../types/errors.js";
-import type { Logger } from "../services/Logger.js";
 
 /**
  * Options for cache fallback operations
@@ -29,7 +29,7 @@ export interface CacheFallbackOptions<T> {
   /**
    * Logger instance for logging warnings and errors
    */
-  logger: Logger;
+  logger: LoggerLike;
 
   /**
    * Operation name for logging context
