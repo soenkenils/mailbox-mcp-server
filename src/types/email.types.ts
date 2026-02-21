@@ -5,6 +5,16 @@ export interface EmailSearchOptions {
   before?: Date;
   limit?: number;
   offset?: number;
+  /** Filter by \Seen flag: true = seen/read, false = unseen/unread */
+  seen?: boolean;
+  /** Filter by \Answered flag: true = replied, false = not replied */
+  answered?: boolean;
+  /** Filter by \Flagged flag: true = flagged/starred, false = not flagged */
+  flagged?: boolean;
+  /** Filter by \Draft flag: true = drafts, false = not drafts */
+  draft?: boolean;
+  /** Filter by \Deleted flag: true = deleted, false = not deleted */
+  deleted?: boolean;
 }
 
 export interface EmailMessage {

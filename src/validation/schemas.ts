@@ -181,6 +181,11 @@ export const searchEmailsSchema = v.object({
   before: v.optional(dateSchema),
   limit: v.optional(limitSchema, 50),
   offset: v.optional(offsetSchema, 0),
+  seen: v.optional(v.boolean("seen must be a boolean")),
+  answered: v.optional(v.boolean("answered must be a boolean")),
+  flagged: v.optional(v.boolean("flagged must be a boolean")),
+  draft: v.optional(v.boolean("draft must be a boolean")),
+  deleted: v.optional(v.boolean("deleted must be a boolean")),
 });
 
 export const getEmailSchema = v.object({
