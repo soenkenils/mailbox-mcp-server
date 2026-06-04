@@ -63,7 +63,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 2. Copy the example environment file and update it with your credentials:
 
    ```bash
-   cp env.example .env
+   cp .env.example .env
    ```
 
    > **Note**: For security, it's recommended to use an [App Password](https://support.mailbox.org/en/help/app-passwords) instead of your main account password.
@@ -106,6 +106,63 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
      }
    }
    ```
+
+## Docker
+
+Docker keeps the default MCP transport on stdio. Start by copying the sample environment file, editing your mailbox.org credentials, and building the image:
+
+```bash
+cp .env.example .env
+# Edit .env with your mailbox.org credentials
+docker compose build
+```
+
+For Claude Desktop, use an interactive stdio-safe container command. Replace the env file path with the absolute path to your local checkout:
+
+```json
+{
+  "mcpServers": {
+    "mailbox-mcp-server": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/mailbox-mcp-server/.env",
+        "mailbox-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+For production-style local runs, layer the production override onto the base compose file. It keeps the stdio service name `mailbox-mcp` and adds restart, logging, and resource settings:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+For development, layer the dev override instead. It uses the Dockerfile builder target, runs `bun run dev`, and mounts `./src:/app/src:ro` for source hot reload without replacing container dependencies:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+HTTP/SSE access is available through the optional `mailbox-mcp-http` service, which wraps `node dist/main.js` with `supergateway@3.4.3` rather than changing the TypeScript app transport. Enable it with the `http` profile; clients can use `http://localhost:8000/sse` for SSE and `http://localhost:8000/message` for messages by default. Set `SUPERGATEWAY_PORT` in `.env` to publish and serve a different local port:
+
+```bash
+docker compose --profile http up -d --wait
+```
+
+For machine-specific settings, copy either override file to `docker-compose.override.yml` and edit that local file:
+
+```bash
+cp docker-compose.prod.yml docker-compose.override.yml
+cp docker-compose.dev.yml docker-compose.override.yml
+```
+
+Compose auto-loads `docker-compose.override.yml`, and the file is gitignored so local Docker changes stay out of commits. Keep secrets in `.env`; use `.env.example` only as the reference template instead of duplicating its contents here.
 
 ## Available Tools
 
