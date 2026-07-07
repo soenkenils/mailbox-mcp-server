@@ -1,0 +1,47 @@
+services:
+  mailbox-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mailbox-mcp-server:latest
+    stdin_open: true
+    tty: false
+    env_file:
+      - path: .env
+        required: false
+
+  mailbox-mcp-http:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mailbox-mcp-server:latest
+    profiles:
+      - http
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${SUPERGATEWAY_PORT:-8000}:${SUPERGATEWAY_PORT:-8000}"
+    entrypoint:
+      - supergateway
+    command:
+      - --stdio
+      - node dist/main.js
+      - --port
+      - "${SUPERGATEWAY_PORT:-8000}"
+      - --ssePath
+      - /sse
+      - --messagePath
+      - /message
+      - --baseUrl
+      - "http://localhost:${SUPERGATEWAY_PORT:-8000}"
+      - --healthEndpoint
+      - /healthz
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- http://127.0.0.1:${SUPERGATEWAY_PORT:-8000}/healthz | grep -q '^ok$'"
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
