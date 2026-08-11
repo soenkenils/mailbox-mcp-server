@@ -273,6 +273,74 @@ describe("EmailService", () => {
       expect(result).toBeDefined();
       expect(result).toEqual({ since: new Date("2025-05-31T00:00:00Z") });
     });
+
+    it("should build seen flag criteria", () => {
+      const result = buildSearchCriteria({ seen: true });
+      expect(result).toEqual({ seen: true });
+    });
+
+    it("should build unseen flag criteria", () => {
+      const result = buildSearchCriteria({ seen: false });
+      expect(result).toEqual({ seen: false });
+    });
+
+    it("should build answered flag criteria", () => {
+      const result = buildSearchCriteria({ answered: true });
+      expect(result).toEqual({ answered: true });
+    });
+
+    it("should build flagged flag criteria", () => {
+      const result = buildSearchCriteria({ flagged: true });
+      expect(result).toEqual({ flagged: true });
+    });
+
+    it("should build draft flag criteria", () => {
+      const result = buildSearchCriteria({ draft: true });
+      expect(result).toEqual({ draft: true });
+    });
+
+    it("should build deleted flag criteria", () => {
+      const result = buildSearchCriteria({ deleted: false });
+      expect(result).toEqual({ deleted: false });
+    });
+
+    it("should combine flag criteria with date and query filters", () => {
+      const since = new Date("2024-01-01");
+      const result = buildSearchCriteria({
+        query: "important",
+        since,
+        seen: false,
+        flagged: true,
+      });
+      expect(result).toEqual({
+        since,
+        or: [{ subject: "important" }, { body: "important" }],
+        seen: false,
+        flagged: true,
+      });
+    });
+
+    it("should combine multiple flag criteria", () => {
+      const result = buildSearchCriteria({
+        seen: false,
+        answered: false,
+        flagged: true,
+      });
+      expect(result).toEqual({
+        seen: false,
+        answered: false,
+        flagged: true,
+      });
+    });
+
+    it("should not include flag criteria when undefined", () => {
+      const result = buildSearchCriteria({ seen: true });
+      expect(result).toEqual({ seen: true });
+      expect(result).not.toHaveProperty("answered");
+      expect(result).not.toHaveProperty("flagged");
+      expect(result).not.toHaveProperty("draft");
+      expect(result).not.toHaveProperty("deleted");
+    });
   });
 
   describe("applyInMemoryFilters", () => {
