@@ -15,6 +15,7 @@ export class SieveService {
   private authenticated = false;
   private capabilities: SieveCapabilities | null = null;
   private buffer = "";
+  private responseLines: string[] = [];
   private pendingCommand: {
     resolve: (response: SieveResponse) => void;
     reject: (error: Error) => void;
@@ -235,14 +236,16 @@ export class SieveService {
       );
     }
 
-    return response.data as string;
+    // Strip the ManageSieve literal header ("{1234}" or "{1234+}") that
+    // precedes the script body.
+    return (response.data as string).replace(/^\{\d+\+?\}\r?\n/, "");
   }
 
   async putScript(name: string, content: string): Promise<void> {
     await this.ensureAuthenticated();
 
     const response = await this.sendCommand(
-      `PUTSCRIPT "${name}" {${content.length}}\r\n${content}`,
+      `PUTSCRIPT "${name}" {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
     );
     if (!response.success) {
       throw new SieveError(
@@ -280,7 +283,7 @@ export class SieveService {
     await this.ensureAuthenticated();
 
     const response = await this.sendCommand(
-      `CHECKSCRIPT {${content.length}}\r\n${content}`,
+      `CHECKSCRIPT {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
     );
     if (!response.success) {
       throw new SieveError(
@@ -529,6 +532,7 @@ export class SieveService {
         },
       };
 
+      this.responseLines = [];
       this.socket?.write(`${command}\r\n`);
     });
   }
@@ -548,27 +552,34 @@ export class SieveService {
   private processResponseLine(line: string): void {
     // For capabilities and multi-line responses, we need to collect all data
     if (line.startsWith("OK ")) {
-      // For capabilities response, include all collected buffer data
-      const data = this.buffer.split("\r\n").slice(0, -1).join("\r\n");
+      // Multi-line responses (LISTSCRIPTS, CAPABILITY, GETSCRIPT) may arrive
+      // in several TCP chunks: use the lines collected since the last command.
+      const data = this.responseLines.join("\r\n");
+      this.responseLines = [];
       this.resolveCommand({
         success: true,
         message: line.substring(3),
         data: data,
       });
     } else if (line.startsWith("NO ")) {
+      this.responseLines = [];
       this.resolveCommand({
         success: false,
         code: "NO",
         message: line.substring(3),
       });
     } else if (line.startsWith("BYE ")) {
+      this.responseLines = [];
       this.resolveCommand({
         success: false,
         code: "BYE",
         message: line.substring(4),
       });
     }
-    // For other lines, they are part of the response data (like capabilities)
+    else {
+      // Part of a multi-line response (script names, capabilities, script body)
+      this.responseLines.push(line);
+    }
   }
 
   private resolveCommand(response: SieveResponse): void {
@@ -842,7 +853,28 @@ export class SieveService {
             operation: "upgradeToTLS",
             service: "SieveService",
           });
-          resolve();
+
+          // RFC 5804 §2.2: after a successful STARTTLS the server re-sends its
+          // capabilities followed by an OK line. Consume that response before
+          // resolving, otherwise it is mistaken for the reply to the next
+          // command (AUTHENTICATE) and every later response is shifted by one.
+          this.responseLines = [];
+          const postTlsTimeout = setTimeout(() => {
+            this.pendingCommand = null;
+            reject(new SieveError("Timeout waiting for post-STARTTLS capabilities"));
+          }, 10000);
+          this.pendingCommand = {
+            resolve: () => {
+              clearTimeout(postTlsTimeout);
+              this.pendingCommand = null;
+              resolve();
+            },
+            reject: (error: Error) => {
+              clearTimeout(postTlsTimeout);
+              this.pendingCommand = null;
+              reject(error);
+            },
+          };
         });
 
         tlsSocket.on("error", error => {
