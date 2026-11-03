@@ -233,7 +233,7 @@ export function loadConfig(): ServerConfig {
       },
       sieve: {
         host: validatedEnv.MAILBOX_SIEVE_HOST || "imap.mailbox.org",
-        port: validatedEnv.MAILBOX_SIEVE_PORT || 2000,
+        port: validatedEnv.MAILBOX_SIEVE_PORT || 4190,
         secure: validatedEnv.MAILBOX_SIEVE_SECURE === "true",
         user: email,
         password: password,
