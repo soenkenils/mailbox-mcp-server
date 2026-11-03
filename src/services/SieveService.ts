@@ -378,6 +378,12 @@ export class SieveService {
     } catch (error) {
       this.authenticated = false;
       const errorMsg = error instanceof Error ? error.message : String(error);
+      if (!this.tlsActive) {
+        // A failed or refused TLS upgrade leaves the connection in an
+        // undefined state; close it right away instead of sending LOGOUT
+        // over it and waiting for a timeout.
+        this.teardown(errorMsg);
+      }
       this.logger.error(
         "Authentication failed",
         {
@@ -565,6 +571,11 @@ export class SieveService {
       } else {
         this.queue.push(response);
       }
+      if (response.code === "BYE") {
+        // BYE means the server is closing the session; never reuse it
+        this.teardown("Server closed the session (BYE)");
+        return;
+      }
     }
   }
 
@@ -638,6 +649,12 @@ export class SieveService {
     // ManageSieve is sequential: one command at a time
     if (this.waiter) {
       throw new SieveError("Another command is already in progress");
+    }
+    // A response nobody asked for would be taken as the answer to this
+    // command; treat it as a protocol error instead.
+    if (this.queue.length > 0) {
+      this.teardown("Unexpected response from server");
+      throw new SieveError("Protocol error: unexpected response from server");
     }
     const pending = this.nextResponse(
       SieveService.COMMAND_TIMEOUT_MS,
@@ -720,33 +737,37 @@ export class SieveService {
     plain.removeAllListeners("close");
 
     return new Promise((resolve, reject) => {
+      let tlsSocket: ReturnType<typeof tlsConnect> | undefined;
       const timeout = setTimeout(() => {
+        tlsSocket?.destroy();
+        plain.destroy();
         reject(new SieveError("TLS upgrade timeout"));
       }, 10000);
 
       try {
-        const tlsSocket = tlsConnect({
+        const upgraded = tlsConnect({
           socket: plain as Socket,
           servername: this.config.host,
           rejectUnauthorized: true,
         });
-        this.attachDataHandler(tlsSocket);
+        tlsSocket = upgraded;
+        this.attachDataHandler(upgraded);
 
-        tlsSocket.once("secureConnect", () => {
+        upgraded.once("secureConnect", () => {
           clearTimeout(timeout);
-          this.socket = tlsSocket;
+          this.socket = upgraded;
           this.tlsActive = true;
-          tlsSocket.on("close", () => {
-            if (this.socket === tlsSocket) {
+          upgraded.on("close", () => {
+            if (this.socket === upgraded) {
               this.teardown("Connection closed by server");
             }
           });
-          tlsSocket.on("error", error => {
+          upgraded.on("error", error => {
             this.logger.error(`TLS socket error: ${error.message}`, {
-              operation: "tlsSocketError",
+              operation: "upgradedError",
               service: "SieveService",
             });
-            if (this.socket === tlsSocket) {
+            if (this.socket === upgraded) {
               this.teardown(`TLS socket error: ${error.message}`);
             }
           });
@@ -757,7 +778,7 @@ export class SieveService {
           resolve();
         });
 
-        tlsSocket.once("error", error => {
+        upgraded.once("error", error => {
           clearTimeout(timeout);
           reject(new SieveError(`TLS upgrade failed: ${error.message}`));
         });
