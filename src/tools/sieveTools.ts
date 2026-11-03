@@ -7,7 +7,10 @@ import {
 import * as v from "valibot";
 import type { ServerConfig } from "../config/config.js";
 import { createLogger } from "../services/Logger.js";
-import { SieveService } from "../services/SieveService.js";
+import {
+  isAllowedSieveNameChar,
+  SieveService,
+} from "../services/SieveService.js";
 
 const logger = createLogger("SieveTools");
 
@@ -37,10 +40,12 @@ const scriptNameSchema = v.pipe(
   v.maxLength(100),
   v.check(
     name =>
-      [...name].every(char => {
-        const code = char.codePointAt(0) ?? 0;
-        return code >= 0x20 && code !== 0x7f && char !== '"' && char !== "\\";
-      }),
+      [...name].every(
+        char =>
+          isAllowedSieveNameChar(char.codePointAt(0) ?? 0) &&
+          char !== '"' &&
+          char !== "\\",
+      ),
     "Script name must not contain control characters, quotes or backslashes",
   ),
 );
