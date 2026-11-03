@@ -1217,31 +1217,52 @@ describe("EmailService - Advanced Coverage", () => {
       ["null addresses", null, []],
       ["undefined addresses", undefined, []],
       [
-        "array of addresses",
-        [
-          { name: "Alice Brown", address: "alice@example.com" },
-          { name: "Bob Wilson", address: "bob@example.com" },
-        ],
+        "address object with several entries",
+        {
+          value: [
+            { name: "Alice Brown", address: "alice@example.com" },
+            { name: "Bob Wilson", address: "bob@example.com" },
+          ],
+        },
         [
           { name: "Alice Brown", address: "alice@example.com" },
           { name: "Bob Wilson", address: "bob@example.com" },
         ],
       ],
       [
-        "single address object with name",
-        { name: "Alice Brown", address: "alice@example.com" },
-        [{ name: "Alice Brown", address: "alice@example.com" }],
+        "array of address objects",
+        [
+          { value: [{ name: "Alice Brown", address: "alice@example.com" }] },
+          { value: [{ name: "", address: "bob@example.com" }] },
+        ],
+        [
+          { name: "Alice Brown", address: "alice@example.com" },
+          { name: undefined, address: "bob@example.com" },
+        ],
       ],
       [
-        "single address object without name",
-        { address: "alice@example.com" },
+        "entry without name",
+        { value: [{ name: "", address: "alice@example.com" }] },
         [{ name: undefined, address: "alice@example.com" }],
       ],
       [
-        "single address object without address field",
-        { name: "Alice Brown" },
+        "group entry",
+        {
+          value: [
+            {
+              name: "Team",
+              group: [{ name: "", address: "carla@example.com" }],
+            },
+          ],
+        },
+        [{ name: undefined, address: "carla@example.com" }],
+      ],
+      [
+        "entry without address field",
+        { value: [{ name: "Alice Brown" }] },
         [],
       ],
+      ["address object with empty value", { value: [] }, []],
       ["empty array", [], []],
     ])(
       "should parse %s",
