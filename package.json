@@ -57,6 +57,7 @@
     "mailparser": "^3.9.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.12",
+    "re2js": "2.8.6",
     "tsdav": "^2.1.6",
     "valibot": "^1.2.0"
   },
