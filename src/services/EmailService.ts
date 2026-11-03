@@ -1,4 +1,9 @@
-import { type ParsedMail, simpleParser } from "mailparser";
+import {
+  type AddressObject,
+  type EmailAddress,
+  type ParsedMail,
+  simpleParser,
+} from "mailparser";
 
 // IMAP library type definitions
 interface ImapSearchCriteria {
@@ -602,21 +607,31 @@ export class EmailService {
     }));
   }
 
+  /**
+   * mailparser returns `AddressObject | AddressObject[]`, where each
+   * AddressObject wraps its entries in `value`, and an entry may be a group
+   * (`{ name, group: [...] }`) instead of an address. Flatten all of it.
+   */
   private parseAddressesFromParsed(
-    addresses: unknown,
+    addresses: AddressObject | AddressObject[] | undefined,
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
-    if (!Array.isArray(addresses)) {
-      const addr = addresses as { name?: string; address: string };
-      if (addr.address) {
-        return [{ name: addr.name, address: addr.address }];
+    const objects = Array.isArray(addresses) ? addresses : [addresses];
+    const result: Array<{ name?: string; address: string }> = [];
+    const collect = (entries: EmailAddress[] | undefined) => {
+      for (const entry of entries ?? []) {
+        if (entry.group) {
+          collect(entry.group);
+        } else if (entry.address) {
+          result.push({
+            name: entry.name || undefined,
+            address: entry.address,
+          });
+        }
       }
-      return [];
-    }
-    return addresses.map(addr => ({
-      name: addr.name,
-      address: addr.address,
-    }));
+    };
+    for (const object of objects) collect(object?.value);
+    return result;
   }
 
   private async buildEmailThread(
