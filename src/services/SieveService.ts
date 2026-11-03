@@ -9,17 +9,210 @@ import {
 } from "../types/sieve.types.js";
 import { createLogger } from "./Logger.js";
 
+/**
+ * True if a code point may appear in a sieve-name (RFC 5804 §1.6): no
+ * control characters (C0, DEL, C1), no line/paragraph separators, no
+ * byte order mark and no unpaired surrogates.
+ */
+export function isAllowedSieveNameChar(code: number): boolean {
+  return !(
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0xfeff ||
+    (code >= 0xd800 && code <= 0xdfff)
+  );
+}
+
+/**
+ * Encode a ManageSieve quoted string (RFC 5804 §4). Script names come from
+ * tool input, so anything that could terminate the string or the command
+ * line (CR, LF, NUL and other control characters) is rejected, and `\` and
+ * `"` are escaped. Without this a name like `x"\r\nDELETESCRIPT "y` would
+ * smuggle a second command to the server.
+ */
+export function quoteSieveString(value: string): string {
+  for (const char of value) {
+    if (!isAllowedSieveNameChar(char.codePointAt(0) ?? 0)) {
+      throw new SieveError(
+        "Invalid script name: control characters, line separators, BOM and unpaired surrogates are not allowed",
+      );
+    }
+  }
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+/**
+ * The verb of a ManageSieve command for logs and error messages.
+ * Never put the full command line into messages: AUTHENTICATE carries the
+ * base64-encoded password, PUTSCRIPT/CHECKSCRIPT carry script content.
+ */
+export function commandVerb(command: string): string {
+  return command.split(/[\s{]/, 1)[0] || "command";
+}
+
+/** A token of a ManageSieve response line */
+export type SieveToken =
+  | { kind: "string"; value: string }
+  | { kind: "atom"; value: string };
+
+const CR = 0x0d;
+const LF = 0x0a;
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+const LBRACE = 0x7b;
+
+/**
+ * If the bytes [from, crlf) end with a literal marker `{n}` / `{n+}`,
+ * return n, otherwise null.
+ */
+function literalLengthBefore(
+  buf: Buffer,
+  from: number,
+  crlf: number,
+): number | null {
+  if (crlf - from < 3 || buf[crlf - 1] !== 0x7d) {
+    return null;
+  }
+  const segment = buf.subarray(from, crlf).toString("latin1");
+  const match = /\{(\d{1,9})\+?\}$/.exec(segment);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+/**
+ * Find the end of one complete ManageSieve response in `buf`.
+ *
+ * A response is any number of lines followed by a status line (OK, NO or
+ * BYE at the start of a logical line). Literals (`{n}` CRLF followed by
+ * exactly n bytes) are skipped as opaque data, so a script line such as
+ * "OK, thanks" or "BYE for now" inside GETSCRIPT can never end the
+ * response early. Returns null if the response is not complete yet.
+ */
+export function findResponseEnd(
+  buf: Buffer,
+): { statusStart: number; end: number } | null {
+  let pos = 0;
+  while (pos < buf.length) {
+    const lineStart = pos;
+    let cursor = lineStart;
+    for (;;) {
+      const crlf = buf.indexOf("\r\n", cursor);
+      if (crlf < 0) {
+        return null;
+      }
+      const literal = literalLengthBefore(buf, cursor, crlf);
+      if (literal !== null) {
+        const literalEnd = crlf + 2 + literal;
+        if (buf.length < literalEnd) {
+          return null;
+        }
+        cursor = literalEnd; // the logical line continues after the literal
+        continue;
+      }
+      pos = crlf + 2;
+      break;
+    }
+    const head = buf
+      .subarray(lineStart, Math.min(lineStart + 4, buf.length))
+      .toString("latin1")
+      .toUpperCase();
+    if (/^(OK|NO|BYE)(?=[ (\r]|$)/.test(head)) {
+      return { statusStart: lineStart, end: pos };
+    }
+  }
+  return null;
+}
+
+/**
+ * Tokenize ManageSieve response data (wire format, possibly several lines)
+ * into lines of tokens. Quoted strings are unescaped, literals are read by
+ * exact byte length, everything else becomes an atom.
+ */
+export function tokenizeSieveData(buf: Buffer): SieveToken[][] {
+  const lines: SieveToken[][] = [];
+  let line: SieveToken[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    const byte = buf[i];
+    if (byte === CR && buf[i + 1] === LF) {
+      lines.push(line);
+      line = [];
+      i += 2;
+      continue;
+    }
+    if (byte === 0x20 || byte === 0x09) {
+      i++;
+      continue;
+    }
+    if (byte === QUOTE) {
+      const bytes: number[] = [];
+      i++;
+      while (i < buf.length && buf[i] !== QUOTE) {
+        if (buf[i] === BACKSLASH && i + 1 < buf.length) {
+          i++;
+        }
+        bytes.push(buf[i]);
+        i++;
+      }
+      i++; // closing quote
+      line.push({ kind: "string", value: Buffer.from(bytes).toString("utf8") });
+      continue;
+    }
+    if (byte === LBRACE) {
+      const match = /^\{(\d{1,9})\+?\}\r\n/.exec(
+        buf.subarray(i, Math.min(i + 16, buf.length)).toString("latin1"),
+      );
+      if (match) {
+        const length = Number.parseInt(match[1], 10);
+        const start = i + match[0].length;
+        line.push({
+          kind: "string",
+          value: buf.subarray(start, start + length).toString("utf8"),
+        });
+        i = start + length;
+        continue;
+      }
+    }
+    let end = i;
+    while (
+      end < buf.length &&
+      buf[end] !== 0x20 &&
+      buf[end] !== 0x09 &&
+      !(buf[end] === CR && buf[end + 1] === LF)
+    ) {
+      end++;
+    }
+    line.push({ kind: "atom", value: buf.subarray(i, end).toString("utf8") });
+    i = end;
+  }
+  if (line.length) {
+    lines.push(line);
+  }
+  return lines;
+}
+
+interface ParsedResponse extends SieveResponse {
+  /** Raw bytes of the response lines before the status line */
+  raw: Buffer;
+}
+
 export class SieveService {
   private socket: Socket | TLSSocket | null = null;
   private connected = false;
   private authenticated = false;
+  private tlsActive = false;
   private capabilities: SieveCapabilities | null = null;
-  private buffer = "";
-  private pendingCommand: {
-    resolve: (response: SieveResponse) => void;
+  private rx: Buffer = Buffer.alloc(0);
+  private queue: ParsedResponse[] = [];
+  private waiter: {
+    resolve: (response: ParsedResponse) => void;
     reject: (error: Error) => void;
   } | null = null;
   private logger = createLogger("SieveService");
+
+  private static readonly COMMAND_TIMEOUT_MS = 30000;
+  private static readonly GREETING_TIMEOUT_MS = 15000;
 
   constructor(private config: SieveConnection) {}
 
@@ -42,24 +235,35 @@ export class SieveService {
         },
       );
 
+      this.resetState();
       if (this.config.secure) {
         this.socket = tlsConnect({
           host: this.config.host,
           port: this.config.port,
+          servername: this.config.host,
           rejectUnauthorized: true,
         });
+        this.tlsActive = true;
       } else {
         this.socket = new Socket();
         this.socket.connect(this.config.port, this.config.host);
       }
 
       await this.setupSocketHandlers();
-      await this.waitForGreeting();
+
+      // RFC 5804 §1.7: the greeting is a capability response followed by OK
+      const greeting = await this.nextResponse(
+        SieveService.GREETING_TIMEOUT_MS,
+        "greeting",
+      );
+      if (!greeting.success) {
+        throw new SieveError(
+          `Server rejected connection: ${greeting.message ?? ""}`,
+        );
+      }
 
       this.connected = true;
-
-      // Get capabilities
-      this.capabilities = await this.getCapabilities();
+      this.capabilities = await this.capabilitiesFrom(greeting);
 
       this.logger.info(
         "Successfully connected to ManageSieve server",
@@ -73,7 +277,7 @@ export class SieveService {
         },
       );
     } catch (error) {
-      this.connected = false;
+      this.teardown();
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         "Failed to connect to ManageSieve server",
@@ -103,11 +307,16 @@ export class SieveService {
     }
 
     try {
-      // Check if STARTTLS is available and we're not already using TLS
-      if (
-        this.capabilities?.sieveExtensions.includes("STARTTLS") &&
-        !this.config.secure
-      ) {
+      if (!this.tlsActive) {
+        // Never send credentials over an unencrypted connection. A server
+        // (or a man in the middle) that does not offer STARTTLS gets no
+        // AUTHENTICATE at all.
+        if (!this.capabilities?.sieveExtensions.includes("STARTTLS")) {
+          throw new SieveError(
+            "Server does not offer STARTTLS; refusing to send credentials over an unencrypted connection",
+          );
+        }
+
         this.logger.info("Starting TLS upgrade for ManageSieve connection", {
           operation: "starttls",
           service: "SieveService",
@@ -121,8 +330,17 @@ export class SieveService {
           );
         }
 
-        // Upgrade the socket to TLS
         await this.upgradeToTLS();
+
+        // RFC 5804 §2.2: after STARTTLS the server sends its capabilities
+        // again; they replace the ones from the unencrypted greeting.
+        const postTls = await this.nextResponse(10000, "STARTTLS capabilities");
+        if (!postTls.success) {
+          throw new SieveError(
+            `Server rejected session after STARTTLS: ${postTls.message ?? ""}`,
+          );
+        }
+        this.capabilities = await this.capabilitiesFrom(postTls);
       }
 
       this.logger.info(
@@ -160,6 +378,12 @@ export class SieveService {
     } catch (error) {
       this.authenticated = false;
       const errorMsg = error instanceof Error ? error.message : String(error);
+      if (!this.tlsActive) {
+        // A failed or refused TLS upgrade leaves the connection in an
+        // undefined state; close it right away instead of sending LOGOUT
+        // over it and waiting for a timeout.
+        this.teardown(errorMsg);
+      }
       this.logger.error(
         "Authentication failed",
         {
@@ -179,21 +403,10 @@ export class SieveService {
       if (this.connected && this.socket) {
         await this.sendCommand("LOGOUT");
       }
-    } catch (error) {
+    } catch {
       // Ignore logout errors
     } finally {
-      if (this.socket) {
-        this.socket.destroy();
-        this.socket = null;
-      }
-      this.connected = false;
-      this.authenticated = false;
-      this.capabilities = null;
-      this.buffer = "";
-      if (this.pendingCommand) {
-        this.pendingCommand.reject(new SieveError("Connection closed"));
-        this.pendingCommand = null;
-      }
+      this.teardown();
     }
   }
 
@@ -208,26 +421,14 @@ export class SieveService {
       );
     }
 
-    // Log the raw LISTSCRIPTS response for debugging
-    this.logger.debug(
-      "Raw LISTSCRIPTS response",
-      {
-        operation: "listScripts",
-        service: "SieveService",
-      },
-      {
-        rawData: response.data as string,
-        dataLength: (response.data as string)?.length || 0,
-      },
-    );
-
-    return this.parseScriptList(response.data as string);
+    return this.parseScriptList(response.raw);
   }
 
   async getScript(name: string): Promise<string> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`GETSCRIPT "${name}"`);
+    const response = await this.sendCommand(`GETSCRIPT ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to get script '${name}': ${response.message}`,
@@ -235,14 +436,20 @@ export class SieveService {
       );
     }
 
-    return response.data as string;
+    // The script is returned as a literal (or quoted string): return its
+    // exact content.
+    const first = tokenizeSieveData(response.raw)
+      .flat()
+      .find(token => token.kind === "string");
+    return first ? first.value : "";
   }
 
   async putScript(name: string, content: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
     const response = await this.sendCommand(
-      `PUTSCRIPT "${name}" {${content.length}}\r\n${content}`,
+      `PUTSCRIPT ${quotedName} {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
     );
     if (!response.success) {
       throw new SieveError(
@@ -253,9 +460,10 @@ export class SieveService {
   }
 
   async deleteScript(name: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`DELETESCRIPT "${name}"`);
+    const response = await this.sendCommand(`DELETESCRIPT ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to delete script '${name}': ${response.message}`,
@@ -265,9 +473,10 @@ export class SieveService {
   }
 
   async setActiveScript(name: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`SETACTIVE "${name}"`);
+    const response = await this.sendCommand(`SETACTIVE ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to activate script '${name}': ${response.message}`,
@@ -280,7 +489,7 @@ export class SieveService {
     await this.ensureAuthenticated();
 
     const response = await this.sendCommand(
-      `CHECKSCRIPT {${content.length}}\r\n${content}`,
+      `CHECKSCRIPT {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
     );
     if (!response.success) {
       throw new SieveError(
@@ -302,381 +511,340 @@ export class SieveService {
     return this.authenticated;
   }
 
-  private async setupSocketHandlers(): Promise<void> {
+  // ------------------------------------------------------------- transport
+
+  private resetState(): void {
+    this.rx = Buffer.alloc(0);
+    this.queue = [];
+    this.waiter = null;
+    this.tlsActive = false;
+  }
+
+  /** Close the connection and fail any waiting command */
+  private teardown(reason = "Connection closed"): void {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.on("error", () => {
+        // swallow errors of a socket we are discarding
+      });
+      this.socket.destroy();
+      this.socket = null;
+    }
+    this.connected = false;
+    this.authenticated = false;
+    this.tlsActive = false;
+    this.capabilities = null;
+    this.rx = Buffer.alloc(0);
+    this.queue = [];
+    const waiter = this.waiter;
+    this.waiter = null;
+    waiter?.reject(new SieveError(reason));
+  }
+
+  private attachDataHandler(socket: Socket | TLSSocket): void {
+    socket.on("data", (data: Buffer) => {
+      // Do not log content: responses can contain script bodies
+      this.logger.debug(`Received ${data.length} bytes`, {
+        operation: "socketData",
+        service: "SieveService",
+      });
+      this.onData(data);
+    });
+  }
+
+  private onData(data: Buffer): void {
+    this.rx = this.rx.length ? Buffer.concat([this.rx, data]) : data;
+    for (;;) {
+      const found = findResponseEnd(this.rx);
+      if (!found) {
+        return;
+      }
+      const response = this.buildResponse(
+        this.rx.subarray(0, found.statusStart),
+        this.rx.subarray(found.statusStart, found.end),
+      );
+      this.rx = this.rx.subarray(found.end);
+      if (this.waiter) {
+        const waiter = this.waiter;
+        this.waiter = null;
+        waiter.resolve(response);
+      } else {
+        this.queue.push(response);
+      }
+      if (response.code === "BYE") {
+        // BYE means the server is closing the session; never reuse it
+        this.teardown("Server closed the session (BYE)");
+        return;
+      }
+    }
+  }
+
+  private buildResponse(raw: Buffer, statusLine: Buffer): ParsedResponse {
+    const tokens = tokenizeSieveData(statusLine)[0] ?? [];
+    const verb = (tokens[0]?.value ?? "").toUpperCase();
+    const text = tokens.find(
+      (token, index) => index > 0 && token.kind === "string",
+    );
+    const message =
+      text?.value ??
+      tokens
+        .slice(1)
+        .map(token => token.value)
+        .join(" ");
+    const data = raw.toString("utf8").replace(/\r\n$/, "");
+    if (verb === "OK") {
+      return { success: true, message, data, raw: Buffer.from(raw) };
+    }
+    return {
+      success: false,
+      code: verb === "BYE" ? "BYE" : "NO",
+      message,
+      data,
+      raw: Buffer.from(raw),
+    };
+  }
+
+  /** Wait for the next complete response (or take a queued one) */
+  private nextResponse(
+    timeoutMs: number,
+    label: string,
+  ): Promise<ParsedResponse> {
+    const queued = this.queue.shift();
+    if (queued) {
+      return Promise.resolve(queued);
+    }
+    if (this.waiter) {
+      return Promise.reject(
+        new SieveError("Another command is already in progress"),
+      );
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.waiter?.resolve === wrappedResolve) {
+          this.waiter = null;
+        }
+        // A late answer would be taken for the reply to the next command,
+        // so the connection must not be reused after a timeout.
+        this.teardown(`Command timeout: ${label}`);
+        reject(new SieveError(`Command timeout: ${label}`));
+      }, timeoutMs);
+      const wrappedResolve = (response: ParsedResponse) => {
+        clearTimeout(timer);
+        resolve(response);
+      };
+      this.waiter = {
+        resolve: wrappedResolve,
+        reject: (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
+    });
+  }
+
+  private async sendCommand(command: string): Promise<ParsedResponse> {
     if (!this.socket) {
+      throw new SieveError("Not connected to server");
+    }
+    // ManageSieve is sequential: one command at a time
+    if (this.waiter) {
+      throw new SieveError("Another command is already in progress");
+    }
+    // A response nobody asked for would be taken as the answer to this
+    // command; treat it as a protocol error instead.
+    if (this.queue.length > 0) {
+      this.teardown("Unexpected response from server");
+      throw new SieveError("Protocol error: unexpected response from server");
+    }
+    const pending = this.nextResponse(
+      SieveService.COMMAND_TIMEOUT_MS,
+      commandVerb(command),
+    );
+    this.socket.write(`${command}\r\n`);
+    return pending;
+  }
+
+  private async setupSocketHandlers(): Promise<void> {
+    const socket = this.socket;
+    if (!socket) {
       throw new SieveError("Socket not initialized");
     }
 
+    this.attachDataHandler(socket);
+
+    socket.on("close", () => {
+      if (this.socket === socket) {
+        this.teardown("Connection closed by server");
+      }
+    });
+
+    socket.on("error", error => {
+      this.logger.error(
+        `Socket error: ${error.message}`,
+        {
+          operation: "socketError",
+          service: "SieveService",
+        },
+        {
+          host: this.config.host,
+          port: this.config.port,
+          secure: this.config.secure,
+        },
+      );
+      if (this.socket === socket) {
+        this.teardown(`Socket error: ${error.message}`);
+      }
+    });
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        cleanup();
         reject(
           new SieveError(
             `Connection timeout to ${this.config.host}:${this.config.port}`,
           ),
         );
       }, 10000);
-
-      this.socket?.on("connect", () => {
-        clearTimeout(timeout);
-        this.logger.debug(
-          `Socket connected to ${this.config.host}:${this.config.port}`,
-          {
-            operation: "socketConnect",
-            service: "SieveService",
-          },
-        );
+      const onReady = () => {
+        cleanup();
         resolve();
-      });
-
-      this.socket?.on("secureConnect", () => {
-        clearTimeout(timeout);
-        this.logger.debug(
-          `TLS connection established to ${this.config.host}:${this.config.port}`,
-          {
-            operation: "tlsConnect",
-            service: "SieveService",
-          },
-        );
-        resolve();
-      });
-
-      this.socket?.on("data", (data: Buffer) => {
-        const dataStr = data.toString();
-        this.logger.debug(`Received data: ${dataStr.substring(0, 100)}...`, {
-          operation: "socketData",
-          service: "SieveService",
-        });
-        this.buffer += dataStr;
-        this.processBuffer();
-      });
-
-      this.socket?.on("error", error => {
-        clearTimeout(timeout);
-        this.connected = false;
-        this.logger.error(
-          `Socket error: ${error.message}`,
-          {
-            operation: "socketError",
-            service: "SieveService",
-          },
-          {
-            host: this.config.host,
-            port: this.config.port,
-            secure: this.config.secure,
-          },
-        );
+      };
+      const onError = (error: Error) => {
+        cleanup();
         reject(new SieveError(`Socket error: ${error.message}`));
-      });
+      };
+      const cleanup = () => {
+        clearTimeout(timeout);
+        socket.removeListener("connect", onReady);
+        socket.removeListener("secureConnect", onReady);
+        socket.removeListener("error", onError);
+      };
+      socket.once(this.config.secure ? "secureConnect" : "connect", onReady);
+      socket.once("error", onError);
+    });
+  }
 
-      this.socket?.on("close", () => {
-        this.connected = false;
-        this.authenticated = false;
-        this.logger.debug("Socket closed", {
-          operation: "socketClose",
-          service: "SieveService",
+  private async upgradeToTLS(): Promise<void> {
+    const plain = this.socket;
+    if (!plain) {
+      throw new SieveError("Socket not available for TLS upgrade");
+    }
+
+    // Nothing may be pending in plaintext after the STARTTLS OK
+    this.rx = Buffer.alloc(0);
+    this.queue = [];
+    plain.removeAllListeners("data");
+    plain.removeAllListeners("close");
+
+    return new Promise((resolve, reject) => {
+      let tlsSocket: ReturnType<typeof tlsConnect> | undefined;
+      const timeout = setTimeout(() => {
+        tlsSocket?.destroy();
+        plain.destroy();
+        reject(new SieveError("TLS upgrade timeout"));
+      }, 10000);
+
+      try {
+        const upgraded = tlsConnect({
+          socket: plain as Socket,
+          servername: this.config.host,
+          rejectUnauthorized: true,
         });
-      });
+        tlsSocket = upgraded;
+        this.attachDataHandler(upgraded);
 
-      this.socket?.on("timeout", () => {
+        upgraded.once("secureConnect", () => {
+          clearTimeout(timeout);
+          this.socket = upgraded;
+          this.tlsActive = true;
+          upgraded.on("close", () => {
+            if (this.socket === upgraded) {
+              this.teardown("Connection closed by server");
+            }
+          });
+          upgraded.on("error", error => {
+            this.logger.error(`TLS socket error: ${error.message}`, {
+              operation: "upgradedError",
+              service: "SieveService",
+            });
+            if (this.socket === upgraded) {
+              this.teardown(`TLS socket error: ${error.message}`);
+            }
+          });
+          this.logger.info("TLS upgrade successful", {
+            operation: "upgradeToTLS",
+            service: "SieveService",
+          });
+          resolve();
+        });
+
+        upgraded.once("error", error => {
+          clearTimeout(timeout);
+          reject(new SieveError(`TLS upgrade failed: ${error.message}`));
+        });
+      } catch (error) {
         clearTimeout(timeout);
         reject(
           new SieveError(
-            `Socket timeout to ${this.config.host}:${this.config.port}`,
+            `TLS upgrade error: ${error instanceof Error ? error.message : String(error)}`,
           ),
         );
-      });
+      }
     });
   }
 
-  private async waitForGreeting(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let greetingReceived = false;
-      let greetingHandler: ((data: Buffer) => void) | null = null;
-
-      const cleanup = () => {
-        if (greetingHandler && this.socket) {
-          this.socket.removeListener("data", greetingHandler);
-          greetingHandler = null;
-        }
-      };
-
-      const timeout = setTimeout(() => {
-        cleanup();
-        this.logger.error(
-          "Timeout waiting for server greeting",
-          {
-            operation: "waitForGreeting",
-            service: "SieveService",
-          },
-          {
-            buffer: this.buffer.substring(0, 200),
-            bufferLength: this.buffer.length,
-          },
-        );
-        reject(new SieveError("Timeout waiting for server greeting"));
-      }, 15000);
-
-      const checkGreeting = () => {
-        if (greetingReceived) return;
-
-        this.logger.debug(
-          `Checking greeting in buffer: ${this.buffer.substring(0, 100)}...`,
-          {
-            operation: "checkGreeting",
-            service: "SieveService",
-          },
-        );
-
-        const lines = this.buffer.split("\r\n");
-        for (const line of lines) {
-          if (line.trim().startsWith("OK")) {
-            greetingReceived = true;
-            clearTimeout(timeout);
-            cleanup();
-            this.logger.info(`Received server greeting: ${line}`, {
-              operation: "greeting",
-              service: "SieveService",
-            });
-            resolve();
-            return;
-          }
-          if (line.trim().startsWith("NO") || line.trim().startsWith("BYE")) {
-            greetingReceived = true;
-            clearTimeout(timeout);
-            cleanup();
-            this.logger.error(`Server rejected connection: ${line}`, {
-              operation: "greeting",
-              service: "SieveService",
-            });
-            reject(new SieveError(`Server rejected connection: ${line}`));
-            return;
-          }
-        }
-      };
-
-      // Check if greeting is already in buffer
-      checkGreeting();
-
-      // Set up temporary data handler for greeting only
-      greetingHandler = (data: Buffer) => {
-        if (greetingReceived) return;
-
-        const dataStr = data.toString();
-        this.logger.debug(`Greeting data received: ${dataStr}`, {
-          operation: "greetingData",
-          service: "SieveService",
-        });
-
-        this.buffer += dataStr;
-        checkGreeting();
-      };
-
-      this.socket?.on("data", greetingHandler);
-    });
-  }
-
-  private async getCapabilities(): Promise<SieveCapabilities> {
-    const response = await this.sendCommand("CAPABILITY");
-    if (!response.success) {
+  /** Capabilities from a capability response; ask explicitly if empty */
+  private async capabilitiesFrom(
+    response: ParsedResponse,
+  ): Promise<SieveCapabilities> {
+    const parsed = this.parseCapabilities(response.data as string);
+    if (parsed.implementation || parsed.sieveExtensions.length) {
+      return parsed;
+    }
+    const explicit = await this.sendCommand("CAPABILITY");
+    if (!explicit.success) {
       throw new SieveError(
-        `Failed to get capabilities: ${response.message}`,
-        response.code,
+        `Failed to get capabilities: ${explicit.message}`,
+        explicit.code,
       );
     }
-
-    // Log the raw capability response for debugging
-    this.logger.debug(
-      "Raw capability response",
-      {
-        operation: "getCapabilities",
-        service: "SieveService",
-      },
-      {
-        rawData: response.data as string,
-        dataLength: (response.data as string)?.length || 0,
-      },
-    );
-
-    return this.parseCapabilities(response.data as string);
+    return this.parseCapabilities(explicit.data as string);
   }
 
-  private async sendCommand(command: string): Promise<SieveResponse> {
-    if (!this.socket) {
-      throw new SieveError("Not connected to server");
-    }
+  // --------------------------------------------------------------- parsers
 
-    // ManageSieve protocol is sequential - only one command at a time
-    if (this.pendingCommand) {
-      throw new SieveError("Another command is already in progress");
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingCommand = null;
-        reject(new SieveError(`Command timeout: ${command}`));
-      }, 30000);
-
-      this.pendingCommand = {
-        resolve: (response: SieveResponse) => {
-          clearTimeout(timeout);
-          this.pendingCommand = null;
-          resolve(response);
-        },
-        reject: (error: Error) => {
-          clearTimeout(timeout);
-          this.pendingCommand = null;
-          reject(error);
-        },
-      };
-
-      this.socket?.write(`${command}\r\n`);
-    });
-  }
-
-  private processBuffer(): void {
-    const lines = this.buffer.split("\r\n");
-
-    for (let i = 0; i < lines.length - 1; i++) {
-      const line = lines[i];
-      this.processResponseLine(line);
-    }
-
-    // Keep the last incomplete line in buffer
-    this.buffer = lines[lines.length - 1];
-  }
-
-  private processResponseLine(line: string): void {
-    // For capabilities and multi-line responses, we need to collect all data
-    if (line.startsWith("OK ")) {
-      // For capabilities response, include all collected buffer data
-      const data = this.buffer.split("\r\n").slice(0, -1).join("\r\n");
-      this.resolveCommand({
-        success: true,
-        message: line.substring(3),
-        data: data,
-      });
-    } else if (line.startsWith("NO ")) {
-      this.resolveCommand({
-        success: false,
-        code: "NO",
-        message: line.substring(3),
-      });
-    } else if (line.startsWith("BYE ")) {
-      this.resolveCommand({
-        success: false,
-        code: "BYE",
-        message: line.substring(4),
-      });
-    }
-    // For other lines, they are part of the response data (like capabilities)
-  }
-
-  private resolveCommand(response: SieveResponse): void {
-    if (this.pendingCommand) {
-      this.pendingCommand.resolve(response);
-    }
-  }
-
-  private parseScriptList(data: string): SieveScript[] {
-    // Parse LISTSCRIPTS response format
+  private parseScriptList(data: string | Buffer): SieveScript[] {
+    const buf = typeof data === "string" ? Buffer.from(data, "utf8") : data;
     const scripts: SieveScript[] = [];
-    const lines = data.split("\r\n");
 
-    this.logger.debug(
-      `Parsing script list from ${lines.length} lines`,
-      {
-        operation: "parseScriptList",
-        service: "SieveService",
-      },
-      {
-        lines: lines.slice(0, 10), // Show first 10 lines for debugging
-      },
-    );
-
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (
-        !trimmedLine ||
-        trimmedLine.startsWith("OK") ||
-        trimmedLine.startsWith("NO")
-      ) {
+    for (const tokens of tokenizeSieveData(buf)) {
+      const [first, second] = tokens;
+      if (!first) {
         continue;
       }
-
-      this.logger.debug(`Processing script line: ${trimmedLine}`);
-
-      // Try different parsing patterns
-      let match: RegExpMatchArray | null;
-
-      // Pattern 1: "scriptname" ACTIVE
-      match = trimmedLine.match(/^"([^"]+)"\s*(ACTIVE)?/);
-      if (match) {
-        const script = {
-          name: match[1],
-          content: "",
-          active: !!match[2],
-        };
-        scripts.push(script);
-        this.logger.debug(
-          `Parsed script (quoted): ${script.name} (active: ${script.active})`,
-        );
+      // Status lines (only atoms, never quoted names)
+      if (first.kind === "atom" && /^(OK|NO|BYE)$/i.test(first.value)) {
         continue;
       }
-
-      // Pattern 2: scriptname ACTIVE (without quotes)
-      match = trimmedLine.match(/^([^\s]+)\s*(ACTIVE)?/);
-      if (match) {
-        const script = {
-          name: match[1],
-          content: "",
-          active: !!match[2],
-        };
-        scripts.push(script);
-        this.logger.debug(
-          `Parsed script (unquoted): ${script.name} (active: ${script.active})`,
-        );
-        continue;
-      }
-
-      // Pattern 3: Just the script name on a line (may have ACTIVE on next line)
-      if (trimmedLine && !trimmedLine.includes(" ")) {
-        const script = {
-          name: trimmedLine.replace(/"/g, ""), // Remove quotes if present
-          content: "",
-          active: false, // We'll check next lines for ACTIVE marker
-        };
-        scripts.push(script);
-        this.logger.debug(`Parsed script (name only): ${script.name}`);
-        continue;
-      }
-
-      this.logger.debug(`Ignoring script list line: ${trimmedLine}`);
-    }
-
-    // Second pass: check for ACTIVE markers on separate lines
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line === "ACTIVE" && i > 0 && scripts.length > 0) {
-        // Mark the most recent script as active
+      if (first.kind === "atom" && first.value.toUpperCase() === "ACTIVE") {
+        // Legacy tolerance: "ACTIVE" alone on a line marks the line itself
+        // as a script and flags the most recent entry as active.
+        scripts.push({ name: first.value, content: "", active: false });
         scripts[scripts.length - 1].active = true;
-        this.logger.debug(
-          `Marked last script as active: ${scripts[scripts.length - 1].name}`,
-        );
+        continue;
       }
+      scripts.push({
+        name: first.value,
+        content: "",
+        active:
+          second?.kind === "atom" && second.value.toUpperCase() === "ACTIVE",
+      });
     }
 
-    this.logger.debug(
-      `Parsed ${scripts.length} scripts`,
-      {
-        operation: "parseScriptList",
-        service: "SieveService",
-      },
-      {
-        scriptNames: scripts.map(
-          s => `${s.name}${s.active ? " (ACTIVE)" : ""}`,
-        ),
-      },
-    );
+    this.logger.debug(`Parsed ${scripts.length} scripts`, {
+      operation: "parseScriptList",
+      service: "SieveService",
+    });
 
     return scripts;
   }
@@ -790,74 +958,6 @@ export class SieveService {
     );
 
     return capabilities;
-  }
-
-  private async upgradeToTLS(): Promise<void> {
-    if (!this.socket) {
-      throw new SieveError("Socket not available for TLS upgrade");
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new SieveError("TLS upgrade timeout"));
-      }, 10000);
-
-      try {
-        // Wrap the existing socket with TLS
-        const tlsSocket = tlsConnect({
-          socket: this.socket as Socket,
-          rejectUnauthorized: true,
-        });
-
-        tlsSocket.on("secureConnect", () => {
-          clearTimeout(timeout);
-          this.socket = tlsSocket;
-
-          // Clear the buffer after TLS upgrade to avoid confusion with old data
-          this.buffer = "";
-
-          // Re-setup data and error handlers for the new TLS socket
-          tlsSocket.on("data", (data: Buffer) => {
-            const dataStr = data.toString();
-            this.logger.debug(
-              `TLS data received: ${dataStr.substring(0, 100)}...`,
-              {
-                operation: "tlsData",
-                service: "SieveService",
-              },
-            );
-            this.buffer += dataStr;
-            this.processBuffer();
-          });
-
-          tlsSocket.on("error", error => {
-            this.connected = false;
-            this.logger.error(`TLS socket error: ${error.message}`, {
-              operation: "tlsSocketError",
-              service: "SieveService",
-            });
-          });
-
-          this.logger.info("TLS upgrade successful", {
-            operation: "upgradeToTLS",
-            service: "SieveService",
-          });
-          resolve();
-        });
-
-        tlsSocket.on("error", error => {
-          clearTimeout(timeout);
-          reject(new SieveError(`TLS upgrade failed: ${error.message}`));
-        });
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(
-          new SieveError(
-            `TLS upgrade error: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
-      }
-    });
   }
 
   private async ensureAuthenticated(): Promise<void> {
