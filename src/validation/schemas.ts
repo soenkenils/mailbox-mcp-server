@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { isAllowedSieveNameChar } from "../services/SieveService.js";
 
 // =============================================================================
 // SANITIZATION UTILITIES
@@ -44,14 +45,26 @@ const emailSchema = v.pipe(
   v.transform(email => email.toLowerCase()),
 );
 
-// Folder name validation - prevent path traversal
+// Folder name validation.
+// "/" is the IMAP hierarchy delimiter on mailbox.org (e.g. "INBOX/Archiv"),
+// so it must be allowed. Path-traversal-like forms are still rejected:
+// "." / ".." segments, empty segments, leading or trailing delimiters.
 const folderNameSchema = v.pipe(
   v.string("Folder name must be a string"),
-  v.trim(),
+  // Sanitize first so the checks below see the final value
+  v.transform(sanitizeString),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.check(str => !/[/\\<>:"|?*]/.test(str), "Invalid folder name characters"),
-  v.transform(sanitizeString),
+  v.check(str => !/[\\<>:"|?*]/.test(str), "Invalid folder name characters"),
+  v.check(
+    str =>
+      !str.startsWith("/") &&
+      !str.endsWith("/") &&
+      str
+        .split("/")
+        .every(segment => segment !== "" && !/^\.{1,2}$/.test(segment)),
+    "Invalid folder path",
+  ),
 );
 
 // Subject line validation
@@ -186,6 +199,99 @@ export const searchEmailsSchema = v.object({
 export const getEmailSchema = v.object({
   uid: uidSchema,
   folder: v.optional(folderNameSchema, "INBOX"),
+});
+
+export const getEmailHeadersSchema = v.object({
+  uid: uidSchema,
+  folder: v.optional(folderNameSchema, "INBOX"),
+  names: v.optional(
+    v.pipe(
+      v.array(
+        v.pipe(
+          v.string("Header name must be a string"),
+          v.regex(/^[!-9;-~]+$/, "Invalid header name"),
+        ),
+      ),
+      v.maxLength(50, "Too many header names"),
+    ),
+  ),
+});
+
+const searchTermSchema = v.pipe(
+  v.string("Search term must be a string"),
+  v.trim(),
+  v.minLength(1, "Search term cannot be empty"),
+  v.maxLength(500, "Search term too long"),
+  v.transform(sanitizeString),
+);
+
+export const searchAllFoldersSchema = v.pipe(
+  v.object({
+    from: v.optional(searchTermSchema),
+    to: v.optional(searchTermSchema),
+    subject: v.optional(searchTermSchema),
+    body: v.optional(searchTermSchema),
+    text: v.optional(searchTermSchema),
+    since: v.optional(dateSchema),
+    before: v.optional(dateSchema),
+    folders: v.optional(v.pipe(v.array(folderNameSchema), v.maxLength(200))),
+    excludeFolders: v.optional(
+      v.pipe(v.array(folderNameSchema), v.maxLength(200)),
+    ),
+    limitPerFolder: v.optional(
+      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(200)),
+      20,
+    ),
+    limit: v.optional(
+      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(500)),
+      100,
+    ),
+  }),
+  v.check(
+    input =>
+      Boolean(
+        input.from ||
+          input.to ||
+          input.subject ||
+          input.body ||
+          input.text ||
+          input.since ||
+          input.before,
+      ),
+    "At least one search criterion is required",
+  ),
+);
+
+export const testSieveScriptSchema = v.object({
+  script: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(200000))),
+  scriptName: v.optional(
+    v.pipe(
+      v.string(),
+      v.trim(),
+      v.minLength(1),
+      v.maxLength(100),
+      v.check(
+        name =>
+          [...name].every(
+            ch =>
+              isAllowedSieveNameChar(ch.codePointAt(0) ?? 0) &&
+              ch !== '"' &&
+              ch !== "\\",
+          ),
+        "Script name must not contain control characters, quotes or backslashes",
+      ),
+    ),
+  ),
+  folder: v.optional(folderNameSchema, "INBOX"),
+  uids: v.optional(v.pipe(v.array(uidSchema), v.maxLength(200))),
+  since: v.optional(dateSchema),
+  before: v.optional(dateSchema),
+  limit: v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(200)),
+    20,
+  ),
+  onlyMatching: v.optional(v.boolean(), false),
+  expectFolder: v.optional(folderNameSchema),
 });
 
 export const getEmailThreadSchema = v.object({

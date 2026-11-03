@@ -9,6 +9,7 @@ interface ImapSearchCriteria {
   to?: string;
   subject?: string;
   body?: string;
+  text?: string;
   or?: Array<{ [key: string]: string | Date }>;
 }
 
@@ -52,12 +53,21 @@ import {
 } from "../types/errors.js";
 import { withCacheFallback } from "../utils/cacheFallback.js";
 import {
+  type HeaderField,
+  type HeaderSummary,
+  parseHeaders,
+  summarizeHeaders,
+} from "../utils/headers.js";
+import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
   type ImapPoolConfig,
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
 import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
+
+/** Header blocks larger than this are cut before parsing (get_email_headers) */
+export const MAX_HEADER_BLOCK_BYTES = 1024 * 1024;
 
 export class EmailService {
   private pool: ImapConnectionPool;
@@ -156,6 +166,245 @@ export class EmailService {
     }
   }
 
+  /**
+   * Raw RFC 822 source of a message (headers + body), or null if not found.
+   * Not cached: used for header analysis and Sieve dry runs.
+   */
+  async getRawEmail(uid: number, folder = "INBOX"): Promise<Buffer | null> {
+    let wrapper: ImapConnectionWrapper | null = null;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const message = (await this.fetchRawMessageByUid(wrapper, uid, folder)) as
+        | (ImapMessage & { source?: Buffer })
+        | null;
+      return message?.source ?? null;
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+  }
+
+  /**
+   * Raw source with a size guard: the size is fetched first and messages
+   * above `maxBytes` (or of unknown size) are not downloaded. Distinguishes
+   * "not found" from "too large", "size unknown" and fetch
+   * failures/timeouts.
+   */
+  async getRawEmailChecked(
+    uid: number,
+    folder: string,
+    maxBytes: number,
+  ): Promise<
+    | { status: "ok"; source: Buffer }
+    | { status: "not_found" }
+    | { status: "too_large"; size: number }
+    | { status: "size_unknown" }
+    | { status: "failed" }
+  > {
+    let wrapper: ImapConnectionWrapper | null = null;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const meta = await wrapper.connection.fetchOne(
+        String(uid),
+        { uid: true, size: true },
+        { uid: true },
+      );
+      if (!meta) {
+        return { status: "not_found" };
+      }
+      if (typeof meta.size !== "number") {
+        // Never download a message of unknown size without a limit
+        return { status: "size_unknown" };
+      }
+      if (meta.size > maxBytes) {
+        return { status: "too_large", size: meta.size };
+      }
+      const message = (await this.fetchRawMessageByUid(wrapper, uid, folder)) as
+        | (ImapMessage & { source?: Buffer })
+        | null;
+      return message?.source
+        ? { status: "ok", source: message.source }
+        : { status: "failed" };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+  }
+
+  /**
+   * All header fields of a message plus a summary of the fields relevant
+   * for spam/filter analysis (Reply-To, List-Unsubscribe, Received chain,
+   * Authentication-Results, X-Spam-*). Only the header block is fetched.
+   */
+  async getEmailHeaders(
+    uid: number,
+    folder = "INBOX",
+    names?: string[],
+  ): Promise<{
+    uid: number;
+    folder: string;
+    headers: HeaderField[];
+    summary: HeaderSummary;
+    /** True if the header block exceeded MAX_HEADER_BLOCK_BYTES */
+    headersTruncated?: boolean;
+  } | null> {
+    let wrapper: ImapConnectionWrapper | null = null;
+    let raw: Buffer | undefined;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const message = await wrapper.connection.fetchOne(
+        String(uid),
+        { uid: true, headers: true },
+        { uid: true },
+      );
+      raw = message ? message.headers : undefined;
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+    if (!raw) {
+      return null;
+    }
+    const headersTruncated = raw.length > MAX_HEADER_BLOCK_BYTES;
+    const all = parseHeaders(
+      headersTruncated ? raw.subarray(0, MAX_HEADER_BLOCK_BYTES) : raw,
+    );
+    const wanted = names?.map(n => n.toLowerCase());
+    return {
+      uid,
+      folder,
+      headers: wanted
+        ? all.filter(h => wanted.includes(h.name.toLowerCase()))
+        : all,
+      summary: summarizeHeaders(all),
+      ...(headersTruncated ? { headersTruncated } : {}),
+    };
+  }
+
+  /**
+   * UIDs of messages in a folder, newest first, optionally limited by date.
+   */
+  async listMessageUids(
+    folder: string,
+    options: { since?: Date; before?: Date; limit?: number } = {},
+  ): Promise<number[]> {
+    let wrapper: ImapConnectionWrapper | null = null;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+      const criteria: ImapSearchCriteria = {};
+      if (options.since) criteria.since = options.since;
+      if (options.before) criteria.before = options.before;
+      const result = await wrapper.connection.search(
+        Object.keys(criteria).length ? criteria : { all: true },
+        { uid: true },
+      );
+      const uids = Array.isArray(result)
+        ? [...result].sort((a, b) => b - a)
+        : [];
+      return options.limit ? uids.slice(0, options.limit) : uids;
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+  }
+
+  /**
+   * Server-side search across all (or selected) folders. Useful to find
+   * messages that a filter or the spam filter already moved away.
+   */
+  async searchAllFolders(options: {
+    from?: string;
+    to?: string;
+    subject?: string;
+    body?: string;
+    text?: string;
+    since?: Date;
+    before?: Date;
+    folders?: string[];
+    excludeFolders?: string[];
+    limitPerFolder?: number;
+    limit?: number;
+  }): Promise<{
+    messages: EmailMessage[];
+    searchedFolders: string[];
+    failedFolders: Array<{ folder: string; error: string }>;
+    totalMatches: number;
+  }> {
+    const criteria: ImapSearchCriteria = {};
+    for (const key of ["from", "to", "subject", "body", "text"] as const) {
+      if (options[key]) {
+        criteria[key] = options[key];
+      }
+    }
+    if (options.since) criteria.since = options.since;
+    if (options.before) criteria.before = options.before;
+
+    const exclude = new Set(options.excludeFolders ?? []);
+    const folderPaths = options.folders?.length
+      ? options.folders
+      : (await this.getFolders())
+          .filter(
+            f =>
+              !f.flags.some(flag =>
+                ["\\noselect", "\\nonexistent"].includes(flag.toLowerCase()),
+              ),
+          )
+          .map(f => f.path);
+
+    const perFolder = options.limitPerFolder ?? 20;
+    const messages: EmailMessage[] = [];
+    const searchedFolders: string[] = [];
+    const failedFolders: Array<{ folder: string; error: string }> = [];
+    let totalMatches = 0;
+
+    for (const folder of folderPaths) {
+      if (exclude.has(folder)) {
+        continue;
+      }
+      let wrapper: ImapConnectionWrapper | null = null;
+      try {
+        wrapper = await this.pool.acquireForFolder(folder);
+        const result = await wrapper.connection.search(
+          Object.keys(criteria).length ? criteria : { all: true },
+          { uid: true },
+        );
+        searchedFolders.push(folder);
+        const uids = Array.isArray(result) ? result : [];
+        totalMatches += uids.length;
+        if (uids.length) {
+          // UIDs are stable across concurrent expunges; highest = newest
+          const newest = [...uids].sort((a, b) => b - a).slice(0, perFolder);
+          messages.push(
+            ...(await this.fetchMessageHeaders(wrapper, newest, folder, true)),
+          );
+        }
+      } catch (error) {
+        failedFolders.push({
+          folder,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (wrapper) {
+          await this.pool.releaseFromFolder(wrapper);
+        }
+      }
+    }
+
+    return {
+      messages: this.sortMessagesByDate(messages).slice(
+        0,
+        options.limit ?? 100,
+      ),
+      searchedFolders,
+      failedFolders,
+      totalMatches,
+    };
+  }
+
   async getEmailThread(
     messageId: string,
     folder = "INBOX",
@@ -218,15 +467,15 @@ export class EmailService {
     wrapper: ImapConnectionWrapper,
     uids: number[],
     folder: string,
+    byUid = false,
   ): Promise<EmailMessage[]> {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      const iterator = wrapper.connection.fetch(uids, {
-        envelope: true,
-        uid: true,
-        flags: true,
-      });
+      const query = { envelope: true, uid: true, flags: true };
+      const iterator = byUid
+        ? wrapper.connection.fetch(uids, query, { uid: true })
+        : wrapper.connection.fetch(uids, query);
 
       try {
         for await (const message of iterator) {
@@ -301,8 +550,9 @@ export class EmailService {
     const timeoutMs = 10000; // 10 seconds timeout for fetch operation
     const fetchPromise = this.performFetch(wrapper, uid);
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<null>((_, reject) => {
-      setTimeout(() => {
+      timer = setTimeout(() => {
         reject(
           new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`),
         );
@@ -330,6 +580,8 @@ export class EmailService {
       // it won't be reused and will be destroyed on next validation.
       wrapper.isHealthy = false;
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

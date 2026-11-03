@@ -12,7 +12,14 @@ import { CalendarService } from "./services/CalendarService.js";
 import { EmailService } from "./services/EmailService.js";
 import { MemoryCache } from "./services/LocalCache.js";
 import { createLogger, LogLevel, logger } from "./services/Logger.js";
+import { SieveService } from "./services/SieveService.js";
 import { SmtpService } from "./services/SmtpService.js";
+import {
+  createAnalysisTools,
+  handleAnalysisTool,
+  isAnalysisTool,
+  type SieveScriptLoader,
+} from "./tools/analysisTools.js";
 import {
   createCalendarTools,
   handleCalendarTool,
@@ -226,15 +233,41 @@ class MailboxMcpServer {
     return sanitized;
   }
 
+  /** Load a Sieve script by name, or the active one, for dry runs */
+  private loadSieveScript: SieveScriptLoader = async name => {
+    const sieve = new SieveService(this.config.sieve);
+    try {
+      let scriptName = name;
+      if (!scriptName) {
+        const scripts = await sieve.listScripts();
+        const active = scripts.find(script => script.active);
+        if (!active) {
+          throw new Error("No active Sieve script on the server");
+        }
+        scriptName = active.name;
+      }
+      const content = await sieve.getScript(scriptName);
+      return { name: scriptName, content };
+    } finally {
+      await sieve.disconnect();
+    }
+  };
+
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, () => {
       // Tool definitions are synchronous
       const emailTools = createEmailTools(this.emailService, this.smtpService);
       const calendarTools = createCalendarTools(this.calendarService);
       const sieveTools = getSieveTools();
+      const analysisTools = createAnalysisTools();
 
       return {
-        tools: [...emailTools, ...calendarTools, ...sieveTools],
+        tools: [
+          ...emailTools,
+          ...calendarTools,
+          ...sieveTools,
+          ...analysisTools,
+        ],
       };
     });
 
@@ -269,6 +302,13 @@ class MailboxMcpServer {
             name,
             cleanArgs,
             this.calendarService,
+          );
+        } else if (isAnalysisTool(name)) {
+          result = await handleAnalysisTool(
+            name,
+            cleanArgs,
+            this.emailService,
+            this.loadSieveScript,
           );
         } else if (isSieveTool(name)) {
           result = await handleSieveTool(
