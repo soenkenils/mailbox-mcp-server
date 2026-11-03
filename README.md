@@ -147,6 +147,13 @@ Manage email filtering rules using the [Sieve language](https://tools.ietf.org/h
 - **`check_sieve_script`** - Validate Sieve script syntax without saving
 - **`get_sieve_capabilities`** - Get ManageSieve server capabilities and supported extensions
 
+#### **Dry Run (read-only)**
+- **`test_sieve_script`** - Evaluate a Sieve script against real messages of a folder **without changing anything** and report, per message, which rules act and where it would be delivered. Script source: inline text, a script name, or the active script. Options: `uids`, `since`/`before`, `limit`, `onlyMatching`, and `expectFolder` as a regression check ("all mails in this folder must stay here"). Reproduces Dovecot semantics, in particular byte-wise `:regex` matching: a bracket expression such as `[äa]` never matches `ä`, and the tool lints for it. `vacation`, `notify`, `include` and `duplicate` are not simulated and are reported as notes.
+
+### **Analysis Tools (read-only)**
+- **`get_email_headers`** - Raw header fields of a message plus a summary for spam and filter analysis: Reply-To vs. From domain, Return-Path, List-Unsubscribe, Received chain and origin, Authentication-Results (SPF/DKIM/DMARC), X-Spam headers
+- **`search_all_folders`** - Server-side search across all folders (including Spam, Trash and subfolders) or a selection, e.g. to find messages a filter already moved away
+
 #### **Example Use Cases**
 
 **Automatic Newsletter Filtering:**
