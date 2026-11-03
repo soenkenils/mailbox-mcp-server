@@ -9,6 +9,34 @@ import {
 } from "../types/sieve.types.js";
 import { createLogger } from "./Logger.js";
 
+/**
+ * Encode a ManageSieve quoted string (RFC 5804 §4). Script names come from
+ * tool input, so anything that could terminate the string or the command
+ * line (CR, LF, NUL and other control characters) is rejected, and `\` and
+ * `"` are escaped. Without this a name like `x"\r\nDELETESCRIPT "y` would
+ * smuggle a second command to the server.
+ */
+export function quoteSieveString(value: string): string {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new SieveError(
+        "Invalid script name: control characters are not allowed",
+      );
+    }
+  }
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+/**
+ * The verb of a ManageSieve command for logs and error messages.
+ * Never put the full command line into messages: AUTHENTICATE carries the
+ * base64-encoded password, PUTSCRIPT/CHECKSCRIPT carry script content.
+ */
+export function commandVerb(command: string): string {
+  return command.split(/[\s{]/, 1)[0] || "command";
+}
+
 export class SieveService {
   private socket: Socket | TLSSocket | null = null;
   private connected = false;
@@ -226,9 +254,10 @@ export class SieveService {
   }
 
   async getScript(name: string): Promise<string> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`GETSCRIPT "${name}"`);
+    const response = await this.sendCommand(`GETSCRIPT ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to get script '${name}': ${response.message}`,
@@ -242,10 +271,11 @@ export class SieveService {
   }
 
   async putScript(name: string, content: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
     const response = await this.sendCommand(
-      `PUTSCRIPT "${name}" {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
+      `PUTSCRIPT ${quotedName} {${Buffer.byteLength(content, "utf8")}+}\r\n${content}`,
     );
     if (!response.success) {
       throw new SieveError(
@@ -256,9 +286,10 @@ export class SieveService {
   }
 
   async deleteScript(name: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`DELETESCRIPT "${name}"`);
+    const response = await this.sendCommand(`DELETESCRIPT ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to delete script '${name}': ${response.message}`,
@@ -268,9 +299,10 @@ export class SieveService {
   }
 
   async setActiveScript(name: string): Promise<void> {
+    const quotedName = quoteSieveString(name);
     await this.ensureAuthenticated();
 
-    const response = await this.sendCommand(`SETACTIVE "${name}"`);
+    const response = await this.sendCommand(`SETACTIVE ${quotedName}`);
     if (!response.success) {
       throw new SieveError(
         `Failed to activate script '${name}': ${response.message}`,
@@ -516,7 +548,7 @@ export class SieveService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingCommand = null;
-        reject(new SieveError(`Command timeout: ${command}`));
+        reject(new SieveError(`Command timeout: ${commandVerb(command)}`));
       }, 30000);
 
       this.pendingCommand = {

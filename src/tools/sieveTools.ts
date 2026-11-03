@@ -28,25 +28,42 @@ export function isSieveTool(name: string): name is SieveToolName {
   return SIEVE_TOOLS.includes(name as SieveToolName);
 }
 
+// Script names: no control characters (CR/LF would end the ManageSieve
+// command line), no quote or backslash. SieveService escapes as well; this
+// rejects bad input early with a clear message.
+const scriptNameSchema = v.pipe(
+  v.string(),
+  v.minLength(1),
+  v.maxLength(100),
+  v.check(
+    name =>
+      [...name].every(char => {
+        const code = char.codePointAt(0) ?? 0;
+        return code >= 0x20 && code !== 0x7f && char !== '"' && char !== "\\";
+      }),
+    "Script name must not contain control characters, quotes or backslashes",
+  ),
+);
+
 // Validation schemas
 const ListSieveScriptsSchema = v.object({});
 
 const GetSieveScriptSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  name: scriptNameSchema,
 });
 
 const CreateSieveFilterSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  name: scriptNameSchema,
   content: v.pipe(v.string(), v.minLength(1)),
   activate: v.optional(v.boolean(), true),
 });
 
 const DeleteSieveScriptSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  name: scriptNameSchema,
 });
 
 const ActivateSieveScriptSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  name: scriptNameSchema,
 });
 
 const CheckSieveScriptSchema = v.object({
