@@ -154,9 +154,15 @@ OK Capability completed.`;
     });
 
     it("should require authentication before operations", async () => {
-      // ensureAuthenticated should connect and authenticate if needed
-      // But without a real connection, operations should fail gracefully
-      await expect(sieveService.listScripts()).rejects.toThrow();
+      // ensureAuthenticated should connect and authenticate if needed.
+      // Use a local closed port so the test is hermetic and fails fast
+      // (ECONNREFUSED) instead of depending on network access to mailbox.org.
+      const offlineService = new SieveService({
+        ...mockConfig,
+        host: "127.0.0.1",
+        port: 1,
+      });
+      await expect(offlineService.listScripts()).rejects.toThrow();
     });
   });
 
