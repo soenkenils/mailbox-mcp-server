@@ -16,6 +16,11 @@ interface TestableEmailService extends EmailService {
     options: unknown,
   ): EmailMessage[];
   parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
+  parseFullEmailMessage(
+    parsed: unknown,
+    message: unknown,
+    folder: string,
+  ): EmailMessage;
   parseAddressesFromEnvelope(
     addresses: unknown,
   ): Array<{ name?: string; address: string }>;
@@ -476,6 +481,40 @@ describe("EmailService", () => {
         flags: [],
         folder: "INBOX",
       });
+    });
+
+    it("should convert imapflow flag Sets to arrays", () => {
+      // imapflow returns message flags as Set<string>, not as an array
+      const message = createMockImapMessage({
+        flags: new Set(["\\Seen", "\\Flagged"]),
+      });
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
+      expect(Array.isArray(result?.flags)).toBe(true);
+      expect(result?.flags).toEqual(["\\Seen", "\\Flagged"]);
+    });
+  });
+
+  describe("parseFullEmailMessage", () => {
+    it("should convert imapflow flag Sets to arrays", () => {
+      const message = createMockImapMessage({
+        flags: new Set(["\\Answered"]),
+      });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(Array.isArray(result.flags)).toBe(true);
+      expect(result.flags).toEqual(["\\Answered"]);
+    });
+
+    it("should return an empty array when flags are missing", () => {
+      const message = createMockImapMessage({ flags: undefined });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.flags).toEqual([]);
     });
   });
 
