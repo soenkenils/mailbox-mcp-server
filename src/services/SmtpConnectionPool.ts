@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import type { SmtpConnection } from "../types/email.types.js";
+import { isIpLiteral, resolveReachableHost } from "../utils/happyEyeballs.js";
 import {
   ConnectionPool,
   type ConnectionPoolConfig,
@@ -34,8 +35,16 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   async createConnection(): Promise<Transporter> {
+    // nodemailer connects to one address family only; pick one that is
+    // reachable on this network (see resolveReachableHost)
+    const { host } = this.smtpConfig;
+    const reachableHost = await resolveReachableHost(
+      host,
+      this.smtpConfig.port,
+    );
+
     const transportOptions = {
-      host: this.smtpConfig.host,
+      host: reachableHost,
       port: this.smtpConfig.port,
       secure: this.smtpConfig.secure,
       auth: {
@@ -44,6 +53,9 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       },
       tls: {
         rejectUnauthorized: false,
+        // We connect to an IP literal: keep the configured hostname for SNI
+        // and certificate checks. An IP has no name to send.
+        ...(isIpLiteral(host) ? {} : { servername: host }),
       },
       pool: false, // We handle pooling ourselves
       maxConnections: 1,

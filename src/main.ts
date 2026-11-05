@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -466,7 +467,7 @@ async function main(): Promise<void> {
   await server.start();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
     const mcpError = ErrorUtils.toMCPError(error as Error, {
       operation: "main",

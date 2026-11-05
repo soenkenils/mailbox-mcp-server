@@ -6,6 +6,19 @@ import {
 } from "../src/services/SmtpConnectionPool.js";
 import type { SmtpConnection } from "../src/types/email.types.js";
 
+// Keep the tests off the network: every hostname "resolves" to a reachable
+// TEST-NET address, IP literals stay as they are
+vi.mock("../src/utils/happyEyeballs.js", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("../src/utils/happyEyeballs.js")>();
+  return {
+    ...actual,
+    resolveReachableHost: vi.fn(async (host: string) =>
+      actual.isIpLiteral(host) ? host : "192.0.2.10",
+    ),
+  };
+});
+
 interface SendMailOptions {
   to?: string | string[];
   from?: string;
@@ -114,6 +127,35 @@ describe("SmtpConnectionPool", () => {
       expect(wrapper.connection).toBeInstanceOf(MockTransporter);
       expect(wrapper.verificationFailures).toBe(0);
 
+      await pool.release(wrapper);
+    });
+
+    it("should connect to the reachable address and keep the hostname for TLS", async () => {
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      expect(nodemailer.default.createTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "192.0.2.10",
+          tls: expect.objectContaining({ servername: "smtp.example.com" }),
+        }),
+      );
+      await pool.release(wrapper);
+    });
+
+    it("should not send a servername when an IP address is configured", async () => {
+      await pool.destroy();
+      pool = new SmtpConnectionPool({
+        ...config,
+        connectionConfig: { ...connection, host: "192.0.2.20" },
+      });
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      const options = (nodemailer.default.createTransport as Mock).mock
+        .calls[0][0];
+      expect(options.host).toBe("192.0.2.20");
+      expect(options.tls).not.toHaveProperty("servername");
       await pool.release(wrapper);
     });
 
