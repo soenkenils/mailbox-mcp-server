@@ -308,21 +308,18 @@ describe("CalendarService", () => {
       ["Meeting", 0],
       ["event", 1],
       ["", 1], // Empty query should return all events
-    ])(
-      "should filter events by query '%s' and return %d results",
-      async (query, expectedCount) => {
-        const testData = createTestICalData({ summary: "Test Event" });
-        mockFetchCalendarObjects.mockResolvedValue([{ data: testData }]);
+    ])("should filter events by query '%s' and return %d results", async (query, expectedCount) => {
+      const testData = createTestICalData({ summary: "Test Event" });
+      mockFetchCalendarObjects.mockResolvedValue([{ data: testData }]);
 
-        const result = await calendarService.searchCalendar({
-          start: new Date("2025-06-20T00:00:00Z"),
-          end: new Date("2025-06-21T00:00:00Z"),
-          query,
-        });
+      const result = await calendarService.searchCalendar({
+        start: new Date("2025-06-20T00:00:00Z"),
+        end: new Date("2025-06-21T00:00:00Z"),
+        query,
+      });
 
-        expect(result).toHaveLength(expectedCount);
-      },
-    );
+      expect(result).toHaveLength(expectedCount);
+    });
   });
 
   describe("getFreeBusy", () => {
@@ -348,24 +345,21 @@ describe("CalendarService", () => {
       ["2025-06-20T12:00:00Z", "2025-06-21T00:00:00Z"],
       ["2025-06-19T00:00:00Z", "2025-06-20T09:00:00Z"], // Before event
       ["2025-06-20T12:00:00Z", "2025-06-21T00:00:00Z"], // After event
-    ])(
-      "should handle different date ranges from %s to %s",
-      async (startStr, endStr) => {
-        mockFetchCalendarObjects.mockResolvedValue([
-          { data: createTestICalData() },
-        ]);
+    ])("should handle different date ranges from %s to %s", async (startStr, endStr) => {
+      mockFetchCalendarObjects.mockResolvedValue([
+        { data: createTestICalData() },
+      ]);
 
-        const start = new Date(startStr);
-        const end = new Date(endStr);
+      const start = new Date(startStr);
+      const end = new Date(endStr);
 
-        const result = await calendarService.getFreeBusy(start, end);
+      const result = await calendarService.getFreeBusy(start, end);
 
-        expect(result.start).toEqual(start);
-        expect(result.end).toEqual(end);
-        expect(Array.isArray(result.busy)).toBe(true);
-        expect(Array.isArray(result.free)).toBe(true);
-      },
-    );
+      expect(result.start).toEqual(start);
+      expect(result.end).toEqual(end);
+      expect(Array.isArray(result.busy)).toBe(true);
+      expect(Array.isArray(result.free)).toBe(true);
+    });
   });
 
   describe("discoverCalendars", () => {
@@ -547,16 +541,13 @@ describe("CalendarService", () => {
       ["case insensitive location", "virtual", 1, "4"],
       ["no matches", "xyz-not-found", 0, null],
       ["empty string", "", 4, null],
-    ])(
-      "should filter %s",
-      (scenario, query, expectedCount, expectedFirstId) => {
-        const results = calendarService.testFilterEventsByQuery(events, query);
-        expect(results).toHaveLength(expectedCount);
-        if (expectedFirstId) {
-          expect(results[0].id).toBe(expectedFirstId);
-        }
-      },
-    );
+    ])("should filter %s", (scenario, query, expectedCount, expectedFirstId) => {
+      const results = calendarService.testFilterEventsByQuery(events, query);
+      expect(results).toHaveLength(expectedCount);
+      if (expectedFirstId) {
+        expect(results[0].id).toBe(expectedFirstId);
+      }
+    });
 
     it("should return all events when query is undefined", () => {
       const results = calendarService.testFilterEventsByQuery(
