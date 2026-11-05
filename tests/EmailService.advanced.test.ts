@@ -1243,17 +1243,13 @@ describe("EmailService - Advanced Coverage", () => {
         [],
       ],
       ["empty array", [], []],
-    ])(
-      "should parse %s",
-      (
-        _description: string,
-        input: unknown,
-        expected: Array<{ name?: string; address: string }>,
-      ) => {
-        const testableService = service as TestableEmailService;
-        const result = testableService.parseAddressesFromParsed(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: unknown, expected: Array<{
+      name?: string;
+      address: string;
+    }>) => {
+      const testableService = service as TestableEmailService;
+      const result = testableService.parseAddressesFromParsed(input);
+      expect(result).toEqual(expected);
+    });
   });
 });
