@@ -1,0 +1,16 @@
+services:
+  mailbox-mcp:
+    image: mailbox-mcp-server:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command:
+      - bun
+      - run
+      - dev
+    volumes:
+      - ./src:/app/src:ro
+    env_file:
+      - path: .env
+        required: false

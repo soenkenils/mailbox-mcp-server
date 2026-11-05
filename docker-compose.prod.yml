@@ -1,0 +1,15 @@
+services:
+  # Long-running service settings; the stdio service is started on demand
+  # by the MCP client and needs none of this
+  mailbox-mcp-http:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"

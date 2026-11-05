@@ -15,6 +15,9 @@ pnpm-debug.log*
 # Build output
 dist/
 
+# Docker
+docker-compose.override.yml
+
 # Environment variables
 .env
 .env.*
@@ -37,4 +40,3 @@ WARP.md
 
 # Documentation
 docs/
-
