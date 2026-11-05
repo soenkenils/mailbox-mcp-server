@@ -20,8 +20,9 @@ services:
     env_file:
       - path: .env
         required: false
+    # No authentication on this endpoint: publish on localhost only
     ports:
-      - "${SUPERGATEWAY_PORT:-8000}:${SUPERGATEWAY_PORT:-8000}"
+      - "127.0.0.1:${SUPERGATEWAY_PORT:-8000}:${SUPERGATEWAY_PORT:-8000}"
     entrypoint:
       - supergateway
     command:

@@ -1,5 +1,7 @@
 services:
-  mailbox-mcp:
+  # Long-running service settings; the stdio service is started on demand
+  # by the MCP client and needs none of this
+  mailbox-mcp-http:
     restart: unless-stopped
     logging:
       driver: json-file
