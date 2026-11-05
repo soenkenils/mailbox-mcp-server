@@ -1,14 +1,11 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import type { SmtpConnection } from "../types/email.types.js";
-import { resolveReachableHost } from "../utils/happyEyeballs.js";
+import { isIpLiteral, resolveReachableHost } from "../utils/happyEyeballs.js";
 import {
   ConnectionPool,
   type ConnectionPoolConfig,
   type ConnectionWrapper,
 } from "./ConnectionPool.js";
-
-const isIpLiteral = (h: string): boolean =>
-  /^[0-9.]+$/.test(h) || h.includes(":");
 
 export interface SmtpConnectionWrapper extends ConnectionWrapper<Transporter> {
   lastVerified?: Date;
@@ -38,17 +35,13 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   async createConnection(): Promise<Transporter> {
-    // Happy-Eyeballs: erreichbare Adress-Family ermitteln (IPv4 vs IPv6), da
-    // nodemailer das nicht selbst macht und je nach Netz/VPN nur eine Route geht.
-    // SNI/Zert laeuft ueber tls.servername (Original-Hostname), Host wird das
-    // erreichbare IP-Literal. servername nur setzen wenn Config ein Hostname ist.
+    // nodemailer connects to one address family only; pick one that is
+    // reachable on this network (see resolveReachableHost)
+    const { host } = this.smtpConfig;
     const reachableHost = await resolveReachableHost(
-      this.smtpConfig.host,
+      host,
       this.smtpConfig.port,
     );
-    const servername = isIpLiteral(this.smtpConfig.host)
-      ? "smtp.mailbox.org"
-      : this.smtpConfig.host;
 
     const transportOptions = {
       host: reachableHost,
@@ -60,7 +53,9 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       },
       tls: {
         rejectUnauthorized: false,
-        servername,
+        // We connect to an IP literal: keep the configured hostname for SNI
+        // and certificate checks. An IP has no name to send.
+        ...(isIpLiteral(host) ? {} : { servername: host }),
       },
       pool: false, // We handle pooling ourselves
       maxConnections: 1,

@@ -1,69 +1,87 @@
 import { promises as dns } from "node:dns";
 import net from "node:net";
 
-const isIpLiteral = (h: string): boolean => net.isIP(h) !== 0;
+export const isIpLiteral = (host: string): boolean => net.isIP(host) !== 0;
+
+export type HostResolver = Pick<typeof dns, "resolve4" | "resolve6">;
 
 /**
- * Happy-Eyeballs-Hostauswahl fuer nodemailer.
+ * Pick a reachable address for a host (simplified Happy Eyeballs).
  *
- * Problem: nodemailer macht KEIN Happy-Eyeballs. Es resolved den Hostnamen und
- * verbindet zu EINER Adress-Family. Auf manchen Setups ist IPv4 zu mailbox.org
- * tot (ETIMEDOUT, nur via VPN offen), auf anderen IPv6. Je nach VPN-Zustand
- * wechselt die erreichbare Family -> kein fixer Host funktioniert in beiden Faellen.
+ * nodemailer resolves the host itself and connects to a single address
+ * family, IPv4 first. On networks where that family is unreachable (for
+ * example IPv4 blocked outside a VPN, or IPv6 broken behind one) every send
+ * fails with ETIMEDOUT although the other family works. smtp.mailbox.org
+ * publishes both A and AAAA records.
  *
- * Loesung: A- und AAAA-Records aufloesen, parallel TCP-Connects rennen lassen,
- * erste erreichbare Adresse gewinnt. Ergebnis wird als IP-Literal zurueckgegeben
- * und als nodemailer-`host` benutzt; SNI/Zert laeuft ueber `tls.servername`.
+ * This resolves A and AAAA records, races TCP connects to all addresses and
+ * returns the first address that accepts a connection. The caller connects
+ * to that IP literal and passes the original hostname as `tls.servername`,
+ * so SNI and certificate checks still use the hostname.
  *
- * @returns erreichbares IP-Literal, oder den Original-Host als Fallback wenn
- *          weder A noch AAAA erreichbar sind (dann soll nodemailer es selbst versuchen).
+ * @returns a reachable IP literal, or `host` unchanged if it already is an IP
+ *          literal, has no DNS records, or no address could be reached
+ *          (nodemailer then tries on its own and reports its usual error)
  */
 export async function resolveReachableHost(
   host: string,
   port: number,
   timeoutMs = 8000,
+  resolver: HostResolver = dns,
 ): Promise<string> {
-  // Bereits ein IP-Literal -> nichts aufzuloesen.
-  if (isIpLiteral(host)) return host;
+  if (isIpLiteral(host)) {
+    return host;
+  }
 
   const [v4, v6] = await Promise.all([
-    dns.resolve4(host).catch(() => [] as string[]),
-    dns.resolve6(host).catch(() => [] as string[]),
+    resolver.resolve4(host).catch(() => [] as string[]),
+    resolver.resolve6(host).catch(() => [] as string[]),
   ]);
 
-  // IPv6 zuerst probieren (auf diesem Rechner ohne VPN die funktionierende Route),
-  // dann IPv4. Beide parallel; erster erfolgreicher Connect gewinnt.
   const candidates = [...v6, ...v4];
-  if (candidates.length === 0) return host;
+  if (candidates.length === 0) {
+    return host;
+  }
 
   return new Promise<string>(resolve => {
     let settled = false;
     let pending = candidates.length;
     const sockets: net.Socket[] = [];
 
-    const cleanup = (winner: string | null) => {
-      if (settled) return;
+    const finish = (winner: string | null) => {
+      if (settled) {
+        return;
+      }
       settled = true;
-      for (const s of sockets) {
-        try {
-          s.destroy();
-        } catch {
-          /* ignore */
-        }
+      for (const socket of sockets) {
+        socket.destroy();
       }
       resolve(winner ?? host);
     };
 
     for (const ip of candidates) {
-      const s = net.connect({ host: ip, port, timeout: timeoutMs });
-      sockets.push(s);
-      s.once("connect", () => cleanup(ip));
+      const socket = net.connect({ host: ip, port, timeout: timeoutMs });
+      sockets.push(socket);
+
+      let failed = false;
       const onFail = () => {
+        // A socket can report "timeout" and later "error": count it once,
+        // otherwise the race ends early while another address still connects
+        if (failed) {
+          return;
+        }
+        failed = true;
+        socket.destroy();
         pending -= 1;
-        if (pending === 0) cleanup(null); // keiner erreichbar -> Original-Host
+        if (pending === 0) {
+          finish(null);
+        }
       };
-      s.once("timeout", onFail);
-      s.once("error", onFail);
+
+      socket.once("connect", () => finish(ip));
+      socket.once("timeout", onFail);
+      // Keep listening: an "error" without a listener would crash the process
+      socket.on("error", onFail);
     }
   });
 }
