@@ -264,10 +264,9 @@ describe("SmtpConnectionPool", () => {
 
       await pool.release(wrapper);
 
-      // Should fail verification and increment failure count
-      await expect(pool.acquire()).rejects.toThrow(
-        "SMTP connection verification failed",
-      );
+      // The failed verification is tracked and a new connection is used
+      const replacement = await pool.acquire();
+      expect(replacement.id).not.toBe(wrapper.id);
 
       // Check that failure was tracked
       const connections = (pool as TestableSmtpConnectionPool).connections;
@@ -294,10 +293,10 @@ describe("SmtpConnectionPool", () => {
       const mockTransporter = storedWrapper.connection as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
-      // Should fail and destroy the connection
-      await expect(pool.acquire()).rejects.toThrow(
-        "SMTP connection failed verification multiple times",
-      );
+      // Should destroy the connection and open a new one
+      const replacement = await pool.acquire();
+      expect(replacement.id).not.toBe(connectionId);
+      expect(connections.has(connectionId)).toBe(false);
     });
   });
 

@@ -43,6 +43,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
   /** Widens the await inside creation and validation so races can be hit. */
   creationDelayMs = 0;
   validationDelayMs = 0;
+  /** When set, every connect waits for this promise before completing. */
+  creationGate?: Promise<void>;
+  /** Every connection this pool has opened, including unregistered ones. */
+  created: MockConnection[] = [];
 
   setShouldFailCreation(fail: boolean): void {
     this.shouldFailCreation = fail;
@@ -61,12 +65,18 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
       await new Promise(resolve => setTimeout(resolve, this.creationDelayMs));
     }
 
+    if (this.creationGate) {
+      await this.creationGate;
+    }
+
     this.connectionCounter++;
-    return new MockConnection(
+    const connection = new MockConnection(
       `conn-${this.connectionCounter}`,
       true,
       this.shouldFailCreation,
     );
+    this.created.push(connection);
+    return connection;
   }
 
   async validateConnection(connection: MockConnection): Promise<boolean> {
@@ -104,6 +114,38 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
     return this.waitingQueue;
   }
 }
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(r => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Lets pending promise callbacks run without advancing any timer. */
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+/** Records how a promise settles, so a test can check it at any point. */
+const track = <V>(promise: Promise<V>) => {
+  const state: { value?: V; error?: Error } = {};
+  promise.then(
+    value => {
+      state.value = value;
+    },
+    error => {
+      state.error = error;
+    },
+  );
+  return state;
+};
+
+/** Resolves with how the promise settled, never rejects. */
+const outcome = <V>(promise: Promise<V>) =>
+  promise.then(
+    value => ({ value, error: undefined }),
+    (error: Error) => ({ value: undefined, error }),
+  );
 
 describe("ConnectionPool", () => {
   let pool: TestConnectionPool;
@@ -197,13 +239,15 @@ describe("ConnectionPool", () => {
       const wrapper1 = await pool.acquire();
       await pool.release(wrapper1);
 
-      // Make validation fail
+      // The server dropped the idle connection.
       pool.setShouldFailValidation(true);
 
-      // Should create a new connection instead of reusing invalid one
-      await expect(pool.acquire()).rejects.toThrow(
-        "Connection validation failed",
-      );
+      // A new connection replaces it instead of the acquire failing.
+      const wrapper2 = await pool.acquire();
+      expect(wrapper2.id).not.toBe(wrapper1.id);
+      expect(wrapper1.connection.isValid).toBe(false);
+      expect(pool.getConnections().size).toBe(1);
+      await pool.release(wrapper2);
     });
 
     it("should handle connection creation failures", async () => {
@@ -348,6 +392,50 @@ describe("ConnectionPool", () => {
       expect(metrics.totalDestroyed).toBeGreaterThan(0);
     });
 
+    it("should not validate idle connections the pool says need no verification yet", async () => {
+      class RecentlyVerifiedPool extends TestConnectionPool {
+        protected needsVerification(): boolean {
+          return false;
+        }
+      }
+      const verifiedPool = new RecentlyVerifiedPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+      try {
+        await verifiedPool.release(await verifiedPool.acquire());
+        const validate = vi.spyOn(verifiedPool, "validateConnection");
+
+        await (
+          verifiedPool as unknown as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+
+        expect(validate).not.toHaveBeenCalled();
+        expect(verifiedPool.getConnections().size).toBe(1);
+      } finally {
+        await verifiedPool.destroy();
+      }
+    });
+
+    it("should validate idle connections by default", async () => {
+      const checkPool = new TestConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+      try {
+        await checkPool.release(await checkPool.acquire());
+        const validate = vi.spyOn(checkPool, "validateConnection");
+
+        await (
+          checkPool as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+
+        expect(validate).toHaveBeenCalledTimes(1);
+      } finally {
+        await checkPool.destroy();
+      }
+    });
+
     it("should maintain minimum connections", async () => {
       // Pool should create minimum connections during health check
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -404,6 +492,94 @@ describe("ConnectionPool", () => {
         await pool.release(conn);
       }
       await shutdownPromise;
+    });
+
+    describe("with connects in flight", () => {
+      let shutdownPool: TestConnectionPool;
+
+      beforeEach(() => {
+        shutdownPool = new TestConnectionPool({
+          ...config,
+          healthCheckIntervalMs: 60_000,
+        });
+      });
+
+      afterEach(async () => {
+        await shutdownPool.destroy();
+      });
+
+      it("should close a connection that finishes opening after destroy", async () => {
+        const gate = deferred();
+        shutdownPool.creationGate = gate.promise;
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+        expect(shutdownPool.created).toHaveLength(1);
+        expect(shutdownPool.created[0].isValid).toBe(false);
+        expect(shutdownPool.getConnections().size).toBe(0);
+        const metrics = shutdownPool.getMetrics();
+        expect(metrics.totalConnections).toBe(0);
+        expect(metrics.activeConnections).toBe(0);
+      });
+
+      it("should close a minimum connection the health check opens during destroy", async () => {
+        const gate = deferred();
+        shutdownPool.creationGate = gate.promise;
+
+        const healthCheck = (
+          shutdownPool as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+        await healthCheck;
+
+        expect(shutdownPool.created).toHaveLength(1);
+        expect(shutdownPool.created[0].isValid).toBe(false);
+        expect(shutdownPool.getConnections().size).toBe(0);
+      });
+
+      it("should not retry a failed connect once the pool is destroyed", async () => {
+        shutdownPool.setShouldFailCreation(true);
+        const createSpy = vi.spyOn(shutdownPool, "createConnection");
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+        expect(createSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it("should reject acquire immediately once destroyed", async () => {
+        await shutdownPool.destroy();
+        const createSpy = vi.spyOn(shutdownPool, "createConnection");
+
+        await expect(shutdownPool.acquire()).rejects.toThrow(
+          "Connection pool is shutting down",
+        );
+        expect(createSpy).not.toHaveBeenCalled();
+      });
+
+      it("should not hand out an idle connection destroyed while it was validated", async () => {
+        await shutdownPool.release(await shutdownPool.acquire());
+        const gate = deferred();
+        shutdownPool.validateConnection = async () => {
+          await gate.promise;
+          return true;
+        };
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+      });
     });
   });
 
@@ -726,6 +902,24 @@ describe("ConnectionPool", () => {
       expect(acquired.connection.isValid).toBe(true);
     });
 
+    it("should not reap idle connections below minConnections in one pass", async () => {
+      const first = await racePool.acquire();
+      const second = await racePool.acquire();
+      await racePool.release(first);
+      await racePool.release(second);
+      first.lastUsed = new Date(0);
+      second.lastUsed = new Date(0);
+      const createSpy = vi.spyOn(racePool, "createConnection");
+
+      await (
+        racePool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+
+      expect(racePool.getConnections().size).toBe(config.minConnections);
+      expect(racePool.getMetrics().totalDestroyed).toBe(1);
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
     it("should leave connections opened by the health check available", async () => {
       await (
         racePool as TestableConnectionPool<MockConnection>
@@ -775,6 +969,258 @@ describe("ConnectionPool", () => {
     });
   });
 
+  describe("waiters after a connection is destroyed", () => {
+    // A single slot makes every freed slot observable; a long acquire timeout
+    // means a stranded waiter shows up as still pending, not as a timeout.
+    let slotPool: TestConnectionPool;
+
+    beforeEach(() => {
+      slotPool = new TestConnectionPool({
+        ...config,
+        minConnections: 0,
+        maxConnections: 1,
+        maxRetries: 0,
+        acquireTimeoutMs: 60_000,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await slotPool.destroy();
+    });
+
+    it("should not hand a waiter a connection destroy() closed while it was validated", async () => {
+      const held = await slotPool.acquire();
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+      const destroySpy = vi.spyOn(slotPool, "destroyConnection");
+
+      const releasing = slotPool.release(held);
+      await flush();
+      await slotPool.destroy();
+      gate.resolve();
+      await releasing;
+
+      expect((await waiting).error?.message).toMatch(/shut/);
+      expect(destroySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should not make release() wait for a waiter's replacement connect", async () => {
+      const held = await slotPool.acquire();
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      slotPool.setShouldFailValidation(true);
+      const gate = deferred();
+      slotPool.creationGate = gate.promise;
+
+      let released = false;
+      const releasing = slotPool.release(held).then(() => {
+        released = true;
+      });
+      await flush();
+      await flush();
+      expect(released).toBe(true);
+
+      gate.resolve();
+      await releasing;
+      expect((await waiting).value?.connection.isValid).toBe(true);
+    });
+
+    /** Holds the close of `slow` until the returned gate opens. */
+    const slowClose = (slow: MockConnection) => {
+      const gate = deferred();
+      slotPool.destroyConnection = async connection => {
+        if (connection === slow) {
+          await gate.promise;
+        }
+        await connection.close();
+      };
+      return gate;
+    };
+
+    it("should not open a replacement while the old connection is still closing", async () => {
+      const held = await slotPool.acquire();
+      held.isHealthy = false;
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = slowClose(held.connection);
+      const createSpy = vi.spyOn(slotPool, "createConnection");
+
+      await slotPool.release(held);
+      await flush();
+      expect(createSpy).not.toHaveBeenCalled();
+
+      gate.resolve();
+      expect((await waiting).value?.connection.isValid).toBe(true);
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should make destroy() wait for closes already in progress", async () => {
+      const held = await slotPool.acquire();
+      held.isHealthy = false;
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = slowClose(held.connection);
+      await slotPool.release(held);
+
+      let destroyed = false;
+      const destroying = slotPool.destroy().then(() => {
+        destroyed = true;
+      });
+      for (let i = 0; i < 5; i++) {
+        await flush();
+      }
+      expect(destroyed).toBe(false);
+
+      gate.resolve();
+      await destroying;
+      expect(held.connection.isValid).toBe(false);
+      await waiting;
+    });
+
+    it("should close a connection only once when destroy() runs during a failing validation", async () => {
+      await slotPool.release(await slotPool.acquire());
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return false;
+      };
+      const destroySpy = vi.spyOn(slotPool, "destroyConnection");
+
+      const acquiring = outcome(slotPool.acquire());
+      await flush();
+      await slotPool.destroy();
+      gate.resolve();
+      await acquiring;
+
+      expect(destroySpy).toHaveBeenCalledTimes(1);
+      expect(slotPool.getMetrics().totalDestroyed).toBe(1);
+    });
+
+    it("should ignore a second release of the same connection", async () => {
+      const held = await slotPool.acquire();
+      const first = outcome(slotPool.acquire());
+      const second = track(slotPool.acquire());
+      await flush();
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+
+      const releases = [slotPool.release(held), slotPool.release(held)];
+      gate.resolve();
+      await Promise.all(releases);
+
+      expect((await first).value?.id).toBe(held.id);
+      await flush();
+      expect(second.value).toBeUndefined();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+      expect(slotPool.getMetrics().totalReleased).toBe(1);
+    });
+
+    it("should ignore releasing a connection that is already idle", async () => {
+      const held = await slotPool.acquire();
+      await slotPool.release(held);
+      await slotPool.release(held);
+
+      expect(slotPool.getMetrics().totalReleased).toBe(1);
+    });
+
+    it("should give a waiter a new connection when the handed-off one fails validation", async () => {
+      const held = await slotPool.acquire();
+      const waiting = slotPool.acquire();
+      await flush();
+
+      slotPool.setShouldFailValidation(true);
+      await slotPool.release(held);
+
+      const wrapper = await waiting;
+      expect(wrapper.id).not.toBe(held.id);
+      expect(wrapper.connection.isValid).toBe(true);
+      expect(slotPool.getConnections().size).toBe(1);
+    });
+
+    it("should reject every waiter with the connect error when no replacement can be opened", async () => {
+      const held = await slotPool.acquire();
+      const first = outcome(slotPool.acquire());
+      const second = outcome(slotPool.acquire());
+      await flush();
+
+      slotPool.setShouldFailValidation(true);
+      slotPool.setShouldFailCreation(true);
+      const createSpy = vi.spyOn(slotPool, "createConnection");
+      await slotPool.release(held);
+
+      expect((await first).error?.message).toContain(
+        "Failed to create connection",
+      );
+      expect((await second).error?.message).toContain(
+        "Failed to create connection",
+      );
+      // One bounded attempt per waiter, no retry loop.
+      expect(createSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("should serve a waiter queued behind a connect that fails", async () => {
+      const gate = deferred();
+      const createConnection = slotPool.createConnection.bind(slotPool);
+      let calls = 0;
+      slotPool.createConnection = async () => {
+        calls++;
+        if (calls === 1) {
+          await gate.promise;
+          throw new Error("connect refused");
+        }
+        return createConnection();
+      };
+
+      const first = outcome(slotPool.acquire());
+      await flush();
+      // The slot is held by the connect in flight, so this waits.
+      const second = outcome(slotPool.acquire());
+      await flush();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+
+      gate.resolve();
+
+      expect((await first).error?.message).toContain("connect refused");
+      const served = await second;
+      expect(served.error).toBeUndefined();
+      expect(served.value?.connection.isValid).toBe(true);
+    });
+
+    it("should serve a waiter when the health check destroys the connection it was checking", async () => {
+      await slotPool.release(await slotPool.acquire());
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return false;
+      };
+
+      const healthCheck = (
+        slotPool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+      await flush();
+      // The only connection is claimed by the health check, so this waits.
+      const waiting = track(slotPool.acquire());
+      await flush();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+
+      gate.resolve();
+      await healthCheck;
+      await flush();
+
+      expect(waiting.error).toBeUndefined();
+      expect(waiting.value?.connection.isValid).toBe(true);
+    });
+  });
+
   describe("waiting request metric", () => {
     let waitPool: TestConnectionPool;
 
@@ -797,13 +1243,41 @@ describe("ConnectionPool", () => {
     it("should count a waiter only while it is waiting", async () => {
       const held = await fillPool();
       const waiting = waitPool.acquire();
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flush();
       expect(waitPool.getMetrics().waitingRequests).toBe(1);
 
       await waitPool.release(held[0]);
       await waiting;
 
       expect(waitPool.getMetrics().waitingRequests).toBe(0);
+    });
+
+    it("should not count an acquire that is opening a connection", async () => {
+      const gate = deferred();
+      waitPool.creationGate = gate.promise;
+
+      const acquiring = waitPool.acquire();
+      await flush();
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+
+      gate.resolve();
+      await acquiring;
+    });
+
+    it("should not count an acquire that is validating an idle connection", async () => {
+      await waitPool.release(await waitPool.acquire());
+      const gate = deferred();
+      waitPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+
+      const acquiring = waitPool.acquire();
+      await flush();
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+
+      gate.resolve();
+      await acquiring;
     });
 
     it("should stop counting a waiter once it times out", async () => {
