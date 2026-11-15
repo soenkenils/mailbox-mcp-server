@@ -1070,13 +1070,41 @@ describe("ConnectionPool", () => {
     it("should count a waiter only while it is waiting", async () => {
       const held = await fillPool();
       const waiting = waitPool.acquire();
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flush();
       expect(waitPool.getMetrics().waitingRequests).toBe(1);
 
       await waitPool.release(held[0]);
       await waiting;
 
       expect(waitPool.getMetrics().waitingRequests).toBe(0);
+    });
+
+    it("should not count an acquire that is opening a connection", async () => {
+      const gate = deferred();
+      waitPool.creationGate = gate.promise;
+
+      const acquiring = waitPool.acquire();
+      await flush();
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+
+      gate.resolve();
+      await acquiring;
+    });
+
+    it("should not count an acquire that is validating an idle connection", async () => {
+      await waitPool.release(await waitPool.acquire());
+      const gate = deferred();
+      waitPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+
+      const acquiring = waitPool.acquire();
+      await flush();
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+
+      gate.resolve();
+      await acquiring;
     });
 
     it("should stop counting a waiter once it times out", async () => {

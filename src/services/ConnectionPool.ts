@@ -112,10 +112,6 @@ export abstract class ConnectionPool<T> {
       throw new Error("Connection pool is shutting down");
     }
 
-    // Counted until this call settles, however it settles: decremented in
-    // exactly one place so the gauge cannot drift.
-    this.metrics.waitingRequests++;
-
     try {
       // Claimed before activation awaits validation, so a concurrent acquire
       // cannot take the same connection in the meantime.
@@ -143,8 +139,6 @@ export abstract class ConnectionPool<T> {
         this.serveQueuedWaiters().catch(() => undefined);
       }
       throw error;
-    } finally {
-      this.metrics.waitingRequests--;
     }
   }
 
@@ -729,6 +723,11 @@ export abstract class ConnectionPool<T> {
       this.config.maxConnections > 0
         ? (active / this.config.maxConnections) * 100
         : 0;
+    // Derived from the queue rather than counted, so it cannot drift and
+    // covers only requests actually queued, not those opening a connection.
+    this.metrics.waitingRequests = this.waitingQueue.filter(
+      request => !request.settled,
+    ).length;
     this.metrics.lastHealthCheck = now;
     this.metrics.connectionErrors = [...this.connectionErrors];
   }
