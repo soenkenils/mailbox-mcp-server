@@ -193,7 +193,7 @@ export class MemoryCache implements LocalCache {
 
     // Priority-based eviction algorithm
     // Score = priority * access_frequency + age_factor
-    entries.sort(([keyA, entryA], [keyB, entryB]) => {
+    entries.sort(([_keyA, entryA], [_keyB, entryB]) => {
       const now = Date.now();
       const scoreA = this.calculateEvictionScore(entryA, now);
       const scoreB = this.calculateEvictionScore(entryB, now);

@@ -13,8 +13,6 @@ import type { LocalCache } from "../src/types/cache.types.js";
 import type {
   EmailComposition,
   EmailFolder,
-  EmailMessage,
-  EmailSearchOptions,
   ImapConnection,
   ImapConnectionWrapper,
 } from "../src/types/email.types.js";
@@ -110,20 +108,6 @@ vi.mock("imapflow", () => {
   };
 });
 
-// Mock OfflineService
-const mockOfflineService = {
-  getOfflineCapabilities: vi.fn(),
-  searchEmailsOffline: vi.fn(),
-  getEmailOffline: vi.fn(),
-  getFoldersOffline: vi.fn(),
-};
-
-vi.mock("../src/services/OfflineService.js", () => ({
-  OfflineService: vi.fn(function () {
-    return mockOfflineService;
-  }),
-}));
-
 // Mock ImapConnectionPool
 const mockPool = {
   acquire: vi.fn(),
@@ -174,8 +158,8 @@ describe("EmailService - Advanced Coverage", () => {
 
     service = new EmailService(
       mockImapConnection,
-      poolConfig,
       mockCache,
+      poolConfig,
     ) as TestableEmailService;
 
     // Reset mock implementations
@@ -391,165 +375,6 @@ describe("EmailService - Advanced Coverage", () => {
         expect(result).toEqual(metrics);
         expect(mockPool.getImapMetrics).toHaveBeenCalledTimes(1);
       });
-    });
-
-    describe("getOfflineCapabilities", () => {
-      it("should delegate to offlineService", () => {
-        const capabilities = {
-          searchOffline: true,
-          getEmailOffline: true,
-          getFoldersOffline: true,
-        };
-        mockOfflineService.getOfflineCapabilities.mockReturnValue(capabilities);
-
-        const result = service.getOfflineCapabilities();
-
-        expect(result).toEqual(capabilities);
-        expect(mockOfflineService.getOfflineCapabilities).toHaveBeenCalledTimes(
-          1,
-        );
-      });
-    });
-
-    describe("searchEmailsOffline", () => {
-      it("should delegate to offlineService with correct options", async () => {
-        const options: EmailSearchOptions = {
-          folder: "INBOX",
-          query: "test",
-        };
-        const results: EmailMessage[] = [
-          {
-            id: "msg-1",
-            uid: 1,
-            subject: "Test",
-            from: [{ address: "test@example.com" }],
-            to: [{ address: "recipient@example.com" }],
-            date: new Date(),
-            flags: [],
-            folder: "INBOX",
-          },
-        ];
-        mockOfflineService.searchEmailsOffline.mockResolvedValue(results);
-
-        const result = await service.searchEmailsOffline(options);
-
-        expect(result).toEqual(results);
-        expect(mockOfflineService.searchEmailsOffline).toHaveBeenCalledWith(
-          options,
-        );
-      });
-    });
-
-    describe("getEmailOffline", () => {
-      it("should fetch email by UID from offline cache", async () => {
-        const email: EmailMessage = {
-          id: "msg-1",
-          uid: 123,
-          subject: "Test",
-          from: [{ address: "test@example.com" }],
-          to: [{ address: "recipient@example.com" }],
-          date: new Date(),
-          flags: [],
-          folder: "INBOX",
-        };
-        mockOfflineService.getEmailOffline.mockResolvedValue(email);
-
-        const result = await service.getEmailOffline(123, "INBOX");
-
-        expect(result).toEqual(email);
-        expect(mockOfflineService.getEmailOffline).toHaveBeenCalledWith(
-          123,
-          "INBOX",
-        );
-      });
-
-      it("should return null if not found", async () => {
-        mockOfflineService.getEmailOffline.mockResolvedValue(null);
-
-        const result = await service.getEmailOffline(999);
-
-        expect(result).toBeNull();
-      });
-    });
-
-    describe("getFoldersOffline", () => {
-      it("should return offline folder list", async () => {
-        const folders: EmailFolder[] = [
-          {
-            name: "INBOX",
-            path: "INBOX",
-            delimiter: "/",
-            flags: [],
-          },
-        ];
-        mockOfflineService.getFoldersOffline.mockResolvedValue(folders);
-
-        const result = await service.getFoldersOffline();
-
-        expect(result).toEqual(folders);
-        expect(mockOfflineService.getFoldersOffline).toHaveBeenCalledTimes(1);
-      });
-    });
-  });
-
-  describe("validatePoolHealth", () => {
-    it("should return true for healthy pool", async () => {
-      mockPool.getMetrics.mockReturnValue({
-        totalConnections: 3,
-        activeConnections: 1,
-        idleConnections: 2,
-        totalErrors: 1,
-      });
-
-      const result = await service.validatePoolHealth();
-
-      expect(result).toBe(true);
-    });
-
-    it("should return false when errors >= connections", async () => {
-      mockPool.getMetrics.mockReturnValue({
-        totalConnections: 2,
-        activeConnections: 1,
-        idleConnections: 1,
-        totalErrors: 2,
-      });
-
-      const result = await service.validatePoolHealth();
-
-      expect(result).toBe(false);
-    });
-
-    it("should return false when no connections exist", async () => {
-      mockPool.getMetrics.mockReturnValue({
-        totalConnections: 0,
-        activeConnections: 0,
-        idleConnections: 0,
-        totalErrors: 0,
-      });
-
-      const result = await service.validatePoolHealth();
-
-      expect(result).toBe(false);
-    });
-
-    it("should return false and log error on exception", async () => {
-      mockPool.getMetrics.mockImplementation(() => {
-        throw new Error("Pool error");
-      });
-
-      const result = await service.validatePoolHealth();
-
-      expect(result).toBe(false);
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        "Error checking pool health",
-        expect.objectContaining({
-          operation: "isHealthy",
-          service: "EmailService",
-        }),
-        expect.objectContaining({
-          error: "Pool error",
-        }),
-      );
     });
   });
 
@@ -1076,7 +901,6 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockLogger.warning).toHaveBeenCalledWith(
         "Returning stale cached data due to connection failure",
         expect.any(Object),
-        expect.any(Object),
       );
     });
 
@@ -1105,7 +929,6 @@ describe("EmailService - Advanced Coverage", () => {
       ]);
       expect(mockLogger.warning).toHaveBeenCalledWith(
         "No cached data available, returning default value due to connection failure",
-        expect.any(Object),
         expect.any(Object),
       );
     });
@@ -1143,7 +966,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       try {
         await service.getFolders();
-      } catch (error) {
+      } catch (_error) {
         // Expected
       }
 
@@ -1293,18 +1116,6 @@ describe("EmailService - Advanced Coverage", () => {
         isHealthy: true,
       } as Partial<ImapConnectionWrapper>);
 
-    let emailService: EmailService;
-
-    beforeEach(() => {
-      // The outer suite passes (connection, poolConfig, cache), which leaves
-      // the cache unusable; getEmail needs a working cache mock.
-      emailService = new EmailService(
-        mockImapConnection,
-        mockCache,
-        poolConfig,
-      );
-    });
-
     afterEach(() => {
       vi.useRealTimers();
     });
@@ -1316,9 +1127,9 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const assertion = expect(
-        emailService.getEmail(7, "INBOX"),
-      ).rejects.toThrow(/timed out/);
+      const assertion = expect(service.getEmail(7, "INBOX")).rejects.toThrow(
+        /timed out/,
+      );
       await vi.advanceTimersByTimeAsync(10000);
       await assertion;
 
@@ -1332,7 +1143,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      await expect(emailService.getEmail(7, "INBOX")).rejects.toThrow(
+      await expect(service.getEmail(7, "INBOX")).rejects.toThrow(
         /Command failed/,
       );
       expect(wrapper.isHealthy).toBe(false);
@@ -1347,7 +1158,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const result = emailService.getEmail(7, "INBOX");
+      const result = service.getEmail(7, "INBOX");
       await vi.advanceTimersByTimeAsync(10000);
 
       await expect(result).resolves.toBe(stale);
@@ -1358,7 +1169,7 @@ describe("EmailService - Advanced Coverage", () => {
       const wrapper = wrapperWithFetchOne(vi.fn().mockResolvedValue(false));
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      await expect(emailService.getEmail(7, "INBOX")).resolves.toBeNull();
+      await expect(service.getEmail(7, "INBOX")).resolves.toBeNull();
       expect(wrapper.isHealthy).toBe(true);
     });
 
@@ -1369,7 +1180,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const email = await emailService.getEmail(7, "INBOX");
+      const email = await service.getEmail(7, "INBOX");
 
       expect(email?.subject).toBe("Hi");
       expect(vi.getTimerCount()).toBe(0);

@@ -63,7 +63,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 2. Copy the example environment file and update it with your credentials:
 
    ```bash
-   cp env.example .env
+   cp .env.example .env
    ```
 
    > **Note**: For security, it's recommended to use an [App Password](https://support.mailbox.org/en/help/app-passwords) instead of your main account password.

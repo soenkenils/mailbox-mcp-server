@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EmailService } from "../src/services/EmailService.js";
 import type { SmtpService } from "../src/services/SmtpService.js";
 import { handleEmailTool } from "../src/tools/emailTools.js";
-import type { EmailMessage } from "../src/types/email.types.js";
 
 vi.mock("../src/services/EmailService.js");
 vi.mock("../src/services/SmtpService.js");
@@ -10,18 +9,6 @@ vi.mock("../src/services/SmtpService.js");
 describe("Email Tools - Extended Coverage", () => {
   let mockEmailService: Partial<EmailService>;
   let mockSmtpService: Partial<SmtpService>;
-
-  const mockEmail: EmailMessage = {
-    id: "msg-1",
-    uid: 123,
-    subject: "Test Subject",
-    from: [{ name: "Test Sender", address: "sender@example.com" }],
-    to: [{ name: "Test Recipient", address: "recipient@example.com" }],
-    date: new Date("2024-01-01T10:00:00Z"),
-    text: "Test email content",
-    flags: [],
-    folder: "INBOX",
-  };
 
   beforeEach(() => {
     mockEmailService = {
@@ -43,7 +30,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("send_email", () => {
     it("should send email successfully", async () => {
-      vi.mocked(mockSmtpService.sendEmail!).mockResolvedValue({
+      vi.mocked(mockSmtpService.sendEmail).mockResolvedValue({
         success: true,
         message: "Email sent",
         messageId: "msg-123",
@@ -74,7 +61,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should send email with CC and BCC", async () => {
-      vi.mocked(mockSmtpService.sendEmail!).mockResolvedValue({
+      vi.mocked(mockSmtpService.sendEmail).mockResolvedValue({
         success: true,
         message: "Email sent",
       });
@@ -101,7 +88,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should send email with HTML body", async () => {
-      vi.mocked(mockSmtpService.sendEmail!).mockResolvedValue({
+      vi.mocked(mockSmtpService.sendEmail).mockResolvedValue({
         success: true,
         message: "Email sent",
       });
@@ -125,7 +112,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should handle send failure", async () => {
-      vi.mocked(mockSmtpService.sendEmail!).mockResolvedValue({
+      vi.mocked(mockSmtpService.sendEmail).mockResolvedValue({
         success: false,
         message: "SMTP authentication failed",
       });
@@ -164,7 +151,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("create_draft", () => {
     it("should create draft successfully", async () => {
-      vi.mocked(mockEmailService.createDraft!).mockResolvedValue({
+      vi.mocked(mockEmailService.createDraft).mockResolvedValue({
         success: true,
         message: "Draft saved",
         uid: 456,
@@ -186,7 +173,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should create draft in custom folder", async () => {
-      vi.mocked(mockEmailService.createDraft!).mockResolvedValue({
+      vi.mocked(mockEmailService.createDraft).mockResolvedValue({
         success: true,
         message: "Draft saved",
       });
@@ -202,12 +189,12 @@ describe("Email Tools - Extended Coverage", () => {
         mockEmailService as EmailService,
       );
 
-      const calls = vi.mocked(mockEmailService.createDraft!).mock.calls;
+      const calls = vi.mocked(mockEmailService.createDraft).mock.calls;
       expect(calls[0][1]).toBe("Custom Drafts");
     });
 
     it("should handle draft creation failure", async () => {
-      vi.mocked(mockEmailService.createDraft!).mockResolvedValue({
+      vi.mocked(mockEmailService.createDraft).mockResolvedValue({
         success: false,
         message: "Drafts folder not found",
       });
@@ -229,7 +216,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("move_email", () => {
     it("should move email successfully", async () => {
-      vi.mocked(mockEmailService.moveEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.moveEmail).mockResolvedValue({
         success: true,
         message: "Email moved",
       });
@@ -254,7 +241,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should handle move failure", async () => {
-      vi.mocked(mockEmailService.moveEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.moveEmail).mockResolvedValue({
         success: false,
         message: "Destination folder not found",
       });
@@ -276,7 +263,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("mark_email", () => {
     it("should mark email as read", async () => {
-      vi.mocked(mockEmailService.markEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.markEmail).mockResolvedValue({
         success: true,
         message: "Email marked",
       });
@@ -305,7 +292,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should mark email as unread", async () => {
-      vi.mocked(mockEmailService.markEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.markEmail).mockResolvedValue({
         success: true,
         message: "Email marked",
       });
@@ -330,7 +317,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should mark email with multiple flags", async () => {
-      vi.mocked(mockEmailService.markEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.markEmail).mockResolvedValue({
         success: true,
         message: "Email marked",
       });
@@ -355,7 +342,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should handle mark failure", async () => {
-      vi.mocked(mockEmailService.markEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.markEmail).mockResolvedValue({
         success: false,
         message: "Email not found",
       });
@@ -380,7 +367,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("delete_email", () => {
     it("should delete email (soft delete)", async () => {
-      vi.mocked(mockEmailService.deleteEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
         success: true,
         message: "Email moved to trash",
       });
@@ -406,7 +393,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should delete email permanently", async () => {
-      vi.mocked(mockEmailService.deleteEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
         success: true,
         message: "Email permanently deleted",
       });
@@ -429,7 +416,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should handle delete failure", async () => {
-      vi.mocked(mockEmailService.deleteEmail!).mockResolvedValue({
+      vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
         success: false,
         message: "Email not found",
       });
@@ -450,7 +437,7 @@ describe("Email Tools - Extended Coverage", () => {
 
   describe("get_folders", () => {
     it("should list folders successfully", async () => {
-      vi.mocked(mockEmailService.getFolders!).mockResolvedValue([
+      vi.mocked(mockEmailService.getFolders).mockResolvedValue([
         {
           name: "INBOX",
           path: "INBOX",
@@ -489,7 +476,7 @@ describe("Email Tools - Extended Coverage", () => {
     });
 
     it("should handle empty folder list", async () => {
-      vi.mocked(mockEmailService.getFolders!).mockResolvedValue([]);
+      vi.mocked(mockEmailService.getFolders).mockResolvedValue([]);
 
       const result = await handleEmailTool(
         "get_folders",
