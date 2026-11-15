@@ -73,7 +73,6 @@ export interface LogEntry {
 
 /**
  * Common interface for logging functionality
- * Implemented by both Logger and ChildLogger
  */
 export interface LoggerLike {
   debug(
@@ -116,6 +115,10 @@ export interface LoggerLike {
     context?: LogContext,
     data?: Record<string, unknown>,
   ): void;
+  startTimer(
+    operation: string,
+    metadata?: Record<string, unknown>,
+  ): PerformanceTimer;
 }
 
 /**
@@ -510,24 +513,25 @@ export class Logger {
   }
 
   /**
-   * Internal method for child loggers to access logging functionality
-   * @internal
-   */
-  _logInternal(
-    level: LogLevel,
-    message: string,
-    context?: LogContext,
-    loggerName?: string,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(level, message, context, loggerName, data);
-  }
-
-  /**
    * Create a child logger with a specific logger name
    */
-  child(loggerName: string): ChildLogger {
-    return new ChildLogger(this, loggerName);
+  child(loggerName: string): LoggerLike {
+    const bind =
+      (level: LogLevel) =>
+      (message: string, context?: LogContext, data?: Record<string, unknown>) =>
+        this.log(level, message, context, loggerName, data);
+
+    return {
+      debug: bind(LogLevel.DEBUG),
+      info: bind(LogLevel.INFO),
+      notice: bind(LogLevel.NOTICE),
+      warning: bind(LogLevel.WARNING),
+      error: bind(LogLevel.ERROR),
+      critical: bind(LogLevel.CRITICAL),
+      alert: bind(LogLevel.ALERT),
+      emergency: bind(LogLevel.EMERGENCY),
+      startTimer: (operation, metadata) => this.startTimer(operation, metadata),
+    };
   }
 
   /**
@@ -538,100 +542,6 @@ export class Logger {
     metadata?: Record<string, unknown>,
   ): PerformanceTimer {
     return new PerformanceTimer(this, operation, metadata);
-  }
-}
-
-/**
- * Child logger with a predefined logger name
- */
-export class ChildLogger {
-  constructor(
-    private parent: Logger,
-    private loggerName: string,
-  ) {}
-
-  /**
-   * Access to parent's log method for internal use
-   */
-  private log(
-    level: LogLevel,
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    // Use the internal method provided by parent
-    this.parent._logInternal(level, message, context, this.loggerName, data);
-  }
-
-  debug(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.DEBUG, message, context, data);
-  }
-
-  info(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.INFO, message, context, data);
-  }
-
-  notice(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.NOTICE, message, context, data);
-  }
-
-  warning(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.WARNING, message, context, data);
-  }
-
-  error(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.ERROR, message, context, data);
-  }
-
-  critical(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.CRITICAL, message, context, data);
-  }
-
-  alert(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.ALERT, message, context, data);
-  }
-
-  emergency(
-    message: string,
-    context?: LogContext,
-    data?: Record<string, unknown>,
-  ): void {
-    this.log(LogLevel.EMERGENCY, message, context, data);
-  }
-
-  startTimer(
-    operation: string,
-    metadata?: Record<string, unknown>,
-  ): PerformanceTimer {
-    return this.parent.startTimer(operation, metadata);
   }
 }
 
@@ -679,6 +589,6 @@ export const logger = new Logger();
 /**
  * Convenience function to create a child logger
  */
-export function createLogger(loggerName: string): ChildLogger {
+export function createLogger(loggerName: string): LoggerLike {
   return logger.child(loggerName);
 }

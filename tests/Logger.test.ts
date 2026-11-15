@@ -1,7 +1,6 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ChildLogger,
   type LogContext,
   Logger,
   type LoggerConfig,
