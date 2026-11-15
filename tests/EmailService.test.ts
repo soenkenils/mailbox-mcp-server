@@ -278,73 +278,103 @@ describe("EmailService", () => {
       expect(result).toBeDefined();
       expect(result).toEqual({ since: new Date("2025-05-31T00:00:00Z") });
     });
+  });
 
-    it("should build seen flag criteria", () => {
-      const result = buildSearchCriteria({ seen: true });
-      expect(result).toEqual({ seen: true });
+  describe("searchEmails - IMAP flag filters", () => {
+    const FLAG_KEYS = ["seen", "answered", "flagged", "draft", "deleted"];
+
+    beforeEach(() => {
+      // Search only needs to reach connection.search; no headers to fetch.
+      mockFetch.mockImplementation(async function* () {});
     });
 
-    it("should build unseen flag criteria", () => {
-      const result = buildSearchCriteria({ seen: false });
-      expect(result).toEqual({ seen: false });
+    const lastSearchCriteria = () => {
+      expect(mockSearch).toHaveBeenCalledTimes(1);
+      return mockSearch.mock.calls[0][0] as Record<string, unknown>;
+    };
+
+    it("passes only the requested flags to connection.search", async () => {
+      await emailService.searchEmails({ seen: false, flagged: true });
+
+      const criteria = lastSearchCriteria();
+      expect(criteria).toEqual({ seen: false, flagged: true });
+      for (const key of ["answered", "draft", "deleted"]) {
+        expect(criteria).not.toHaveProperty(key);
+      }
     });
 
-    it("should build answered flag criteria", () => {
-      const result = buildSearchCriteria({ answered: true });
-      expect(result).toEqual({ answered: true });
+    it.each(FLAG_KEYS)("passes %s: true and false through", async key => {
+      await emailService.searchEmails({ [key]: true });
+      expect(lastSearchCriteria()).toEqual({ [key]: true });
+
+      mockSearch.mockClear();
+      await emailService.searchEmails({ [key]: false });
+      expect(lastSearchCriteria()).toEqual({ [key]: false });
     });
 
-    it("should build flagged flag criteria", () => {
-      const result = buildSearchCriteria({ flagged: true });
-      expect(result).toEqual({ flagged: true });
+    it("does not add flag criteria when no flag is given", async () => {
+      await emailService.searchEmails({ since: new Date("2024-01-01") });
+
+      const criteria = lastSearchCriteria();
+      for (const key of FLAG_KEYS) {
+        expect(criteria).not.toHaveProperty(key);
+      }
     });
 
-    it("should build draft flag criteria", () => {
-      const result = buildSearchCriteria({ draft: true });
-      expect(result).toEqual({ draft: true });
-    });
-
-    it("should build deleted flag criteria", () => {
-      const result = buildSearchCriteria({ deleted: false });
-      expect(result).toEqual({ deleted: false });
-    });
-
-    it("should combine flag criteria with date and query filters", () => {
+    it("combines flags with a date filter", async () => {
       const since = new Date("2024-01-01");
-      const result = buildSearchCriteria({
-        query: "important",
-        since,
+      await emailService.searchEmails({ since, seen: false });
+
+      expect(lastSearchCriteria()).toEqual({ since, seen: false });
+    });
+
+    it("applies flags to the whole text query, not only to one OR branch", async () => {
+      await emailService.searchEmails({
+        query: "invoice",
         seen: false,
         flagged: true,
       });
-      expect(result).toEqual({
-        since,
-        or: [{ subject: "important" }, { body: "important" }],
+
+      // imapflow ANDs top-level keys; the subject/body OR stays nested.
+      expect(lastSearchCriteria()).toEqual({
+        or: [{ subject: "invoice" }, { body: "invoice" }],
         seen: false,
         flagged: true,
       });
     });
 
-    it("should combine multiple flag criteria", () => {
-      const result = buildSearchCriteria({
-        seen: false,
+    it("keeps flags at the top level for from: queries", async () => {
+      await emailService.searchEmails({
+        query: "from:alice@example.com",
         answered: false,
-        flagged: true,
       });
-      expect(result).toEqual({
-        seen: false,
+
+      expect(lastSearchCriteria()).toEqual({
+        from: "alice@example.com",
         answered: false,
-        flagged: true,
       });
     });
 
-    it("should not include flag criteria when undefined", () => {
-      const result = buildSearchCriteria({ seen: true });
-      expect(result).toEqual({ seen: true });
-      expect(result).not.toHaveProperty("answered");
-      expect(result).not.toHaveProperty("flagged");
-      expect(result).not.toHaveProperty("draft");
-      expect(result).not.toHaveProperty("deleted");
+    it("keeps flags at the top level for 'a OR b' queries filtered in memory", async () => {
+      const since = new Date("2024-01-01");
+      await emailService.searchEmails({
+        query: "from:a.org OR from:b.org",
+        since,
+        seen: false,
+      });
+
+      expect(lastSearchCriteria()).toEqual({ since, seen: false });
+    });
+
+    it("uses a different cache key when only a flag differs", async () => {
+      await emailService.searchEmails({});
+      await emailService.searchEmails({ seen: false });
+      await emailService.searchEmails({ seen: true });
+
+      const keys = (mockCache.get as Mock).mock.calls.map(call => call[0]);
+      expect(new Set(keys).size).toBe(3);
+      expect(keys[1]).toContain('"seen":false');
+      expect(keys[2]).toContain('"seen":true');
     });
   });
 
