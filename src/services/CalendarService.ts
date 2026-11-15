@@ -170,16 +170,16 @@ export class CalendarService {
 
     // Only the network calls sit inside the breaker: a calendar name the
     // caller got wrong must not count towards opening the circuit.
-    const { client, candidates } = await this.circuitBreaker.execute(
+    const { client, calendars } = await this.circuitBreaker.execute(
       async () => {
         const client = await this.getClient();
-        return {
-          client,
-          candidates: await this.selectCalendars(client, options.calendar),
-        };
+        return { client, calendars: await client.fetchCalendars() };
       },
     );
-    const target = this.chooseCreateTarget(candidates, options.calendar);
+    const target = this.chooseCreateTarget(
+      this.selectCalendars(calendars, options.calendar),
+      options.calendar,
+    );
     const calendarName = calendarLabel(target);
 
     const response = await this.circuitBreaker.execute(() =>
@@ -244,9 +244,8 @@ export class CalendarService {
   /**
    * The calendar a new event goes to: the one the caller named, or the first
    * candidate (the first MAILBOX_CALENDARS entry, when that is set). A name
-   * that matches several calendars is refused rather than guessed, unless
-   * exactly one of them carries it as its display name. Refusals are
-   * ValidationErrors so the user sees the reason, not a generic message.
+   * that matches several calendars is refused rather than guessed. Refusals
+   * are ValidationErrors so the user sees the reason, not a generic message.
    */
   private chooseCreateTarget(
     candidates: DAVCalendar[],
@@ -271,12 +270,6 @@ export class CalendarService {
     }
 
     if (calendarFilter && candidates.length > 1) {
-      const exact = candidates.filter(
-        calendar => calendar.displayName === calendarFilter.trim(),
-      );
-      if (exact.length === 1) {
-        return exact[0];
-      }
       throw new ValidationError(
         `Calendar "${calendarFilter}" matches several calendars (${candidates
           .map(calendarLabel)
@@ -293,26 +286,36 @@ export class CalendarService {
    * Calendars a write may touch: those that can hold events, match the
    * optional filter and, when MAILBOX_CALENDARS restricts the server, are
    * listed there, in the order it lists them. Every write chooses from this.
+   * An entry that names several calendars is refused rather than widened.
    */
-  private async selectCalendars(
-    client: DAVClient,
+  private selectCalendars(
+    calendars: DAVCalendar[],
     calendarFilter?: string,
-  ): Promise<DAVCalendar[]> {
-    const calendars = await client.fetchCalendars();
+  ): DAVCalendar[] {
+    const writable = calendars.filter(calendar => this.holdsEvents(calendar));
     const allowed = this.allowedCalendars();
-    const rank = (calendar: DAVCalendar): number =>
-      allowed
-        ? allowed.findIndex(name => this.calendarMatches(calendar, name))
-        : 0;
+    const ranked = allowed
+      ? allowed.flatMap(name => {
+          const matches = writable.filter(calendar =>
+            this.calendarMatches(calendar, name),
+          );
+          if (matches.length > 1) {
+            throw new ValidationError(
+              `MAILBOX_CALENDARS entry "${name}" matches several calendars (${matches
+                .map(calendarLabel)
+                .join(", ")}); use a unique name or the calendar's URL`,
+              "calendar",
+              name,
+            );
+          }
+          return matches;
+        })
+      : writable;
 
-    return calendars
-      .filter(
-        calendar =>
-          this.holdsEvents(calendar) &&
-          rank(calendar) !== -1 &&
-          (!calendarFilter || this.calendarMatches(calendar, calendarFilter)),
-      )
-      .sort((a, b) => rank(a) - rank(b));
+    return [...new Set(ranked)].filter(
+      calendar =>
+        !calendarFilter || this.calendarMatches(calendar, calendarFilter),
+    );
   }
 
   /** The MAILBOX_CALENDARS names, or undefined when it restricts nothing. */
@@ -323,9 +326,33 @@ export class CalendarService {
     return names?.length ? names : undefined;
   }
 
+  /**
+   * Whether a name denotes this calendar: its exact display name, its exact
+   * URL, or the exact last segment of its path. Never a substring, so "work"
+   * cannot reach ".../homework/".
+   */
   private calendarMatches(calendar: DAVCalendar, name: string): boolean {
     const wanted = name.trim();
-    return calendar.displayName === wanted || calendar.url.includes(wanted);
+    if (!wanted) {
+      return false;
+    }
+    if (calendar.displayName === wanted) {
+      return true;
+    }
+    const url = calendar.url.replace(/\/+$/, "");
+    if (url === wanted.replace(/\/+$/, "")) {
+      return true;
+    }
+    const segment = url.slice(url.lastIndexOf("/") + 1);
+    return segment === wanted || this.decodeSegment(segment) === wanted;
+  }
+
+  private decodeSegment(segment: string): string {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
   }
 
   /** A collection that only takes tasks or journals cannot store a VEVENT. */

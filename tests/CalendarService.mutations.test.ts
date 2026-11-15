@@ -454,29 +454,55 @@ describe("CalendarService event changes", () => {
         expect(createCalendarObject).not.toHaveBeenCalled();
       });
 
-      it("should refuse a name that matches several calendars", async () => {
-        await expect(
-          makeService().createCalendarEvent({
-            ...newEvent,
-            calendar: "caldav",
-          }),
-        ).rejects.toThrow(/matches several calendars/);
-
-        expect(createCalendarObject).not.toHaveBeenCalled();
-      });
-
-      it("should prefer an exact display name over URL matches", async () => {
+      it("should find a calendar by its exact URL or last path segment", async () => {
         fetchCalendars.mockResolvedValue([
-          { displayName: "Work archive", url: `${WORK_URL}archive/` },
           ...calendars,
+          {
+            displayName: "Family",
+            url: "https://dav.mailbox.org/caldav/fam-123/",
+          },
         ]);
 
         await makeService().createCalendarEvent({
           ...newEvent,
-          calendar: "work",
+          calendar: "fam-123",
+        });
+        await makeService().createCalendarEvent({
+          ...newEvent,
+          calendar: "https://dav.mailbox.org/caldav/private",
         });
 
-        expect(writtenTo()).toBe(WORK_URL);
+        expect(createCalendarObject.mock.calls[0][0].calendar.displayName).toBe(
+          "Family",
+        );
+        expect(createCalendarObject.mock.calls[1][0].calendar.url).toBe(
+          PRIVATE_URL,
+        );
+      });
+
+      it("should not match part of a name or URL", async () => {
+        for (const partial of ["wor", "caldav", "/caldav/private/", "fam"]) {
+          await expect(
+            makeService().createCalendarEvent({
+              ...newEvent,
+              calendar: partial,
+            }),
+          ).rejects.toThrow(/not found/);
+        }
+        expect(createCalendarObject).not.toHaveBeenCalled();
+      });
+
+      it("should refuse a name that matches several calendars", async () => {
+        fetchCalendars.mockResolvedValue([
+          ...calendars,
+          { displayName: "work", url: "https://dav.mailbox.org/caldav/w2/" },
+        ]);
+
+        await expect(
+          makeService().createCalendarEvent({ ...newEvent, calendar: "work" }),
+        ).rejects.toThrow(/matches several calendars/);
+
+        expect(createCalendarObject).not.toHaveBeenCalled();
       });
 
       describe("MAILBOX_CALENDARS", () => {
@@ -532,6 +558,57 @@ describe("CalendarService event changes", () => {
             }),
           ).rejects.toThrow(/not found/);
 
+          expect(createCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should not let an entry allow calendars whose URL merely contains it", async () => {
+          fetchCalendars.mockResolvedValue([
+            {
+              displayName: "Homework",
+              url: "https://dav.mailbox.org/caldav/homework/",
+            },
+            ...calendars,
+          ]);
+
+          await expect(
+            makeService({ calendars: ["work"] }).createCalendarEvent({
+              ...newEvent,
+              calendar: "Homework",
+            }),
+          ).rejects.toThrow(/not found/);
+          const result = await makeService({
+            calendars: ["work"],
+          }).createCalendarEvent(newEvent);
+
+          expect(result.calendar).toBe("work");
+        });
+
+        it("should not let a short entry match an opaque collection id", async () => {
+          fetchCalendars.mockResolvedValue([
+            {
+              displayName: "Misc",
+              url: "https://dav.mailbox.org/caldav/Y2FsUQ/",
+            },
+          ]);
+
+          await expect(
+            makeService({ calendars: ["Q"] }).createCalendarEvent(newEvent),
+          ).rejects.toThrow(/MAILBOX_CALENDARS/);
+          expect(createCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should refuse an entry that matches several calendars", async () => {
+          fetchCalendars.mockResolvedValue([
+            ...calendars,
+            {
+              displayName: "Archive",
+              url: "https://dav.mailbox.org/caldav/work/old/work/",
+            },
+          ]);
+
+          await expect(
+            makeService({ calendars: ["work"] }).createCalendarEvent(newEvent),
+          ).rejects.toThrow(/MAILBOX_CALENDARS entry "work" matches several/);
           expect(createCalendarObject).not.toHaveBeenCalled();
         });
 
