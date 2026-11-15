@@ -82,7 +82,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    
    # Optional: SMTP configuration (defaults shown)
    MAILBOX_SMTP_HOST=smtp.mailbox.org
-   MAILBOX_SMTP_PORT=587
+   MAILBOX_SMTP_PORT=465
    MAILBOX_SMTP_SECURE=true
    
    # Optional: CalDAV configuration (defaults shown) 
@@ -211,6 +211,9 @@ Configuration is automatically validated at startup using comprehensive validati
   - Must be a valid port number (1-65535)
 - `MAILBOX_SMTP_SECURE`: Use TLS encryption (default: `true`)
   - Must be `"true"` or `"false"`
+  - Use `true` for port 465 (implicit TLS) and `false` for port 587 (STARTTLS)
+  - TLS is always required: with `false` the connection must upgrade via STARTTLS, otherwise it is refused
+  - The server certificate is verified, so `MAILBOX_SMTP_HOST` must be a hostname covered by the certificate (e.g. `smtp.mailbox.org`); an IP address fails verification
 
 #### **Optional Calendar Configuration**
 
@@ -448,6 +451,7 @@ This project relies on the following key dependencies:
    - Verify your mailbox.org credentials in `.env`
    - Check if your account has IMAP and CalDAV access enabled
    - Ensure your network allows outbound connections to mailbox.org servers
+   - SMTP certificate or TLS errors: use a hostname for `MAILBOX_SMTP_HOST` (not an IP address) and set `MAILBOX_SMTP_SECURE=false` when using port 587 (STARTTLS)
 
 2. **Authentication Failures**
    - Use an App Password instead of your main password
