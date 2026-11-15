@@ -130,32 +130,17 @@ export class EmailService {
           const message = await this.fetchEmailByUid(wrapper, uid, folder);
           return message;
         },
-        defaultValue: null,
+        // No defaultValue: when the connection fails and there is no stale
+        // copy, the error must surface instead of reading as "not found".
         logger: this.logger,
         operation: "getEmail",
         service: "EmailService",
         ttl: 600000, // 10 minutes TTL
         logContext: { uid, folder },
       });
-    } catch (error) {
-      // Mark connection as unhealthy if fetch operation timed out
-      if (
-        wrapper &&
-        error instanceof Error &&
-        error.message.includes("timed out")
-      ) {
-        (wrapper as ImapConnectionWrapper).isHealthy = false;
-        await this.logger.warning(
-          "Marking connection as unhealthy due to timeout",
-          {
-            operation: "getEmail",
-            service: "EmailService",
-          },
-          { uid, folder },
-        );
-      }
-      throw error;
     } finally {
+      // A timed-out or failed fetch has already marked the connection
+      // unhealthy (fetchRawMessageByUid), so releasing it retires it.
       if (wrapper) {
         await this.pool.releaseFromFolder(wrapper);
       }
@@ -307,8 +292,9 @@ export class EmailService {
     const timeoutMs = 10000; // 10 seconds timeout for fetch operation
     const fetchPromise = this.performFetch(wrapper, uid);
 
-    const timeoutPromise = new Promise<null>((_, reject) => {
-      setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
         reject(
           new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`),
         );
@@ -335,7 +321,11 @@ export class EmailService {
       // IMAP connection in a corrupted state. Marking it unhealthy ensures
       // it won't be reused and will be destroyed on next validation.
       wrapper.isHealthy = false;
-      return null;
+      // Rethrown rather than returning null, which callers read as "no such
+      // message". Only fetchOne resolving without a message means not found.
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
