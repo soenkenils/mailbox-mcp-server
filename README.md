@@ -29,6 +29,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Retrieve calendar events** within specified date ranges
 - ✅ **Search calendar events** by title, description, location
 - ✅ **Free/busy time checking** for scheduling
+- ✅ **Create calendar events** (timed or all-day, with attendees)
 - ✅ **Multi-calendar support** and aggregation
 - ✅ **Recurring events** and exception handling
 - ✅ **Connection pooling** for CalDAV with automatic retry logic
@@ -137,6 +138,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
+- **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events need a date-time with an explicit offset or `Z` (a date-time without one is read in the time zone of the machine running the server) and are stored in UTC. For all-day events pass dates (`YYYY-MM-DD`); `end` is the last day, inclusive, and can be omitted for a one-day event. Impossible dates such as `2025-02-30` and local times skipped by a daylight-saving change are refused. By default nobody is notified: attendees are only recorded on the event. Only with `sendInvitations: true` (meant for when you explicitly ask to invite people) does your account become the organizer, and mailbox.org may then email invitations to all attendees. The target calendar and the `MAILBOX_CALENDARS` entries are matched exactly, by display name, full URL or last URL segment; a name that matches several calendars is refused. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
 
 ### **Sieve Filter Tools**
 
@@ -222,7 +224,7 @@ Configuration is automatically validated at startup using comprehensive validati
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
   - Must be a valid URL format
-- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access. Also limits where `create_calendar_event` may write; the first entry is its default calendar
 
 #### **Optional Sieve Configuration**
 

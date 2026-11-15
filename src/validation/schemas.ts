@@ -20,6 +20,55 @@ export const sanitizeString = (str: string): string => {
     .join("");
 };
 
+/**
+ * For free text such as event descriptions, where line breaks and tabs are
+ * content. Line endings are normalised to LF; the iCalendar layer produces
+ * the escapes its format requires. Every other control character is removed.
+ */
+export const sanitizeMultilineString = (str: string): string =>
+  str
+    .trim()
+    .replace(/\r\n?/g, "\n")
+    .split("")
+    .filter(char => {
+      const code = char.charCodeAt(0);
+      return (
+        code === 10 ||
+        code === 9 ||
+        !(
+          (code >= 0 && code <= 31) ||
+          code === 127 ||
+          (code >= 128 && code <= 159)
+        )
+      );
+    })
+    .join("");
+
+/**
+ * For single-line event fields (summary, location, names), where a line
+ * break would otherwise glue two words together: every run of control
+ * characters, line breaks included, becomes one space.
+ */
+export const sanitizeLine = (str: string): string => {
+  let result = "";
+  let inControlRun = false;
+  for (const char of str) {
+    const code = char.charCodeAt(0);
+    const isControl =
+      (code >= 0 && code <= 31) || code === 127 || (code >= 128 && code <= 159);
+    if (isControl) {
+      if (!inControlRun) {
+        result += " ";
+      }
+      inControlRun = true;
+    } else {
+      result += char;
+      inControlRun = false;
+    }
+  }
+  return result.trim();
+};
+
 export const sanitizeHtml = (html: string): string => {
   // Basic HTML sanitization - remove dangerous tags and attributes
   return html
@@ -174,6 +223,113 @@ const calendarNameSchema = v.pipe(
   v.minLength(1, "Calendar name cannot be empty"),
   v.maxLength(255, "Calendar name too long"),
   v.transform(sanitizeString),
+);
+
+// Event fields for create_calendar_event
+const eventAttendeeSchema = v.strictObject({
+  email: emailSchema,
+  name: v.optional(
+    v.pipe(
+      v.string("Name must be a string"),
+      v.maxLength(255, "Name too long"),
+      v.transform(sanitizeLine),
+    ),
+  ),
+});
+
+const eventSummarySchema = v.pipe(
+  v.string("Summary must be a string"),
+  v.transform(sanitizeLine),
+  v.minLength(1, "Summary cannot be empty"),
+  v.maxLength(500, "Summary too long"),
+);
+
+const eventDescriptionSchema = v.pipe(
+  v.string("Description must be a string"),
+  v.maxLength(10000, "Description too long"),
+  v.transform(sanitizeMultilineString),
+);
+
+const eventLocationSchema = v.pipe(
+  v.string("Location must be a string"),
+  v.maxLength(500, "Location too long"),
+  v.transform(sanitizeLine),
+);
+
+const ISO_PARTS =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{3})?)?(Z|[+-](\d{2}):(\d{2}))?)?$/;
+
+/**
+ * Whether every component names something that exists: new Date() rolls
+ * "2025-02-30" over into March instead of rejecting it.
+ */
+const isRealDateTime = (value: string): boolean => {
+  const parts = ISO_PARTS.exec(value);
+  if (!parts) {
+    return false;
+  }
+  const [, year, month, day, hour, minute, second, , offsetH, offsetM] =
+    parts.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const realDay =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+  const realTime =
+    parts[4] === undefined ||
+    (hour < 24 && minute < 60 && (parts[6] === undefined || second < 60));
+  const realOffset = parts[8] === undefined || (offsetH < 24 && offsetM < 60);
+  return realDay && realTime && realOffset;
+};
+
+/**
+ * A date-time without an offset is read in the server's local time zone,
+ * where a time skipped by a daylight-saving change does not exist. new
+ * Date() would silently move it by an hour.
+ */
+const existsAsLocalTime = (value: string): boolean => {
+  const parts = ISO_PARTS.exec(value);
+  if (!parts || parts[4] === undefined || parts[7] !== undefined) {
+    return true;
+  }
+  const [, year, month, day, hour, minute] = parts.map(Number);
+  const local = new Date(value);
+  return (
+    local.getFullYear() === year &&
+    local.getMonth() === month - 1 &&
+    local.getDate() === day &&
+    local.getHours() === hour &&
+    local.getMinutes() === minute
+  );
+};
+
+const localTimeZone = (): string =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+const eventDateSchema = v.pipe(
+  dateSchema,
+  v.check(
+    isRealDateTime,
+    issue => `"${issue.input}" is not a real date or time`,
+  ),
+  v.check(
+    existsAsLocalTime,
+    issue =>
+      `Local time "${issue.input}" does not exist in the server's time zone (${localTimeZone()}), e.g. it falls in a daylight-saving gap; pass an explicit offset such as +01:00 or Z`,
+  ),
+);
+
+const hasTime = (value: string): boolean => value.includes("T");
+
+const eventAttendeesSchema = v.pipe(
+  v.array(eventAttendeeSchema, "Attendees must be an array"),
+  v.maxLength(50, "Too many attendees"),
+  v.check(
+    attendees =>
+      new Set(attendees.map(attendee => attendee.email)).size ===
+      attendees.length,
+    "Each attendee may only be listed once",
+  ),
 );
 
 // =============================================================================
@@ -357,6 +513,52 @@ export const searchCalendarSchema = v.pipe(
   }, "Start date must be before end date"),
 );
 
+export const createCalendarEventSchema = v.pipe(
+  v.object({
+    summary: eventSummarySchema,
+    start: eventDateSchema,
+    // Timed events need it; for all-day events it is the last day
+    // (inclusive) and defaults to the start date.
+    end: v.optional(eventDateSchema),
+    description: v.optional(eventDescriptionSchema),
+    location: v.optional(eventLocationSchema),
+    allDay: v.optional(v.boolean("allDay must be a boolean"), false),
+    attendees: v.optional(eventAttendeesSchema),
+    sendInvitations: v.optional(
+      v.boolean("sendInvitations must be a boolean"),
+      false,
+    ),
+    calendar: v.optional(calendarNameSchema),
+  }),
+  v.check(
+    data => data.allDay || data.end !== undefined,
+    "end is required for timed events",
+  ),
+  v.check(
+    data =>
+      data.allDay ||
+      data.end === undefined ||
+      (hasTime(data.start) && hasTime(data.end)),
+    "Timed events need a date-time for start and end, e.g. 2025-06-20T14:00+02:00; set allDay to true for an all-day event",
+  ),
+  v.check(
+    data =>
+      data.allDay ||
+      data.end === undefined ||
+      !hasTime(data.start) ||
+      !hasTime(data.end) ||
+      new Date(data.start) < new Date(data.end),
+    "Start date must be before end date",
+  ),
+  v.check(
+    data =>
+      !data.allDay ||
+      data.end === undefined ||
+      data.start.slice(0, 10) <= data.end.slice(0, 10),
+    "The last day must not be before the first day",
+  ),
+);
+
 export const getFreeBusySchema = v.pipe(
   v.object({
     start: dateSchema,
@@ -387,6 +589,9 @@ export type GetCalendarEventsInput = v.InferOutput<
   typeof getCalendarEventsSchema
 >;
 export type SearchCalendarInput = v.InferOutput<typeof searchCalendarSchema>;
+export type CreateCalendarEventInput = v.InferOutput<
+  typeof createCalendarEventSchema
+>;
 export type GetFreeBusyInput = v.InferOutput<typeof getFreeBusySchema>;
 
 // =============================================================================
