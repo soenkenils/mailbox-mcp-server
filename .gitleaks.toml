@@ -8,7 +8,9 @@ useDefault = true  # This keeps default rules
 paths = [
   '''tests/.*\.test\.ts$''',
   '''tests/.*\.spec\.ts$''',
-  '''__tests__/.*'''
+  '''__tests__/.*''',
+  # Test-only dummy TLS key/cert for the STARTTLS tests (not a real secret)
+  '''tests/fixtures/test-tls-.*\.pem$'''
 ]
 
 [[rules]]

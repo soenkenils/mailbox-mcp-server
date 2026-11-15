@@ -154,14 +154,15 @@ OK Capability completed.`;
     });
 
     it("should require authentication before operations", async () => {
-      // ensureAuthenticated should connect and authenticate if needed
-      // Stub connect() so the test never opens a real network connection
-      const connectSpy = vi
-        .spyOn(sieveService, "connect")
-        .mockRejectedValue(new Error("connection refused"));
-
-      await expect(sieveService.listScripts()).rejects.toThrow();
-      expect(connectSpy).toHaveBeenCalledTimes(1);
+      // ensureAuthenticated should connect and authenticate if needed.
+      // Use a local closed port so the test is hermetic and fails fast
+      // (ECONNREFUSED) instead of depending on network access to mailbox.org.
+      const offlineService = new SieveService({
+        ...mockConfig,
+        host: "127.0.0.1",
+        port: 1,
+      });
+      await expect(offlineService.listScripts()).rejects.toThrow();
     });
   });
 
@@ -368,18 +369,12 @@ if header :contains "From" "müller@example.de" {
       expect(result).toEqual(expected);
     });
 
-    it("should handle ACTIVE on separate line as script name", () => {
-      // Note: The parser treats "ACTIVE" on its own line as a script name
-      // This is the current behavior - ACTIVE must be on same line as script name
-      const input = "script1\r\nACTIVE\r\nOK";
-      const result = testableService.testParseScriptList(input);
+    it("should not treat a bare ACTIVE line as a script", () => {
+      const result = testableService.testParseScriptList(
+        "script1\r\nACTIVE\r\nOK",
+      );
 
-      // Parser creates two scripts: "script1" and "ACTIVE"
-      expect(result.length).toBe(2);
-      expect(result[0].name).toBe("script1");
-      expect(result[1].name).toBe("ACTIVE");
-      // The second-pass marks the last script (ACTIVE) as active
-      expect(result[1].active).toBe(true);
+      expect(result).toEqual([{ name: "script1", content: "", active: false }]);
     });
 
     it.each([
@@ -545,6 +540,26 @@ if header :contains "From" "müller@example.de" {
         },
       ],
       [
+        "STARTTLS listed before SIEVE (quoted)",
+        '"IMPLEMENTATION" "Dovecot"\r\n"STARTTLS"\r\n"SIEVE" "fileinto envelope"\r\nOK',
+        {
+          implementation: "Dovecot",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["fileinto", "envelope", "STARTTLS"],
+        },
+      ],
+      [
+        "STARTTLS listed before SIEVE (unquoted)",
+        'IMPLEMENTATION "Cyrus"\r\nSTARTTLS\r\nSIEVE "fileinto"\r\nOK',
+        {
+          implementation: "Cyrus",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["fileinto", "STARTTLS"],
+        },
+      ],
+      [
         "mixed quoted and unquoted",
         '"IMPLEMENTATION" "Dovecot"\r\nVERSION "1.0"\r\n"SASL" "PLAIN"\r\nSIEVE "fileinto"\r\nOK',
         {
@@ -594,5 +609,53 @@ if header :contains "From" "müller@example.de" {
       const result = testableService.testParseCapabilities(input);
       expect(result).toEqual(expected);
     });
+  });
+});
+
+describe("SieveService command safety", () => {
+  it("quotes names and escapes quote and backslash", async () => {
+    const { quoteSieveString } = await import(
+      "../src/services/SieveService.js"
+    );
+    expect(quoteSieveString("filter")).toBe('"filter"');
+    expect(quoteSieveString('a"b\\c')).toBe('"a\\"b\\\\c"');
+  });
+
+  it.each([
+    'x"\r\nDELETESCRIPT "victim',
+    "a\nb",
+    "a\u0000b",
+    "a\u007fb",
+  ])("rejects control characters in script names (%j)", async name => {
+    const { quoteSieveString } = await import(
+      "../src/services/SieveService.js"
+    );
+    expect(() => quoteSieveString(name)).toThrow(/control characters/);
+  });
+
+  it("rejects an injected name before connecting to the server", async () => {
+    const service = new SieveService({
+      host: "127.0.0.1",
+      port: 1,
+      secure: false,
+      user: "test@example.org",
+      password: "not-a-real-password",
+    });
+    for (const call of [
+      () => service.getScript('x"\r\nDELETESCRIPT "victim'),
+      () => service.deleteScript("a\r\nLOGOUT"),
+      () => service.setActiveScript("a\nb"),
+      () => service.putScript("a\rb", "keep;"),
+    ]) {
+      await expect(call()).rejects.toThrow(/control characters/);
+    }
+  });
+
+  it("never exposes more than the command verb", async () => {
+    const { commandVerb } = await import("../src/services/SieveService.js");
+    const auth = `AUTHENTICATE "PLAIN" "${Buffer.from("\0u\0secret").toString("base64")}"`;
+    expect(commandVerb(auth)).toBe("AUTHENTICATE");
+    expect(commandVerb('PUTSCRIPT "x" {5+}\r\nkeep;')).toBe("PUTSCRIPT");
+    expect(commandVerb("CHECKSCRIPT {5+}\r\nkeep;")).toBe("CHECKSCRIPT");
   });
 });

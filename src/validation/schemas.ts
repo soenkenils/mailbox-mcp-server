@@ -44,14 +44,26 @@ const emailSchema = v.pipe(
   v.transform(email => email.toLowerCase()),
 );
 
-// Folder name validation - prevent path traversal
+// Folder name validation.
+// "/" is the IMAP hierarchy delimiter on mailbox.org (e.g. "INBOX/Archiv"),
+// so it must be allowed. Path-traversal-like forms are still rejected:
+// "." / ".." segments, empty segments, leading or trailing delimiters.
 const folderNameSchema = v.pipe(
   v.string("Folder name must be a string"),
-  v.trim(),
+  // Sanitize first so the checks below see the final value
+  v.transform(sanitizeString),
   v.minLength(1, "Folder name cannot be empty"),
   v.maxLength(255, "Folder name too long"),
-  v.check(str => !/[/\\<>:"|?*]/.test(str), "Invalid folder name characters"),
-  v.transform(sanitizeString),
+  v.check(str => !/[\\<>:"|?*]/.test(str), "Invalid folder name characters"),
+  v.check(
+    str =>
+      !str.startsWith("/") &&
+      !str.endsWith("/") &&
+      str
+        .split("/")
+        .every(segment => segment !== "" && !/^\.{1,2}$/.test(segment)),
+    "Invalid folder path",
+  ),
 );
 
 // Subject line validation

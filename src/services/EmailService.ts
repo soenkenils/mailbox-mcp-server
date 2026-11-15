@@ -1,4 +1,9 @@
-import { type ParsedMail, simpleParser } from "mailparser";
+import {
+  type AddressObject,
+  type EmailAddress,
+  type ParsedMail,
+  simpleParser,
+} from "mailparser";
 
 // IMAP library type definitions
 interface ImapSearchCriteria {
@@ -343,9 +348,11 @@ export class EmailService {
     wrapper: ImapConnectionWrapper,
     uid: number,
   ): Promise<ImapMessage | null> {
-    // Create iterator explicitly so we can properly close it
-    const iterator = wrapper.connection.fetch(
-      `${uid}:${uid}`,
+    // fetchOne issues the FETCH and resolves once the command has completed.
+    // Avoid returning early from a fetch() async iterator: on imapflow 1.x that
+    // left the command pending and blocked the connection (issue #8).
+    const message = await wrapper.connection.fetchOne(
+      uid,
       {
         source: true,
         envelope: true,
@@ -355,37 +362,7 @@ export class EmailService {
       { uid: true },
     );
 
-    try {
-      // Get the first (and should be only) message
-      for await (const msg of iterator) {
-        return msg as unknown as ImapMessage;
-      }
-      return null;
-    } finally {
-      // Explicitly close the iterator to prevent connection state issues
-      // This is critical for connection reuse - without this, the connection
-      // may be left in a state where it's waiting for the iterator to complete
-      try {
-        if (iterator && typeof iterator.return === "function") {
-          await iterator.return();
-        }
-      } catch (error) {
-        // If iterator cleanup fails, mark the connection as unhealthy
-        // to prevent reuse of a potentially corrupted connection
-        await this.logger.warning(
-          "Failed to properly close fetch iterator",
-          {
-            operation: "performFetch",
-            service: "EmailService",
-          },
-          {
-            uid,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-        wrapper.isHealthy = false;
-      }
-    }
+    return message ? (message as unknown as ImapMessage) : null;
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {
@@ -631,21 +608,31 @@ export class EmailService {
     }));
   }
 
+  /**
+   * mailparser returns `AddressObject | AddressObject[]`, where each
+   * AddressObject wraps its entries in `value`, and an entry may be a group
+   * (`{ name, group: [...] }`) instead of an address. Flatten all of it.
+   */
   private parseAddressesFromParsed(
-    addresses: unknown,
+    addresses: AddressObject | AddressObject[] | undefined,
   ): Array<{ name?: string; address: string }> {
     if (!addresses) return [];
-    if (!Array.isArray(addresses)) {
-      const addr = addresses as { name?: string; address: string };
-      if (addr.address) {
-        return [{ name: addr.name, address: addr.address }];
+    const objects = Array.isArray(addresses) ? addresses : [addresses];
+    const result: Array<{ name?: string; address: string }> = [];
+    const collect = (entries: EmailAddress[] | undefined) => {
+      for (const entry of entries ?? []) {
+        if (entry.group) {
+          collect(entry.group);
+        } else if (entry.address) {
+          result.push({
+            name: entry.name || undefined,
+            address: entry.address,
+          });
+        }
       }
-      return [];
-    }
-    return addresses.map(addr => ({
-      name: addr.name,
-      address: addr.address,
-    }));
+    };
+    for (const object of objects) collect(object?.value);
+    return result;
   }
 
   private async buildEmailThread(
