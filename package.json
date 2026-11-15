@@ -21,7 +21,8 @@
     "test:coverage": "bun run vitest --coverage",
     "format": "bun run biome format --write src/ tests/",
     "lint": "bun run biome lint src/ tests/",
-    "check": "bun run biome check --write src/ tests/"
+    "check": "bun run biome check src/ tests/",
+    "fix": "bun run biome check --write src/ tests/"
   },
   "keywords": [
     "mcp",
@@ -46,15 +47,15 @@
     "dotenv": "^17.2.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "4.0.17"
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "@types/nodemailer": "^7.0.5",
+    "@types/nodemailer": "^7.0.12",
     "dayjs": "^1.11.19",
     "ical.js": "^2.2.1",
     "imapflow": "^1.2.6",
-    "mailparser": "^3.9.1",
+    "mailparser": "^3.14.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.12",
     "tsdav": "^2.1.6",
