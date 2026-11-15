@@ -1,4 +1,4 @@
-import { Socket } from "node:net";
+import { isIP, Socket } from "node:net";
 import { type TLSSocket, connect as tlsConnect } from "node:tls";
 import {
   type SieveCapabilities,
@@ -57,6 +57,11 @@ export type SieveToken =
   | { kind: "string"; value: string }
   | { kind: "atom"; value: string };
 
+/** Largest literal accepted from the server (Sieve scripts are small) */
+export const MAX_LITERAL_BYTES = 2 * 1024 * 1024;
+/** Largest amount of unparsed server data kept in memory */
+export const MAX_RECEIVE_BYTES = 4 * 1024 * 1024;
+
 const CR = 0x0d;
 const LF = 0x0a;
 const QUOTE = 0x22;
@@ -103,6 +108,11 @@ export function findResponseEnd(
       }
       const literal = literalLengthBefore(buf, cursor, crlf);
       if (literal !== null) {
+        if (literal > MAX_LITERAL_BYTES) {
+          throw new SieveError(
+            `Server response too large: literal of ${literal} bytes exceeds the ${MAX_LITERAL_BYTES} byte limit`,
+          );
+        }
         const literalEnd = crlf + 2 + literal;
         if (buf.length < literalEnd) {
           return null;
@@ -195,6 +205,65 @@ export function tokenizeSieveData(buf: Buffer): SieveToken[][] {
 interface ParsedResponse extends SieveResponse {
   /** Raw bytes of the response lines before the status line */
   raw: Buffer;
+  /** The status word of the final line */
+  status: "OK" | "NO" | "BYE";
+}
+
+/**
+ * Split an optional parenthesised response code (RFC 5804 §1.3), e.g.
+ * `(NONEXISTENT)` or `(QUOTA/MAXSCRIPTS)`, off the part of a status line
+ * that follows the OK/NO/BYE word. Quoted strings inside the parentheses
+ * (as in `(REFERRAL "sieve://host")`) are skipped. Returns the code name
+ * (first word of the code, upper-cased) and the remaining bytes.
+ */
+export function splitResponseCode(rest: Buffer): {
+  code?: string;
+  rest: Buffer;
+} {
+  let i = 0;
+  while (rest[i] === 0x20 || rest[i] === 0x09) {
+    i++;
+  }
+  if (rest[i] !== 0x28) {
+    return { rest };
+  }
+  let depth = 0;
+  let end = -1;
+  for (let j = i; j < rest.length; j++) {
+    const byte = rest[j];
+    if (byte === QUOTE) {
+      j++;
+      while (j < rest.length && rest[j] !== QUOTE) {
+        if (rest[j] === BACKSLASH) {
+          j++;
+        }
+        j++;
+      }
+    } else if (byte === 0x28) {
+      depth++;
+    } else if (byte === 0x29 && --depth === 0) {
+      end = j;
+      break;
+    }
+  }
+  if (end < 0) {
+    return { rest };
+  }
+  const inner = rest
+    .subarray(i + 1, end)
+    .toString("utf8")
+    .trim();
+  const name = inner.split(/\s/, 1)[0].toUpperCase();
+  return { code: name || undefined, rest: rest.subarray(end + 1) };
+}
+
+/**
+ * Test seam. Only extra trusted CAs can be injected; there is deliberately no
+ * way to disable certificate verification.
+ */
+export interface SieveServiceOptions {
+  /** Additional CA certificate(s) to trust, defaults to the system store */
+  tlsCa?: string | Buffer | Array<string | Buffer>;
 }
 
 export class SieveService {
@@ -214,7 +283,21 @@ export class SieveService {
   private static readonly COMMAND_TIMEOUT_MS = 30000;
   private static readonly GREETING_TIMEOUT_MS = 15000;
 
-  constructor(private config: SieveConnection) {}
+  constructor(
+    private config: SieveConnection,
+    private options: SieveServiceOptions = {},
+  ) {}
+
+  /** TLS options shared by implicit TLS and STARTTLS */
+  private tlsOptions() {
+    return {
+      // SNI must not be an IP literal (RFC 6066); the certificate is then
+      // checked against the IP address itself.
+      ...(isIP(this.config.host) ? {} : { servername: this.config.host }),
+      ...(this.options.tlsCa ? { ca: this.options.tlsCa } : {}),
+      rejectUnauthorized: true,
+    };
+  }
 
   async connect(): Promise<void> {
     if (this.connected) {
@@ -240,8 +323,7 @@ export class SieveService {
         this.socket = tlsConnect({
           host: this.config.host,
           port: this.config.port,
-          servername: this.config.host,
-          rejectUnauthorized: true,
+          ...this.tlsOptions(),
         });
         this.tlsActive = true;
       } else {
@@ -306,6 +388,10 @@ export class SieveService {
       return;
     }
 
+    // True while the STARTTLS exchange is in flight. Any failure in there
+    // leaves the session in an undefined state (possibly already upgraded to
+    // TLS with stale capabilities), so it must always be torn down.
+    let inStarttls = false;
     try {
       if (!this.tlsActive) {
         // Never send credentials over an unencrypted connection. A server
@@ -322,6 +408,7 @@ export class SieveService {
           service: "SieveService",
         });
 
+        inStarttls = true;
         const tlsResponse = await this.sendCommand("STARTTLS");
         if (!tlsResponse.success) {
           throw new SieveError(
@@ -341,6 +428,7 @@ export class SieveService {
           );
         }
         this.capabilities = await this.capabilitiesFrom(postTls);
+        inStarttls = false;
       }
 
       this.logger.info(
@@ -378,7 +466,7 @@ export class SieveService {
     } catch (error) {
       this.authenticated = false;
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (!this.tlsActive) {
+      if (inStarttls || !this.tlsActive) {
         // A failed or refused TLS upgrade leaves the connection in an
         // undefined state; close it right away instead of sending LOGOUT
         // over it and waiting for a timeout.
@@ -555,8 +643,19 @@ export class SieveService {
   private onData(data: Buffer): void {
     this.rx = this.rx.length ? Buffer.concat([this.rx, data]) : data;
     for (;;) {
-      const found = findResponseEnd(this.rx);
+      let found: ReturnType<typeof findResponseEnd>;
+      try {
+        found = findResponseEnd(this.rx);
+      } catch (error) {
+        this.teardown(error instanceof Error ? error.message : String(error));
+        return;
+      }
       if (!found) {
+        if (this.rx.length > MAX_RECEIVE_BYTES) {
+          this.teardown(
+            `Server response too large: more than ${MAX_RECEIVE_BYTES} bytes without a status line`,
+          );
+        }
         return;
       }
       const response = this.buildResponse(
@@ -571,7 +670,7 @@ export class SieveService {
       } else {
         this.queue.push(response);
       }
-      if (response.code === "BYE") {
+      if (response.status === "BYE") {
         // BYE means the server is closing the session; never reuse it
         this.teardown("Server closed the session (BYE)");
         return;
@@ -580,24 +679,40 @@ export class SieveService {
   }
 
   private buildResponse(raw: Buffer, statusLine: Buffer): ParsedResponse {
-    const tokens = tokenizeSieveData(statusLine)[0] ?? [];
-    const verb = (tokens[0]?.value ?? "").toUpperCase();
-    const text = tokens.find(
-      (token, index) => index > 0 && token.kind === "string",
+    // Status word first, then an optional (RESPONSE-CODE), then the text
+    const wordEnd = statusLine.findIndex(
+      byte => byte === 0x20 || byte === 0x09 || byte === CR,
     );
-    const message =
-      text?.value ??
-      tokens
-        .slice(1)
-        .map(token => token.value)
-        .join(" ");
+    const verbBytes = statusLine.subarray(
+      0,
+      wordEnd < 0 ? statusLine.length : wordEnd,
+    );
+    const status = verbBytes.toString("latin1").toUpperCase() as
+      | "OK"
+      | "NO"
+      | "BYE";
+    const { code, rest } = splitResponseCode(
+      wordEnd < 0 ? Buffer.alloc(0) : statusLine.subarray(wordEnd),
+    );
+    const tokens = tokenizeSieveData(rest)[0] ?? [];
+    const text = tokens.find(token => token.kind === "string");
+    const message = text?.value ?? tokens.map(token => token.value).join(" ");
     const data = raw.toString("utf8").replace(/\r\n$/, "");
-    if (verb === "OK") {
-      return { success: true, message, data, raw: Buffer.from(raw) };
+    if (status === "OK") {
+      return {
+        success: true,
+        status,
+        code,
+        message,
+        data,
+        raw: Buffer.from(raw),
+      };
     }
     return {
       success: false,
-      code: verb === "BYE" ? "BYE" : "NO",
+      status,
+      // The RFC 5804 response code if the server sent one, else the status
+      code: code ?? status,
       message,
       data,
       raw: Buffer.from(raw),
@@ -747,8 +862,8 @@ export class SieveService {
       try {
         const upgraded = tlsConnect({
           socket: plain as Socket,
-          servername: this.config.host,
-          rejectUnauthorized: true,
+          host: this.config.host,
+          ...this.tlsOptions(),
         });
         tlsSocket = upgraded;
         this.attachDataHandler(upgraded);
