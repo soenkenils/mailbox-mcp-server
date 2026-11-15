@@ -40,6 +40,9 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
   private connectionCounter = 0;
   private shouldFailCreation = false;
   private shouldFailValidation = false;
+  /** Widens the await inside creation and validation so races can be hit. */
+  creationDelayMs = 0;
+  validationDelayMs = 0;
 
   setShouldFailCreation(fail: boolean): void {
     this.shouldFailCreation = fail;
@@ -54,6 +57,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
       throw new Error("Failed to create connection");
     }
 
+    if (this.creationDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, this.creationDelayMs));
+    }
+
     this.connectionCounter++;
     return new MockConnection(
       `conn-${this.connectionCounter}`,
@@ -63,6 +70,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
   }
 
   async validateConnection(connection: MockConnection): Promise<boolean> {
+    if (this.validationDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, this.validationDelayMs));
+    }
+
     if (this.shouldFailValidation) {
       return false;
     }
@@ -651,6 +662,97 @@ describe("ConnectionPool", () => {
       const metrics = pool.getMetrics();
       expect(metrics.unhealthyConnections).toBe(1);
       expect(metrics.healthyConnections).toBe(0);
+    });
+  });
+
+  describe("race conditions", () => {
+    // The periodic health check is pushed out of the way so each test
+    // controls exactly which operations overlap.
+    let racePool: TestConnectionPool;
+
+    beforeEach(() => {
+      racePool = new TestConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await racePool.destroy();
+    });
+
+    it("should not hand one idle connection to two concurrent acquires", async () => {
+      await racePool.release(await racePool.acquire());
+      racePool.validationDelayMs = 20;
+
+      const [first, second] = await Promise.all([
+        racePool.acquire(),
+        racePool.acquire(),
+      ]);
+
+      expect(first.id).not.toBe(second.id);
+    });
+
+    it("should not exceed maxConnections when acquires race", async () => {
+      racePool.creationDelayMs = 20;
+
+      const results = await Promise.allSettled(
+        Array.from({ length: config.maxConnections + 2 }, () =>
+          racePool.acquire(),
+        ),
+      );
+
+      const acquired = results.filter(r => r.status === "fulfilled");
+      expect(acquired).toHaveLength(config.maxConnections);
+      expect(racePool.getConnections().size).toBe(config.maxConnections);
+    });
+
+    it("should not destroy a connection acquired while the health check runs", async () => {
+      const expired = await racePool.acquire();
+      const other = await racePool.acquire();
+      await racePool.release(expired);
+      await racePool.release(other);
+      // Past the idle timeout, so the health check will close it.
+      expired.lastUsed = new Date(0);
+      racePool.validationDelayMs = 20;
+
+      const healthCheck = (
+        racePool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+      const acquired = await racePool.acquire();
+      await healthCheck;
+
+      expect(racePool.getConnections().has(acquired.id)).toBe(true);
+      expect(acquired.connection.isValid).toBe(true);
+    });
+
+    it("should leave connections opened by the health check available", async () => {
+      await (
+        racePool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+      expect(racePool.getConnections().size).toBe(config.minConnections);
+
+      await racePool.acquire();
+
+      expect(racePool.getMetrics().totalCreated).toBe(config.minConnections);
+    });
+
+    it("should offer a connection to the next waiter if one gives up during handoff", async () => {
+      const held = await Promise.all(
+        Array.from({ length: config.maxConnections }, () => racePool.acquire()),
+      );
+      const abandoned = racePool.acquire().catch(() => undefined);
+      const waiting = racePool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // The first waiter times out while the released connection is checked.
+      racePool.validationDelayMs = 20;
+      const [first] = racePool.getWaitingQueue();
+      setTimeout(() => first.reject(new Error("gave up")), 5);
+      await racePool.release(held[0]);
+
+      expect((await waiting).id).toBe(held[0].id);
+      await abandoned;
     });
   });
 });

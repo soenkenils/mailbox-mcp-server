@@ -55,6 +55,11 @@ export abstract class ConnectionPool<T> {
   protected logger = createLogger("ConnectionPool");
   private healthCheckInterval?: NodeJS.Timeout;
   private isShuttingDown = false;
+  /**
+   * Connections being opened right now. They only join `connections` once the
+   * connect completes, so capacity checks count them separately.
+   */
+  private pendingCreations = 0;
   private connectionErrors: Array<{
     timestamp: Date;
     error: string;
@@ -99,18 +104,16 @@ export abstract class ConnectionPool<T> {
     this.metrics.waitingRequests++;
 
     try {
-      // Try to find an available idle connection
-      const idleConnection = this.findIdleConnection();
+      // Claimed before activation awaits validation, so a concurrent acquire
+      // cannot take the same connection in the meantime.
+      const idleConnection = this.claimIdleConnection();
       if (idleConnection) {
-        // Activate the connection - if this fails, the error will be caught below
-        // and waitingRequests will be decremented in the catch block
-        const activated = await this.activateConnection(idleConnection);
+        const activated = await this.activateClaimed(idleConnection);
         this.metrics.waitingRequests--;
         return activated;
       }
 
-      // Try to create a new connection if under max limit
-      if (this.connections.size < this.config.maxConnections) {
+      if (this.hasCapacity()) {
         const wrapper = await this.createNewConnection();
         this.metrics.waitingRequests--;
         return wrapper;
@@ -139,22 +142,28 @@ export abstract class ConnectionPool<T> {
       return;
     }
 
-    wrapper.inUse = false;
     wrapper.lastUsed = new Date();
-    this.metrics.activeConnections--;
-    this.metrics.idleConnections++;
     this.metrics.totalReleased++;
 
-    // Process waiting queue - skip settled (timed-out) requests
-    // to find the next active waiter
-    while (this.waitingQueue.length > 0) {
-      const request = this.waitingQueue.shift();
-      if (!request || request.settled) continue;
+    await this.handOff(wrapper);
+  }
 
-      // CRITICAL FIX: If connection is unhealthy, destroy it immediately
-      // and create a new connection for the waiting request instead of
-      // trying to validate/activate it (which could hang if the connection
-      // is stuck from a timed-out operation)
+  /**
+   * Gives a claimed connection to the next waiter, or returns it to the idle
+   * set when nobody is waiting. The connection stays claimed throughout, so
+   * nothing else can take it while it is validated for the waiter.
+   */
+  private async handOff(wrapper: ConnectionWrapper<T>): Promise<void> {
+    for (;;) {
+      const request = this.nextWaiter();
+      if (!request) {
+        wrapper.inUse = false;
+        this.updateMetrics();
+        return;
+      }
+
+      // If connection is unhealthy, destroy it and create a new one
+      // for the waiting request instead of reusing a corrupted connection
       if (!wrapper.isHealthy) {
         await this.logger.warning(
           "Destroying unhealthy connection instead of reusing for waiting request",
@@ -181,30 +190,53 @@ export abstract class ConnectionPool<T> {
         });
 
         // Try to create a new connection for the waiting request
+        let newWrapper: ConnectionWrapper<T>;
         try {
-          const newWrapper = await this.createNewConnection();
-          request.resolve(newWrapper);
+          newWrapper = await this.createNewConnection();
         } catch (error) {
           request.reject(
             error instanceof Error ? error : new Error(String(error)),
           );
+          return;
+        }
+
+        if (request.settled) {
+          // The waiter gave up while the connection was opened.
+          await this.handOff(newWrapper);
+        } else {
+          request.resolve(newWrapper);
         }
         return;
       }
 
-      // Connection is healthy, try to activate it for the waiting request
+      let activatedWrapper: ConnectionWrapper<T>;
       try {
-        const activatedWrapper = await this.activateConnection(wrapper);
-        request.resolve(activatedWrapper);
+        activatedWrapper = await this.activateClaimed(wrapper);
       } catch (error) {
         request.reject(
           error instanceof Error ? error : new Error(String(error)),
         );
+        return;
       }
-      return;
-    }
 
-    this.updateMetrics();
+      if (!request.settled) {
+        request.resolve(activatedWrapper);
+        return;
+      }
+      // The waiter timed out during validation; offer it to the next one
+      // rather than leaving it claimed by nobody.
+    }
+  }
+
+  /** Next waiter that has not already timed out. */
+  private nextWaiter() {
+    while (this.waitingQueue.length > 0) {
+      const request = this.waitingQueue.shift();
+      if (request && !request.settled) {
+        return request;
+      }
+    }
+    return undefined;
   }
 
   async destroy(): Promise<void> {
@@ -237,17 +269,50 @@ export abstract class ConnectionPool<T> {
     return { ...this.metrics };
   }
 
-  private findIdleConnection(): ConnectionWrapper<T> | null {
+  private claimIdleConnection(): ConnectionWrapper<T> | null {
     for (const wrapper of this.connections.values()) {
       if (!wrapper.inUse && wrapper.isHealthy) {
+        wrapper.inUse = true;
         return wrapper;
       }
     }
     return null;
   }
 
+  /**
+   * Activates a connection already claimed by the caller. If activation fails
+   * without destroying it, the claim is dropped so it can be checked again.
+   */
+  private async activateClaimed(
+    wrapper: ConnectionWrapper<T>,
+  ): Promise<ConnectionWrapper<T>> {
+    try {
+      return await this.activateConnection(wrapper);
+    } catch (error) {
+      if (this.connections.has(wrapper.id)) {
+        wrapper.inUse = false;
+      }
+      throw error;
+    }
+  }
+
+  private hasCapacity(): boolean {
+    return (
+      this.connections.size + this.pendingCreations < this.config.maxConnections
+    );
+  }
+
+  /**
+   * Opens a connection, holding a slot for it from the start so concurrent
+   * callers see the pool's real size while the connect is in flight.
+   */
   private async createNewConnection(): Promise<ConnectionWrapper<T>> {
-    return this.createConnectionWithRetries();
+    this.pendingCreations++;
+    try {
+      return await this.createConnectionWithRetries();
+    } finally {
+      this.pendingCreations--;
+    }
   }
 
   private async createConnectionWithRetries(): Promise<ConnectionWrapper<T>> {
@@ -428,16 +493,23 @@ export abstract class ConnectionPool<T> {
     const idleTimeout = this.config.idleTimeoutMs;
     const connectionsToDestroy: ConnectionWrapper<T>[] = [];
 
-    for (const wrapper of this.connections.values()) {
-      if (!wrapper.inUse) {
-        const shouldDestroy = await this.shouldDestroyConnection(
-          wrapper,
-          now,
-          idleTimeout,
-        );
-        if (shouldDestroy) {
-          connectionsToDestroy.push(wrapper);
-        }
+    for (const wrapper of [...this.connections.values()]) {
+      if (wrapper.inUse) {
+        continue;
+      }
+
+      // Claimed while it is checked, and kept claimed until destroyed, so an
+      // acquire in the meantime cannot be handed a connection about to close.
+      wrapper.inUse = true;
+      const shouldDestroy = await this.shouldDestroyConnection(
+        wrapper,
+        now,
+        idleTimeout,
+      );
+      if (shouldDestroy) {
+        connectionsToDestroy.push(wrapper);
+      } else {
+        await this.handOff(wrapper);
       }
     }
 
@@ -480,11 +552,14 @@ export abstract class ConnectionPool<T> {
 
   private async ensureMinimumConnections(): Promise<void> {
     while (
-      this.connections.size < this.config.minConnections &&
+      this.connections.size + this.pendingCreations <
+        this.config.minConnections &&
       !this.isShuttingDown
     ) {
       try {
-        await this.createNewConnection();
+        // New connections start out claimed; hand this one over so it is
+        // actually available rather than held by nobody forever.
+        await this.handOff(await this.createNewConnection());
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         await this.logger.warning(
