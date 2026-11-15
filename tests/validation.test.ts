@@ -411,14 +411,17 @@ describe("Folder path validation", () => {
     expect(result.folder).toBe("INBOX/Recruiter-Spam");
   });
 
-  it.each(["/INBOX", "INBOX/", "INBOX//Sub", "INBOX/../Spam", "./INBOX"])(
-    "should reject malformed folder path %s",
-    folder => {
-      expect(() => validateInput(getEmailSchema, { uid: 1, folder })).toThrow(
-        "Validation failed",
-      );
-    },
-  );
+  it.each([
+    "/INBOX",
+    "INBOX/",
+    "INBOX//Sub",
+    "INBOX/../Spam",
+    "./INBOX",
+  ])("should reject malformed folder path %s", folder => {
+    expect(() => validateInput(getEmailSchema, { uid: 1, folder })).toThrow(
+      "Validation failed",
+    );
+  });
 });
 
 describe("Folder path sanitizing order", () => {
