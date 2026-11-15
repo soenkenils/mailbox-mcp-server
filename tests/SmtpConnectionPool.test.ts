@@ -129,6 +129,20 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
     });
 
+    it("should hand nodemailer the configured hostname, not a resolved address", async () => {
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      // nodemailer resolves A and AAAA itself and falls back between IPv4
+      // and IPv6 (autoSelectFamily); an IP literal here would pin the
+      // transport to one address and disable that fallback
+      const options = (nodemailer.default.createTransport as Mock).mock
+        .calls[0][0];
+      expect(options.host).toBe("smtp.example.com");
+      expect(options.tls).not.toHaveProperty("servername");
+      await pool.release(wrapper);
+    });
+
     it("should require TLS when the connection starts unencrypted", async () => {
       await pool.destroy();
       pool = new SmtpConnectionPool({
