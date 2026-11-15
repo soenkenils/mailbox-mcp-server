@@ -822,15 +822,8 @@ export class SieveService {
       if (!first) {
         continue;
       }
-      // Status lines (only atoms, never quoted names)
-      if (first.kind === "atom" && /^(OK|NO|BYE)$/i.test(first.value)) {
-        continue;
-      }
-      if (first.kind === "atom" && first.value.toUpperCase() === "ACTIVE") {
-        // Legacy tolerance: "ACTIVE" alone on a line marks the line itself
-        // as a script and flags the most recent entry as active.
-        scripts.push({ name: first.value, content: "", active: false });
-        scripts[scripts.length - 1].active = true;
+      // Status lines and a stray ACTIVE flag (only atoms, never quoted names)
+      if (first.kind === "atom" && /^(OK|NO|BYE|ACTIVE)$/i.test(first.value)) {
         continue;
       }
       scripts.push({
@@ -858,6 +851,9 @@ export class SieveService {
     };
 
     const lines = data.split("\r\n");
+    // STARTTLS may be listed before or after SIEVE (RFC 5804 allows any
+    // order), so track it separately and merge it in at the end.
+    let hasStarttls = false;
 
     this.logger.debug(
       `Parsing capabilities from ${lines.length} lines`,
@@ -899,7 +895,7 @@ export class SieveService {
         );
       } else if (trimmedLine === '"STARTTLS"') {
         // STARTTLS is advertised as a single capability
-        capabilities.sieveExtensions.push("STARTTLS");
+        hasStarttls = true;
         this.logger.debug("Added STARTTLS extension");
       }
       // Handle unquoted capability format: IMPLEMENTATION value
@@ -936,11 +932,15 @@ export class SieveService {
           `Parsed unquoted SIEVE extensions: ${capabilities.sieveExtensions.join(", ")}`,
         );
       } else if (trimmedLine === "STARTTLS") {
-        capabilities.sieveExtensions.push("STARTTLS");
+        hasStarttls = true;
         this.logger.debug("Added unquoted STARTTLS extension");
       } else {
         this.logger.debug(`Ignoring capability line: ${trimmedLine}`);
       }
+    }
+
+    if (hasStarttls && !capabilities.sieveExtensions.includes("STARTTLS")) {
+      capabilities.sieveExtensions.push("STARTTLS");
     }
 
     this.logger.debug(

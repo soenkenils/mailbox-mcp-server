@@ -369,18 +369,12 @@ if header :contains "From" "müller@example.de" {
       expect(result).toEqual(expected);
     });
 
-    it("should handle ACTIVE on separate line as script name", () => {
-      // Note: The parser treats "ACTIVE" on its own line as a script name
-      // This is the current behavior - ACTIVE must be on same line as script name
-      const input = "script1\r\nACTIVE\r\nOK";
-      const result = testableService.testParseScriptList(input);
+    it("should not treat a bare ACTIVE line as a script", () => {
+      const result = testableService.testParseScriptList(
+        "script1\r\nACTIVE\r\nOK",
+      );
 
-      // Parser creates two scripts: "script1" and "ACTIVE"
-      expect(result.length).toBe(2);
-      expect(result[0].name).toBe("script1");
-      expect(result[1].name).toBe("ACTIVE");
-      // The second-pass marks the last script (ACTIVE) as active
-      expect(result[1].active).toBe(true);
+      expect(result).toEqual([{ name: "script1", content: "", active: false }]);
     });
 
     it.each([
@@ -542,6 +536,26 @@ if header :contains "From" "müller@example.de" {
           implementation: "Cyrus",
           version: "2.0",
           saslMechanisms: ["PLAIN"],
+          sieveExtensions: ["fileinto", "STARTTLS"],
+        },
+      ],
+      [
+        "STARTTLS listed before SIEVE (quoted)",
+        '"IMPLEMENTATION" "Dovecot"\r\n"STARTTLS"\r\n"SIEVE" "fileinto envelope"\r\nOK',
+        {
+          implementation: "Dovecot",
+          version: "",
+          saslMechanisms: [],
+          sieveExtensions: ["fileinto", "envelope", "STARTTLS"],
+        },
+      ],
+      [
+        "STARTTLS listed before SIEVE (unquoted)",
+        'IMPLEMENTATION "Cyrus"\r\nSTARTTLS\r\nSIEVE "fileinto"\r\nOK',
+        {
+          implementation: "Cyrus",
+          version: "",
+          saslMechanisms: [],
           sieveExtensions: ["fileinto", "STARTTLS"],
         },
       ],
