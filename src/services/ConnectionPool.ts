@@ -101,6 +101,8 @@ export abstract class ConnectionPool<T> {
       throw new Error("Connection pool is shutting down");
     }
 
+    // Counted until this call settles, however it settles: decremented in
+    // exactly one place so the gauge cannot drift.
     this.metrics.waitingRequests++;
 
     try {
@@ -108,24 +110,20 @@ export abstract class ConnectionPool<T> {
       // cannot take the same connection in the meantime.
       const idleConnection = this.claimIdleConnection();
       if (idleConnection) {
-        const activated = await this.activateClaimed(idleConnection);
-        this.metrics.waitingRequests--;
-        return activated;
+        return await this.activateClaimed(idleConnection);
       }
 
       if (this.hasCapacity()) {
-        const wrapper = await this.createNewConnection();
-        this.metrics.waitingRequests--;
-        return wrapper;
+        return await this.createNewConnection();
       }
 
       // Wait for a connection to become available
-      const wrapper = await this.waitForConnection();
-      return wrapper;
+      return await this.waitForConnection();
     } catch (error) {
-      this.metrics.waitingRequests--;
       this.metrics.totalErrors++;
       throw error;
+    } finally {
+      this.metrics.waitingRequests--;
     }
   }
 
@@ -154,6 +152,10 @@ export abstract class ConnectionPool<T> {
    * nothing else can take it while it is validated for the waiter.
    */
   private async handOff(wrapper: ConnectionWrapper<T>): Promise<void> {
+    // Set once the connection passes validation, so it is not checked again
+    // (another network round-trip) if that waiter gave up in the meantime.
+    let activated: ConnectionWrapper<T> | undefined;
+
     for (;;) {
       const request = this.nextWaiter();
       if (!request) {
@@ -209,18 +211,19 @@ export abstract class ConnectionPool<T> {
         return;
       }
 
-      let activatedWrapper: ConnectionWrapper<T>;
-      try {
-        activatedWrapper = await this.activateClaimed(wrapper);
-      } catch (error) {
-        request.reject(
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        return;
+      if (!activated) {
+        try {
+          activated = await this.activateClaimed(wrapper);
+        } catch (error) {
+          request.reject(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+          return;
+        }
       }
 
       if (!request.settled) {
-        request.resolve(activatedWrapper);
+        request.resolve(activated);
         return;
       }
       // The waiter timed out during validation; offer it to the next one
@@ -431,7 +434,6 @@ export abstract class ConnectionPool<T> {
         const index = this.waitingQueue.indexOf(request);
         if (index !== -1) {
           this.waitingQueue.splice(index, 1);
-          this.metrics.waitingRequests--;
         }
         request.reject(
           new Error(

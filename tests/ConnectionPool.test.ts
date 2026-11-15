@@ -754,5 +754,66 @@ describe("ConnectionPool", () => {
       expect((await waiting).id).toBe(held[0].id);
       await abandoned;
     });
+
+    it("should validate a connection only once when a waiter gives up during handoff", async () => {
+      const held = await Promise.all(
+        Array.from({ length: config.maxConnections }, () => racePool.acquire()),
+      );
+      const abandoned = racePool.acquire().catch(() => undefined);
+      const waiting = racePool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      racePool.validationDelayMs = 20;
+      const validate = vi.spyOn(racePool, "validateConnection");
+      const [first] = racePool.getWaitingQueue();
+      setTimeout(() => first.reject(new Error("gave up")), 5);
+      await racePool.release(held[0]);
+
+      expect((await waiting).id).toBe(held[0].id);
+      expect(validate).toHaveBeenCalledTimes(1);
+      await abandoned;
+    });
+  });
+
+  describe("waiting request metric", () => {
+    let waitPool: TestConnectionPool;
+
+    beforeEach(() => {
+      waitPool = new TestConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await waitPool.destroy();
+    });
+
+    const fillPool = () =>
+      Promise.all(
+        Array.from({ length: config.maxConnections }, () => waitPool.acquire()),
+      );
+
+    it("should count a waiter only while it is waiting", async () => {
+      const held = await fillPool();
+      const waiting = waitPool.acquire();
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(waitPool.getMetrics().waitingRequests).toBe(1);
+
+      await waitPool.release(held[0]);
+      await waiting;
+
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+    });
+
+    it("should stop counting a waiter once it times out", async () => {
+      await fillPool();
+
+      await expect(waitPool.acquire()).rejects.toThrow(
+        "Connection acquire timeout",
+      );
+
+      expect(waitPool.getMetrics().waitingRequests).toBe(0);
+    });
   });
 });
