@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
+import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
 import { handleSieveTool } from "../src/tools/sieveTools.js";
 
