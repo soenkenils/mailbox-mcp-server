@@ -38,11 +38,6 @@ interface ImapMessage {
   size?: number;
 }
 
-interface ImapEnvelopeAddress {
-  name?: string;
-  address: string;
-}
-
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailComposition,
@@ -53,13 +48,6 @@ import type {
   EmailThread,
   ImapConnection,
 } from "../types/email.types.js";
-import {
-  CacheError,
-  ConnectionError,
-  EmailError,
-  ErrorCode,
-  type ErrorContext,
-} from "../types/errors.js";
 import { createCacheFetcher } from "../utils/cacheFallback.js";
 import {
   ImapConnectionPool,

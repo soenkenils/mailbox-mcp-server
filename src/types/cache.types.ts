@@ -15,12 +15,6 @@ export enum CachePriority {
   CRITICAL = 4,
 }
 
-export interface CacheOptions {
-  ttl: number;
-  maxSize?: number;
-  cleanupInterval?: number;
-}
-
 export interface LocalCache {
   get<T>(key: string): T | null;
   getStale<T>(key: string): T | null;

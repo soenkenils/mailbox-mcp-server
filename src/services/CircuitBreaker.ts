@@ -97,16 +97,4 @@ export class CircuitBreaker {
     this.lastSuccessTime = undefined;
     this.nextAttemptTime = 0;
   }
-
-  isOpen(): boolean {
-    return this.state === CircuitBreakerState.OPEN;
-  }
-
-  isClosed(): boolean {
-    return this.state === CircuitBreakerState.CLOSED;
-  }
-
-  isHalfOpen(): boolean {
-    return this.state === CircuitBreakerState.HALF_OPEN;
-  }
 }

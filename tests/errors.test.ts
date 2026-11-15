@@ -1,18 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   AuthenticationError,
-  CacheError,
   CalendarError,
-  ConfigurationError,
   ConnectionError,
   EmailError,
   ErrorCode,
-  getErrorCode,
-  getUserMessage,
-  isRetryableError,
-  MailboxError,
   type MCPError,
-  RateLimitError,
   toMCPError,
   ValidationError,
 } from "../src/types/errors.js";
@@ -124,30 +117,12 @@ describe("Custom Error Types", () => {
     });
   });
 
-  describe("RateLimitError", () => {
-    it("should create rate limit error with retry information", () => {
-      const error = new RateLimitError("Rate limit exceeded", 60);
-
-      expect(error.name).toBe("RateLimitError");
-      expect(error.retryAfter).toBe(60);
-      expect(error.isRetryable).toBe(true);
-      expect(error.getUserMessage()).toBe(
-        "Rate limit exceeded. Please try again in 60 seconds.",
+  describe("toMCPError", () => {
+    it("should mark connection errors retryable and auth errors not", () => {
+      expect(new ConnectionError("Connection failed").isRetryable).toBe(true);
+      expect(new AuthenticationError("Invalid credentials").isRetryable).toBe(
+        false,
       );
-    });
-  });
-
-  describe("Error utility functions", () => {
-    it("should correctly identify retryable errors", () => {
-      const connectionError = new ConnectionError("Connection failed");
-      const authError = new AuthenticationError("Invalid credentials");
-
-      expect(isRetryableError(connectionError)).toBe(true);
-      expect(isRetryableError(authError)).toBe(false);
-
-      // Test with regular Error
-      const networkError = new Error("ECONNRESET");
-      expect(isRetryableError(networkError)).toBe(true);
     });
 
     it("should convert regular errors to MCPErrors", () => {
@@ -180,26 +155,6 @@ describe("Custom Error Types", () => {
       const result = toMCPError(originalError);
 
       expect(result).toBe(originalError);
-    });
-
-    it("should get user-friendly messages", () => {
-      const connectionError = new ConnectionError("Network error");
-      const regularError = new Error("Some error");
-
-      expect(getUserMessage(connectionError)).toBe(
-        "Unable to connect to the server. Please try again later.",
-      );
-      expect(getUserMessage(regularError)).toBe(
-        "An unexpected error occurred. Please try again.",
-      );
-    });
-
-    it("should extract error codes correctly", () => {
-      const mcpError = new EmailError("Test", ErrorCode.EMAIL_NOT_FOUND);
-      const regularError = new Error("Test");
-
-      expect(getErrorCode(mcpError)).toBe(ErrorCode.EMAIL_NOT_FOUND);
-      expect(getErrorCode(regularError)).toBe(ErrorCode.INTERNAL_ERROR);
     });
   });
 

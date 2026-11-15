@@ -20,9 +20,9 @@ describe("CircuitBreaker", () => {
 
   describe("initialization", () => {
     it("should start in CLOSED state", () => {
-      expect(circuitBreaker.isClosed()).toBe(true);
-      expect(circuitBreaker.isOpen()).toBe(false);
-      expect(circuitBreaker.isHalfOpen()).toBe(false);
+      expect(circuitBreaker.getMetrics().state).toBe(
+        CircuitBreakerState.CLOSED,
+      );
     });
 
     it("should have initial metrics", () => {
@@ -43,7 +43,9 @@ describe("CircuitBreaker", () => {
 
       expect(result).toBe("success");
       expect(operation).toHaveBeenCalledOnce();
-      expect(circuitBreaker.isClosed()).toBe(true);
+      expect(circuitBreaker.getMetrics().state).toBe(
+        CircuitBreakerState.CLOSED,
+      );
     });
 
     it("should track successful operations", async () => {
@@ -83,7 +85,9 @@ describe("CircuitBreaker", () => {
       await expect(circuitBreaker.execute(operation)).rejects.toThrow();
       await expect(circuitBreaker.execute(operation)).rejects.toThrow();
 
-      expect(circuitBreaker.isClosed()).toBe(true);
+      expect(circuitBreaker.getMetrics().state).toBe(
+        CircuitBreakerState.CLOSED,
+      );
       expect(circuitBreaker.getMetrics().failures).toBe(2);
     });
 
@@ -95,7 +99,7 @@ describe("CircuitBreaker", () => {
       await expect(circuitBreaker.execute(operation)).rejects.toThrow();
       await expect(circuitBreaker.execute(operation)).rejects.toThrow();
 
-      expect(circuitBreaker.isOpen()).toBe(true);
+      expect(circuitBreaker.getMetrics().state).toBe(CircuitBreakerState.OPEN);
       expect(circuitBreaker.getMetrics().failures).toBe(3);
     });
   });
@@ -133,7 +137,9 @@ describe("CircuitBreaker", () => {
       const result = await circuitBreaker.execute(operation);
 
       expect(result).toBe("success");
-      expect(circuitBreaker.isClosed()).toBe(true); // Should be closed after successful operation
+      expect(circuitBreaker.getMetrics().state).toBe(
+        CircuitBreakerState.CLOSED,
+      ); // Should be closed after successful operation
     });
   });
 
@@ -158,7 +164,9 @@ describe("CircuitBreaker", () => {
 
       await circuitBreaker.execute(operation);
 
-      expect(circuitBreaker.isClosed()).toBe(true);
+      expect(circuitBreaker.getMetrics().state).toBe(
+        CircuitBreakerState.CLOSED,
+      );
       expect(circuitBreaker.getMetrics().failures).toBe(0); // Reset on successful recovery
     });
 
@@ -185,7 +193,7 @@ describe("CircuitBreaker", () => {
         "still failing",
       );
 
-      expect(circuitBreaker.isOpen()).toBe(true);
+      expect(circuitBreaker.getMetrics().state).toBe(CircuitBreakerState.OPEN);
     });
   });
 
@@ -265,7 +273,7 @@ describe("CircuitBreaker", () => {
       };
       const customBreaker = new CircuitBreaker(customConfig);
 
-      expect(customBreaker.isClosed()).toBe(true);
+      expect(customBreaker.getMetrics().state).toBe(CircuitBreakerState.CLOSED);
     });
   });
 
