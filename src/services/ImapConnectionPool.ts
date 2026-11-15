@@ -120,7 +120,11 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
   async destroyConnection(connection: ImapFlow): Promise<void> {
     try {
       if (connection.usable) {
-        await connection.logout();
+        await withTimeout(
+          connection.logout(),
+          5000,
+          "IMAP logout timed out after 5000ms",
+        );
       }
     } catch (error) {
       await this.logger.warning(
@@ -131,6 +135,8 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
         },
         { error: error instanceof Error ? error.message : String(error) },
       );
+      // Drop the socket so a hung logout cannot keep the connection open.
+      connection.close();
     }
   }
 

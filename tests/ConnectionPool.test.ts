@@ -1011,6 +1011,58 @@ describe("ConnectionPool", () => {
       expect((await waiting).value?.connection.isValid).toBe(true);
     });
 
+    /** Holds the close of `slow` until the returned gate opens. */
+    const slowClose = (slow: MockConnection) => {
+      const gate = deferred();
+      slotPool.destroyConnection = async connection => {
+        if (connection === slow) {
+          await gate.promise;
+        }
+        await connection.close();
+      };
+      return gate;
+    };
+
+    it("should not open a replacement while the old connection is still closing", async () => {
+      const held = await slotPool.acquire();
+      held.isHealthy = false;
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = slowClose(held.connection);
+      const createSpy = vi.spyOn(slotPool, "createConnection");
+
+      await slotPool.release(held);
+      await flush();
+      expect(createSpy).not.toHaveBeenCalled();
+
+      gate.resolve();
+      expect((await waiting).value?.connection.isValid).toBe(true);
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should make destroy() wait for closes already in progress", async () => {
+      const held = await slotPool.acquire();
+      held.isHealthy = false;
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = slowClose(held.connection);
+      await slotPool.release(held);
+
+      let destroyed = false;
+      const destroying = slotPool.destroy().then(() => {
+        destroyed = true;
+      });
+      for (let i = 0; i < 5; i++) {
+        await flush();
+      }
+      expect(destroyed).toBe(false);
+
+      gate.resolve();
+      await destroying;
+      expect(held.connection.isValid).toBe(false);
+      await waiting;
+    });
+
     it("should give a waiter a new connection when the handed-off one fails validation", async () => {
       const held = await slotPool.acquire();
       const waiting = slotPool.acquire();

@@ -62,6 +62,11 @@ export abstract class ConnectionPool<T> {
    * connect completes, so capacity checks count them separately.
    */
   private pendingCreations = 0;
+  /**
+   * Closes in progress. They still hold their slot, so a replacement is not
+   * opened while the old socket is open, and destroy() waits for them.
+   */
+  private closing = new Map<string, Promise<void>>();
   /** The running serveQueuedWaiters() pass, if any. */
   private serving?: Promise<void>;
   private serveAgain = false;
@@ -381,6 +386,8 @@ export abstract class ConnectionPool<T> {
       promises.push(this.destroyConnectionWrapper(wrapper));
     }
 
+    // Includes closes started before destroy() was called.
+    promises.push(...this.closing.values());
     await Promise.allSettled(promises);
     this.connections.clear();
     this.updateMetrics();
@@ -420,7 +427,8 @@ export abstract class ConnectionPool<T> {
 
   private hasCapacity(): boolean {
     return (
-      this.connections.size + this.pendingCreations < this.config.maxConnections
+      this.connections.size + this.pendingCreations + this.closing.size <
+      this.config.maxConnections
     );
   }
 
@@ -584,9 +592,22 @@ export abstract class ConnectionPool<T> {
   protected async destroyConnectionWrapper(
     wrapper: ConnectionWrapper<T>,
   ): Promise<void> {
-    // Leaves the pool before the close is awaited, so the slot is free for a
-    // waiter right away.
+    // Leaves the pool at once but keeps its slot until the close is done.
     this.connections.delete(wrapper.id);
+    const close = this.closeWrapper(wrapper);
+    this.closing.set(wrapper.id, close);
+    try {
+      await close;
+    } finally {
+      this.closing.delete(wrapper.id);
+      // The slot is free now; a waiter may have been queued for it.
+      if (!this.isShuttingDown && this.hasLiveWaiter()) {
+        this.serveWaitersInBackground();
+      }
+    }
+  }
+
+  private async closeWrapper(wrapper: ConnectionWrapper<T>): Promise<void> {
     try {
       await this.destroyConnection(wrapper.connection);
     } catch (error) {

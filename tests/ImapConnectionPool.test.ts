@@ -40,6 +40,10 @@ class MockImapFlow {
     this.usable = false;
   }
 
+  close(): void {
+    this.usable = false;
+  }
+
   async noop(): Promise<void> {
     if (this.shouldFailNoop) {
       throw new Error("IMAP noop failed");
@@ -497,6 +501,18 @@ describe("ImapConnectionPool", () => {
     afterEach(async () => {
       await timerPool.destroy();
       vi.useRealTimers();
+    });
+
+    it("should force-close a connection whose logout hangs", async () => {
+      const connection = new MockImapFlow();
+      connection.logout = () => new Promise<void>(() => {});
+      const close = vi.spyOn(connection, "close");
+
+      const destroying = timerPool.destroyConnection(connection as never);
+      await vi.advanceTimersByTimeAsync(5000);
+      await destroying;
+
+      expect(close).toHaveBeenCalledTimes(1);
     });
 
     it("should clear the validation timeout once noop answers", async () => {
