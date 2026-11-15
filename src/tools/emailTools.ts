@@ -91,27 +91,27 @@ export function createEmailTools(
           seen: {
             type: "boolean",
             description:
-              "Filter by read status: true = read/seen emails, false = unread/unseen emails",
+              "Filter by read status: false = unread only, true = read only, omit = both",
           },
           answered: {
             type: "boolean",
             description:
-              "Filter by replied status: true = replied emails, false = not replied",
+              "Filter by replied status: true = replied only, false = not yet replied only, omit = both",
           },
           flagged: {
             type: "boolean",
             description:
-              "Filter by flagged/starred status: true = flagged, false = not flagged",
+              "Filter by flagged/starred status: true = flagged only, false = not flagged only, omit = both",
           },
           draft: {
             type: "boolean",
             description:
-              "Filter by draft status: true = drafts, false = not drafts",
+              "Filter by draft status: true = drafts only, false = non-drafts only, omit = both",
           },
           deleted: {
             type: "boolean",
             description:
-              "Filter by deleted status: true = deleted, false = not deleted",
+              "Filter by deleted status: true = messages marked deleted only, false = not deleted only, omit = both",
           },
         },
         additionalProperties: false,
