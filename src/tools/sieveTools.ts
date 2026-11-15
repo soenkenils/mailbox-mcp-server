@@ -11,6 +11,7 @@ import {
   isAllowedSieveNameChar,
   SieveService,
 } from "../services/SieveService.js";
+import { SieveError } from "../types/sieve.types.js";
 
 const logger = createLogger("SieveTools");
 
@@ -32,23 +33,38 @@ export function isSieveTool(name: string): name is SieveToolName {
 }
 
 // Script names: no control characters (CR/LF would end the ManageSieve
-// command line), no quote or backslash. SieveService escapes as well; this
-// rejects bad input early with a clear message.
+// command line). Quotes and backslashes are legal in a sieve-name (RFC 5804)
+// and SieveService escapes them, so scripts created by other clients with
+// such names stay reachable. This rejects bad input early with a clear
+// message.
 const scriptNameSchema = v.pipe(
   v.string(),
   v.minLength(1),
   v.maxLength(100),
   v.check(
     name =>
-      [...name].every(
-        char =>
-          isAllowedSieveNameChar(char.codePointAt(0) ?? 0) &&
-          char !== '"' &&
-          char !== "\\",
-      ),
-    "Script name must not contain control characters, quotes or backslashes",
+      [...name].every(char => isAllowedSieveNameChar(char.codePointAt(0) ?? 0)),
+    "Script name must not contain control characters, line separators, BOM or unpaired surrogates",
   ),
 );
+
+/** Status words that SieveService uses as code when the server sent none */
+const BARE_STATUSES = new Set(["OK", "NO", "BYE"]);
+
+/** Error text for the tool result, with the RFC 5804 response code if any */
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  if (
+    error instanceof SieveError &&
+    error.code &&
+    !BARE_STATUSES.has(error.code)
+  ) {
+    return `${error.message} [${error.code}]`;
+  }
+  return error.message;
+}
 
 // Validation schemas
 const ListSieveScriptsSchema = v.object({});
@@ -243,7 +259,7 @@ export async function handleSieveTool(
       content: [
         {
           type: "text",
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          text: `Error: ${describeError(error)}`,
         },
       ],
       isError: true,

@@ -22,9 +22,11 @@ export interface CacheFallbackOptions<T> {
   fetch: () => Promise<T>;
 
   /**
-   * Default value to return if all fallbacks fail (connection errors only)
+   * Default value to return if all fallbacks fail (connection errors only).
+   * Omit it to rethrow the connection error instead, for operations where a
+   * placeholder value would be misread (e.g. null as "not found").
    */
-  defaultValue: T;
+  defaultValue?: T;
 
   /**
    * Logger instance for logging warnings and errors
@@ -61,7 +63,7 @@ export interface CacheFallbackOptions<T> {
  * 3. On error:
  *    - If connection error:
  *      a. Try stale cache → return if found
- *      b. Return default value if no stale cache
+ *      b. Return default value if no stale cache (rethrow if none given)
  *    - If other error: throw
  *
  * @param options - Configuration for the cached operation
@@ -122,13 +124,17 @@ export async function withCacheFallback<T>(
         return staleData;
       }
 
+      if (!("defaultValue" in options)) {
+        throw error;
+      }
+
       // Return default value if no stale cache available
       await logger.warning(
         `No cached data available, returning default value due to connection failure`,
         { operation, service },
         { ...logContext },
       );
-      return defaultValue;
+      return defaultValue as T;
     }
 
     // For non-connection errors, rethrow
@@ -152,6 +158,7 @@ function isConnectionError(error: unknown): boolean {
   return (
     message.includes("connection") ||
     message.includes("timeout") ||
+    message.includes("timed out") ||
     message.includes("econnreset") ||
     message.includes("enotfound") ||
     message.includes("etimedout") ||

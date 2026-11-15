@@ -140,7 +140,10 @@ describe("STARTTLS upgrade", () => {
 
     // AUTHENTICATE only went over the encrypted channel, once
     expect(authLines(fake.received)).toHaveLength(1);
-    expect(authLines(fake.receivedSecure)).toHaveLength(1);
+    expect(authLines(fake.receivedSecure)).toEqual([
+      // SASL PLAIN (RFC 4616): base64 of NUL authcid NUL password
+      `AUTHENTICATE "PLAIN" "${Buffer.from("\0user@example.org\0not-a-real-password").toString("base64")}"`,
+    ]);
 
     // Not shifted by one response: LISTSCRIPTS gets its own answer
     expect(await sieve.listScripts()).toEqual([
