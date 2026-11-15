@@ -346,11 +346,10 @@ describe("SmtpConnectionPool", () => {
   describe("SMTP-specific metrics", () => {
     it("should provide SMTP metrics with verification info", async () => {
       const wrapper = await pool.acquire();
+      await pool.release(wrapper);
+      // Set after release: release resets failures of healthy connections
       wrapper.verificationFailures = 1;
       wrapper.lastVerified = new Date(Date.now() - 2000); // Needs verification
-      wrapper.isHealthy = false; // Mark as unhealthy so release won't reset failures
-
-      await pool.release(wrapper);
 
       const metrics = pool.getSmtpMetrics();
 
@@ -366,14 +365,12 @@ describe("SmtpConnectionPool", () => {
 
     it("should track verification metrics correctly", async () => {
       const wrapper1 = await pool.acquire();
-      wrapper1.verificationFailures = 2;
-      wrapper1.isHealthy = false; // Prevent reset on release
-      await pool.release(wrapper1);
-
       const wrapper2 = await pool.acquire();
-      wrapper2.verificationFailures = 1;
-      wrapper2.isHealthy = false; // Prevent reset on release
+      await pool.release(wrapper1);
       await pool.release(wrapper2);
+      // Set after release, which resets failures of healthy connections
+      wrapper1.verificationFailures = 2;
+      wrapper2.verificationFailures = 1;
 
       const metrics = pool.getSmtpMetrics();
       expect(metrics.totalVerificationFailures).toBe(3);
@@ -474,6 +471,21 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
 
       expect(wrapper.verificationFailures).toBe(1);
+    });
+
+    it("should destroy an unhealthy connection on release so the next acquire re-probes", async () => {
+      const wrapper = await pool.acquire();
+      const closeSpy = vi.spyOn(wrapper.connection, "close");
+      wrapper.isHealthy = false;
+
+      await pool.release(wrapper);
+
+      expect(closeSpy).toHaveBeenCalled();
+      expect(pool.getMetrics().totalConnections).toBe(0);
+
+      const next = await pool.acquire();
+      expect(next.id).not.toBe(wrapper.id);
+      await pool.release(next);
     });
   });
 

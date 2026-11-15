@@ -163,6 +163,12 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
     }
 
     await super.release(wrapper);
+
+    // An unhealthy connection stays bound to the address it was probed on
+    // (see createConnection); drop it so the next acquire probes again
+    if (!smtpWrapper.isHealthy && this.connections.has(wrapper.id)) {
+      await this.destroyConnectionWrapper(wrapper);
+    }
   }
 
   protected needsVerification(wrapper: SmtpConnectionWrapper): boolean {

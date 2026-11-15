@@ -19,6 +19,22 @@ import {
   type SmtpPoolConfig,
 } from "./SmtpConnectionPool.js";
 
+// Errors that mean the pooled connection (and the address it was pinned to)
+// is no longer usable, e.g. after a VPN or network change
+const NETWORK_ERROR_CODES = new Set([
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ECONNRESET",
+  "ESOCKET",
+]);
+
+function isNetworkError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && NETWORK_ERROR_CODES.has(code);
+}
+
 export class SmtpService {
   private pool: SmtpConnectionPool;
   private logger = createLogger("SmtpService");
@@ -70,6 +86,9 @@ export class SmtpService {
         messageId: info.messageId,
       };
     } catch (error) {
+      if (wrapper && isNetworkError(error)) {
+        wrapper.isHealthy = false;
+      }
       await this.logger.error(
         "Failed to send email",
         {
@@ -100,6 +119,9 @@ export class SmtpService {
       await wrapper.connection.verify();
       return true;
     } catch (error) {
+      if (wrapper && isNetworkError(error)) {
+        wrapper.isHealthy = false;
+      }
       await this.logger.error(
         "SMTP connection verification failed",
         {

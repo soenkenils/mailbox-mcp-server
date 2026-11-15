@@ -360,6 +360,48 @@ describe("SmtpService", () => {
     });
   });
 
+  describe("network errors", () => {
+    it.each([
+      "ETIMEDOUT",
+      "ECONNREFUSED",
+      "ENETUNREACH",
+      "EHOSTUNREACH",
+      "ECONNRESET",
+      "ESOCKET",
+    ])("should mark the connection unhealthy when sendMail fails with %s", async code => {
+      mockSendMail.mockRejectedValue(
+        Object.assign(new Error("network down"), { code }),
+      );
+
+      const result = await smtpService.sendEmail(createMockEmailComposition());
+
+      expect(result.success).toBe(false);
+      expect(mockWrapper.isHealthy).toBe(false);
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
+    });
+
+    it("should mark the connection unhealthy when verify fails with a network error", async () => {
+      mockVerify.mockRejectedValue(
+        Object.assign(new Error("unreachable"), { code: "ENETUNREACH" }),
+      );
+
+      const result = await smtpService.verifyConnection();
+
+      expect(result).toBe(false);
+      expect(mockWrapper.isHealthy).toBe(false);
+    });
+
+    it("should keep the connection healthy for non-network errors", async () => {
+      mockSendMail.mockRejectedValue(
+        Object.assign(new Error("bad recipient"), { code: "EENVELOPE" }),
+      );
+
+      await smtpService.sendEmail(createMockEmailComposition());
+
+      expect(mockWrapper.isHealthy).toBe(true);
+    });
+  });
+
   describe("verifyConnection", () => {
     it("should verify connection successfully", async () => {
       const result = await smtpService.verifyConnection();
