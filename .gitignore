@@ -38,3 +38,6 @@ WARP.md
 # Documentation
 docs/
 
+
+# Claude Code worktrees
+.claude/worktrees/

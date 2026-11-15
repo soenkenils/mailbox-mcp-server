@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
@@ -1243,17 +1243,13 @@ describe("EmailService - Advanced Coverage", () => {
         [],
       ],
       ["empty array", [], []],
-    ])(
-      "should parse %s",
-      (
-        _description: string,
-        input: unknown,
-        expected: Array<{ name?: string; address: string }>,
-      ) => {
-        const testableService = service as TestableEmailService;
-        const result = testableService.parseAddressesFromParsed(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: unknown, expected: Array<{
+      name?: string;
+      address: string;
+    }>) => {
+      const testableService = service as TestableEmailService;
+      const result = testableService.parseAddressesFromParsed(input);
+      expect(result).toEqual(expected);
+    });
   });
 });
