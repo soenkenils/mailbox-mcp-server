@@ -73,6 +73,13 @@ export interface CreateCalendarEventOptions {
   location?: string;
   allDay?: boolean;
   attendees?: Array<{ email: string; name?: string }>;
+  /**
+   * When false (the default) attendees are only recorded: no ORGANIZER is
+   * written and every ATTENDEE carries SCHEDULE-AGENT=CLIENT, so the server
+   * sends no invitations (RFC 6638). When true the account becomes the
+   * ORGANIZER and the server may email invitations to every attendee.
+   */
+  sendInvitations?: boolean;
   calendar?: string;
 }
 

@@ -427,6 +427,10 @@ export const createCalendarEventSchema = v.pipe(
     location: v.optional(eventLocationSchema),
     allDay: v.optional(v.boolean("allDay must be a boolean"), false),
     attendees: v.optional(eventAttendeesSchema),
+    sendInvitations: v.optional(
+      v.boolean("sendInvitations must be a boolean"),
+      false,
+    ),
     calendar: v.optional(calendarNameSchema),
   }),
   // An all-day event may start and end on the same date: that is one day.

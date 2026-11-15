@@ -234,22 +234,77 @@ describe("CalendarService event changes", () => {
       expect(attendees[0].getParameter("cn")).toBe(name);
     });
 
-    it("should name the account as organizer when there are attendees", async () => {
-      await makeService().createCalendarEvent({
-        ...newEvent,
-        attendees: [{ email: "doe@example.com" }],
+    describe("invitations", () => {
+      const attendees = [
+        { email: "doe@example.com", name: "John Doe" },
+        { email: "roe@example.com" },
+      ];
+
+      it("should only record attendees by default, with server scheduling declined", async () => {
+        await makeService().createCalendarEvent({ ...newEvent, attendees });
+
+        const vevent = createdEvent();
+        expect(vevent.hasProperty("organizer")).toBe(false);
+        const written = vevent.getAllProperties("attendee");
+        expect(written.map(a => a.getFirstValue())).toEqual([
+          "mailto:doe@example.com",
+          "mailto:roe@example.com",
+        ]);
+        for (const attendee of written) {
+          expect(attendee.getParameter("schedule-agent")).toBe("CLIENT");
+        }
+        expect(written[0].getParameter("cn")).toBe("John Doe");
       });
 
-      expect(createdEvent().getFirstPropertyValue("organizer")).toBe(
-        "mailto:me@mailbox.org",
-      );
-    });
+      it("should name the account as organizer and leave scheduling to the server when asked", async () => {
+        await makeService().createCalendarEvent({
+          ...newEvent,
+          attendees,
+          sendInvitations: true,
+        });
 
-    it("should not add an organizer to an event without attendees", async () => {
-      await makeService().createCalendarEvent(newEvent);
+        const vevent = createdEvent();
+        expect(vevent.getFirstPropertyValue("organizer")).toBe(
+          "mailto:me@mailbox.org",
+        );
+        const written = vevent.getAllProperties("attendee");
+        expect(written).toHaveLength(2);
+        for (const attendee of written) {
+          expect(attendee.getParameter("schedule-agent")).toBeUndefined();
+        }
+      });
 
-      expect(createdEvent().hasProperty("organizer")).toBe(false);
-      expect(createdEvent().hasProperty("attendee")).toBe(false);
+      it("should refuse to send invitations without a usable account address", async () => {
+        await expect(
+          makeService({ username: "not-an-address" }).createCalendarEvent({
+            ...newEvent,
+            attendees,
+            sendInvitations: true,
+          }),
+        ).rejects.toThrow(/mail address/);
+        expect(createCalendarObject).not.toHaveBeenCalled();
+      });
+
+      it("should refuse the account's own address as an invited attendee", async () => {
+        await expect(
+          makeService().createCalendarEvent({
+            ...newEvent,
+            attendees: [{ email: "Me@Mailbox.org" }],
+            sendInvitations: true,
+          }),
+        ).rejects.toThrow(/organizer/);
+        expect(createCalendarObject).not.toHaveBeenCalled();
+      });
+
+      it("should write neither organizer nor attendees for an event without attendees", async () => {
+        await makeService().createCalendarEvent({
+          ...newEvent,
+          sendInvitations: true,
+        });
+
+        expect(createdEvent().hasProperty("organizer")).toBe(false);
+        expect(createdEvent().hasProperty("attendee")).toBe(false);
+      });
     });
 
     describe("all-day events", () => {

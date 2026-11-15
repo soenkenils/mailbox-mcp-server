@@ -148,7 +148,7 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
     {
       name: "create_calendar_event",
       description:
-        "Create an event in a mailbox.org calendar. Listing attendees may cause the server to send them invitations. Calling twice creates two events. Returns the new event's UID.",
+        "Create an event in a mailbox.org calendar and return its UID. Calling twice creates two events. Attendees: by default nobody is notified; attendees are only recorded on the event. Set sendInvitations to true only when the user explicitly asked to invite people: the server may then email an invitation to every attendee.",
       inputSchema: {
         type: "object",
         properties: {
@@ -197,7 +197,14 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
               },
               required: ["email"],
             },
-            description: "List of event attendees (optional)",
+            description:
+              "List of event attendees (optional). Recorded only; nobody is notified unless sendInvitations is true",
+          },
+          sendInvitations: {
+            type: "boolean",
+            description:
+              "Ask the server to email invitations to all attendees, with your account as organizer (default: false). Only set this when the user explicitly asked to invite people",
+            default: false,
           },
           calendar: {
             type: "string",
@@ -360,6 +367,7 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
           location: validatedArgs.location,
           allDay: validatedArgs.allDay,
           attendees: validatedArgs.attendees,
+          sendInvitations: validatedArgs.sendInvitations,
           calendar: validatedArgs.calendar,
         });
 
@@ -386,6 +394,11 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
         if (validatedArgs.attendees?.length) {
           parts.push(
             `Attendees: ${validatedArgs.attendees.map(a => a.name || a.email).join(", ")}`,
+          );
+          parts.push(
+            validatedArgs.sendInvitations
+              ? `Invitations requested for ${validatedArgs.attendees.length} attendee(s); the server may email them`
+              : "No invitations were sent (attendees recorded only)",
           );
         }
 

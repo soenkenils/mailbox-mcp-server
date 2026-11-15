@@ -165,7 +165,8 @@ export class CalendarService {
     const uid = randomUUID();
     const allDay = options.allDay ?? false;
     const dates = allDay ? this.allDayDates(options) : undefined;
-    const iCalString = this.buildICalString(uid, options, dates);
+    const organizer = this.invitationOrganizer(options);
+    const iCalString = this.buildICalString(uid, options, dates, organizer);
 
     // Only the network calls sit inside the breaker: a calendar name the
     // caller got wrong must not count towards opening the circuit.
@@ -205,6 +206,39 @@ export class CalendarService {
       ...dates,
       calendar: calendarName,
     };
+  }
+
+  /**
+   * The ORGANIZER address when the caller asked the server to invite the
+   * attendees, or undefined when attendees are only recorded.
+   */
+  private invitationOrganizer(
+    options: CreateCalendarEventOptions,
+  ): string | undefined {
+    if (!options.sendInvitations || !options.attendees?.length) {
+      return undefined;
+    }
+
+    const address = this.connection.username.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      throw new ValidationError(
+        "Invitations need the account's mail address as organizer, but the configured username is not a mail address",
+        "sendInvitations",
+        true,
+      );
+    }
+    if (
+      options.attendees.some(
+        attendee => attendee.email.toLowerCase() === address.toLowerCase(),
+      )
+    ) {
+      throw new ValidationError(
+        `${address} is the organizer of the invitation; do not list it as an attendee`,
+        "attendees",
+        address,
+      );
+    }
+    return address;
   }
 
   /**
@@ -372,6 +406,7 @@ export class CalendarService {
     uid: string,
     options: CreateCalendarEventOptions,
     allDayDates?: { startDate: string; endDate: string },
+    organizer?: string,
   ): string {
     const utcStamp = (value: Date) =>
       dayjs(value).utc().format("YYYYMMDDTHHmmss[Z]");
@@ -404,15 +439,19 @@ export class CalendarService {
     }
 
     if (options.attendees?.length) {
-      // RFC 5545 3.8.4.3: a group-scheduled event must name its organizer.
-      if (this.connection.username.includes("@")) {
-        lines.push(`ORGANIZER:mailto:${this.connection.username}`);
+      // With an ORGANIZER that is the calendar owner, a stored event is a
+      // scheduling object and the server invites its attendees (RFC 6638).
+      // Without one, and with server scheduling declined per attendee, the
+      // attendees are only recorded.
+      if (organizer) {
+        lines.push(`ORGANIZER:mailto:${organizer}`);
       }
+      const agent = organizer ? "" : ";SCHEDULE-AGENT=CLIENT";
       for (const attendee of options.attendees) {
         const cn = attendee.name
           ? `;CN=${this.quoteICalParameter(attendee.name)}`
           : "";
-        lines.push(`ATTENDEE${cn}:mailto:${attendee.email}`);
+        lines.push(`ATTENDEE${agent}${cn}:mailto:${attendee.email}`);
       }
     }
 

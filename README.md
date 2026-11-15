@@ -138,7 +138,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
-- **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events are stored in UTC; all-day events as dates with an exclusive end (an end on the start date makes a one-day event). Listing attendees may cause mailbox.org to send them invitations. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
+- **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events are stored in UTC; all-day events as dates with an exclusive end (an end on the start date makes a one-day event). By default nobody is notified: attendees are only recorded on the event. Only with `sendInvitations: true` (meant for when you explicitly ask to invite people) does your account become the organizer, and mailbox.org may then email invitations to all attendees. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
 
 ### **Sieve Filter Tools**
 

@@ -624,6 +624,7 @@ describe("Calendar Tools", () => {
         location: "Room 42",
         allDay: false,
         attendees: [{ email: "alice@example.com", name: "Alice" }],
+        sendInvitations: false,
         calendar: "personal",
       });
 
@@ -635,6 +636,50 @@ describe("Calendar Tools", () => {
       expect(text).toContain("Calendar: personal");
       expect(text).toContain("Room 42");
       expect(text).toContain("Alice");
+      expect(text).toContain(
+        "No invitations were sent (attendees recorded only)",
+      );
+    });
+
+    it("should pass sendInvitations through and say invitations were requested", async () => {
+      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
+        createResult,
+      );
+
+      const result = await handleCalendarTool(
+        "create_calendar_event",
+        {
+          summary: "Kick-off",
+          start: "2025-07-01T10:00:00Z",
+          end: "2025-07-01T11:00:00Z",
+          attendees: [
+            { email: "alice@example.com" },
+            { email: "bob@example.com" },
+          ],
+          sendInvitations: true,
+        },
+        mockCalendarService as CalendarService,
+      );
+
+      expect(mockCalendarService.createCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ sendInvitations: true }),
+      );
+      expect(result.content[0].text).toContain(
+        "Invitations requested for 2 attendee(s)",
+      );
+    });
+
+    it("should advertise that nobody is notified unless sendInvitations is true", () => {
+      const tool = createCalendarTools(
+        mockCalendarService as CalendarService,
+      ).find(t => t.name === "create_calendar_event");
+      const property = tool?.inputSchema.properties?.sendInvitations as {
+        type: string;
+        default: boolean;
+      };
+
+      expect(property).toMatchObject({ type: "boolean", default: false });
+      expect(tool?.description).toMatch(/by default nobody is notified/i);
     });
 
     it("should create a calendar event with minimal fields", async () => {
@@ -662,6 +707,7 @@ describe("Calendar Tools", () => {
         location: undefined,
         allDay: false,
         attendees: undefined,
+        sendInvitations: false,
         calendar: undefined,
       });
       expect(result.isError).toBeUndefined();
