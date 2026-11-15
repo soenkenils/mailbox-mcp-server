@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Fails on any known high or critical advisory in the installed tree.
+      # Resolve with `bun audit fix`, or bump the offending range in package.json.
+      - name: Audit dependencies
+        run: bun audit --audit-level=high
+
+      - name: Lint & format check
+        run: bun run check
+
+      - name: Type check
+        run: bun run build
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Check coverage
+        run: bun run test:coverage
