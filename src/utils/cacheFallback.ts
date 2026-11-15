@@ -102,7 +102,7 @@ export async function withCacheFallback<T>(
     return freshData;
   } catch (error) {
     // Log the error
-    await logger.error(
+    logger.error(
       `Error in ${operation}`,
       { operation, service },
       {
@@ -116,7 +116,7 @@ export async function withCacheFallback<T>(
       // Try to return stale cached data
       const staleData = cache.getStale<T>(cacheKey);
       if (staleData) {
-        await logger.warning(
+        logger.warning(
           `Returning stale cached data due to connection failure`,
           { operation, service },
           { cacheKey, ...logContext },
@@ -129,7 +129,7 @@ export async function withCacheFallback<T>(
       }
 
       // Return default value if no stale cache available
-      await logger.warning(
+      logger.warning(
         `No cached data available, returning default value due to connection failure`,
         { operation, service },
         { ...logContext },

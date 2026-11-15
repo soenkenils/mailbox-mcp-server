@@ -241,7 +241,7 @@ export class EmailService {
             await iterator.return();
           }
         } catch (error) {
-          await this.logger.warning(
+          this.logger.warning(
             "Failed to close fetch iterator for message headers",
             {
               operation: "fetchMessageHeaders",
@@ -309,7 +309,7 @@ export class EmailService {
     try {
       return await Promise.race([fetchPromise, timeoutPromise]);
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Failed to fetch email with UID ${uid} from folder ${folder}`,
         {
           operation: "fetchEmailContent",
@@ -716,7 +716,7 @@ export class EmailService {
         message: `Email moved from ${fromFolder} to ${toFolder}`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error moving email UID ${uid}`,
         {
           operation: "moveEmail",
@@ -769,7 +769,7 @@ export class EmailService {
         message: `Email flags ${action === "add" ? "added" : "removed"} successfully`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error marking email UID ${uid}`,
         {
           operation: "markEmail",
@@ -865,7 +865,7 @@ export class EmailService {
           : "Email moved to trash",
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error deleting email UID ${uid}`,
         {
           operation: "deleteEmail",
@@ -918,7 +918,7 @@ export class EmailService {
             : undefined,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         "Error creating draft",
         {
           operation: "createDraft",
@@ -1083,7 +1083,7 @@ export class EmailService {
         metrics.totalErrors < metrics.totalConnections
       );
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         "Error checking pool health",
         {
           operation: "isHealthy",
@@ -1117,7 +1117,7 @@ export class EmailService {
         message: `Directory '${name}' created successfully`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error creating directory '${name}'`,
         {
           operation: "createDirectory",
