@@ -158,8 +158,8 @@ describe("EmailService - Advanced Coverage", () => {
 
     service = new EmailService(
       mockImapConnection,
-      poolConfig,
       mockCache,
+      poolConfig,
     ) as TestableEmailService;
 
     // Reset mock implementations
@@ -1116,18 +1116,6 @@ describe("EmailService - Advanced Coverage", () => {
         isHealthy: true,
       } as Partial<ImapConnectionWrapper>);
 
-    let emailService: EmailService;
-
-    beforeEach(() => {
-      // The outer suite passes (connection, poolConfig, cache), which leaves
-      // the cache unusable; getEmail needs a working cache mock.
-      emailService = new EmailService(
-        mockImapConnection,
-        mockCache,
-        poolConfig,
-      );
-    });
-
     afterEach(() => {
       vi.useRealTimers();
     });
@@ -1139,9 +1127,9 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const assertion = expect(
-        emailService.getEmail(7, "INBOX"),
-      ).rejects.toThrow(/timed out/);
+      const assertion = expect(service.getEmail(7, "INBOX")).rejects.toThrow(
+        /timed out/,
+      );
       await vi.advanceTimersByTimeAsync(10000);
       await assertion;
 
@@ -1155,7 +1143,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      await expect(emailService.getEmail(7, "INBOX")).rejects.toThrow(
+      await expect(service.getEmail(7, "INBOX")).rejects.toThrow(
         /Command failed/,
       );
       expect(wrapper.isHealthy).toBe(false);
@@ -1170,7 +1158,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const result = emailService.getEmail(7, "INBOX");
+      const result = service.getEmail(7, "INBOX");
       await vi.advanceTimersByTimeAsync(10000);
 
       await expect(result).resolves.toBe(stale);
@@ -1181,7 +1169,7 @@ describe("EmailService - Advanced Coverage", () => {
       const wrapper = wrapperWithFetchOne(vi.fn().mockResolvedValue(false));
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      await expect(emailService.getEmail(7, "INBOX")).resolves.toBeNull();
+      await expect(service.getEmail(7, "INBOX")).resolves.toBeNull();
       expect(wrapper.isHealthy).toBe(true);
     });
 
@@ -1192,7 +1180,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
       mockPool.acquireForFolder.mockResolvedValue(wrapper);
 
-      const email = await emailService.getEmail(7, "INBOX");
+      const email = await service.getEmail(7, "INBOX");
 
       expect(email?.subject).toBe("Hi");
       expect(vi.getTimerCount()).toBe(0);
