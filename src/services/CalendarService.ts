@@ -891,6 +891,16 @@ export class CalendarService {
       if (seen.has(id)) {
         return;
       }
+      // An override with STATUS:CANCELLED deletes its instance (RFC 5545
+      // 3.8.1.11); it must not show up as an event nor block free/busy.
+      if (
+        item.isRecurrenceException() &&
+        String(item.component.getFirstPropertyValue("status")).toUpperCase() ===
+          "CANCELLED"
+      ) {
+        seen.add(id);
+        return;
+      }
       const base = this.parseVEvent(item.component, calendar);
       if (base) {
         seen.add(id);

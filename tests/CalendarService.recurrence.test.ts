@@ -193,6 +193,47 @@ describe("CalendarService recurring events", () => {
     expect(events[0].start.toISOString()).toBe("2026-11-09T14:00:00.000Z");
   });
 
+  it("should drop an instance cancelled by its override", async () => {
+    const events = await eventsFor(
+      vcalendar(
+        vevent(WEEKLY),
+        vevent([
+          "UID:weekly@example.com",
+          "RECURRENCE-ID:20261109T100000Z",
+          "STATUS:CANCELLED",
+          "SUMMARY:Weekly meeting",
+          "DTSTART:20261109T100000Z",
+          "DTEND:20261109T110000Z",
+        ]),
+      ),
+    );
+
+    expect(events).toHaveLength(0);
+  });
+
+  it("should keep a cancelled instance out of free/busy", async () => {
+    fetchCalendarObjects.mockResolvedValue([
+      {
+        url: `${WORK_URL}x.ics`,
+        etag: "1",
+        data: vcalendar(
+          vevent(WEEKLY),
+          vevent([
+            "UID:weekly@example.com",
+            "RECURRENCE-ID:20261109T100000Z",
+            "STATUS:CANCELLED",
+            "DTSTART:20261109T100000Z",
+            "DTEND:20261109T110000Z",
+          ]),
+        ),
+      },
+    ]);
+
+    const freeBusy = await service().getFreeBusy(WEEK.start, WEEK.end);
+
+    expect(freeBusy.busy).toEqual([]);
+  });
+
   it("should respect COUNT", async () => {
     const events = await eventsFor(
       vcalendar(
