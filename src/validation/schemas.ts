@@ -44,6 +44,31 @@ export const sanitizeMultilineString = (str: string): string =>
     })
     .join("");
 
+/**
+ * For single-line event fields (summary, location, names), where a line
+ * break would otherwise glue two words together: every run of control
+ * characters, line breaks included, becomes one space.
+ */
+export const sanitizeLine = (str: string): string => {
+  let result = "";
+  let inControlRun = false;
+  for (const char of str) {
+    const code = char.charCodeAt(0);
+    const isControl =
+      (code >= 0 && code <= 31) || code === 127 || (code >= 128 && code <= 159);
+    if (isControl) {
+      if (!inControlRun) {
+        result += " ";
+      }
+      inControlRun = true;
+    } else {
+      result += char;
+      inControlRun = false;
+    }
+  }
+  return result.trim();
+};
+
 export const sanitizeHtml = (html: string): string => {
   // Basic HTML sanitization - remove dangerous tags and attributes
   return html
@@ -201,23 +226,22 @@ const calendarNameSchema = v.pipe(
 );
 
 // Event fields for create_calendar_event
-const eventAttendeeSchema = v.object({
+const eventAttendeeSchema = v.strictObject({
   email: emailSchema,
   name: v.optional(
     v.pipe(
       v.string("Name must be a string"),
       v.maxLength(255, "Name too long"),
-      v.transform(sanitizeString),
+      v.transform(sanitizeLine),
     ),
   ),
 });
 
 const eventSummarySchema = v.pipe(
   v.string("Summary must be a string"),
-  v.trim(),
+  v.transform(sanitizeLine),
   v.minLength(1, "Summary cannot be empty"),
   v.maxLength(500, "Summary too long"),
-  v.transform(sanitizeString),
 );
 
 const eventDescriptionSchema = v.pipe(
@@ -229,7 +253,7 @@ const eventDescriptionSchema = v.pipe(
 const eventLocationSchema = v.pipe(
   v.string("Location must be a string"),
   v.maxLength(500, "Location too long"),
-  v.transform(sanitizeString),
+  v.transform(sanitizeLine),
 );
 
 const ISO_PARTS =
@@ -300,6 +324,12 @@ const hasTime = (value: string): boolean => value.includes("T");
 const eventAttendeesSchema = v.pipe(
   v.array(eventAttendeeSchema, "Attendees must be an array"),
   v.maxLength(50, "Too many attendees"),
+  v.check(
+    attendees =>
+      new Set(attendees.map(attendee => attendee.email)).size ===
+      attendees.length,
+    "Each attendee may only be listed once",
+  ),
 );
 
 // =============================================================================

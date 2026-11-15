@@ -1,5 +1,10 @@
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
 import ICAL from "ical.js";
-import type { createDAVClient } from "tsdav";
+import {
+  type createDAVClient,
+  createCalendarObject as tsdavCreateCalendarObject,
+} from "tsdav";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CalendarService } from "../src/services/CalendarService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
@@ -386,6 +391,51 @@ describe("CalendarService event changes", () => {
         await expect(
           makeService().createCalendarEvent(newEvent),
         ).rejects.toMatchObject({ code: ErrorCode.EVENT_WRITE_REJECTED });
+      });
+
+      it("should send the PUT with If-None-Match: * so nothing is overwritten", async () => {
+        const requests: Array<{
+          method?: string;
+          headers: IncomingHttpHeaders;
+        }> = [];
+        const server = createServer((request, response) => {
+          requests.push({ method: request.method, headers: request.headers });
+          request.resume();
+          request.on("end", () => {
+            response.statusCode = 201;
+            response.end();
+          });
+        });
+        await new Promise<void>(resolve =>
+          server.listen(0, "127.0.0.1", resolve),
+        );
+        const { port } = server.address() as AddressInfo;
+        const url = `http://127.0.0.1:${port}/caldav/work/`;
+
+        try {
+          fetchCalendars.mockResolvedValue([
+            { displayName: "work", url, components: ["VEVENT"] },
+          ]);
+          // The real tsdav request, so a header the service passed (or
+          // excluded) would show up on the wire.
+          createCalendarObject.mockImplementation(tsdavCreateCalendarObject);
+
+          const result = await makeService().createCalendarEvent(newEvent);
+
+          expect(requests).toHaveLength(1);
+          expect(requests[0].method).toBe("PUT");
+          expect(requests[0].headers["if-none-match"]).toBe("*");
+          expect(requests[0].headers["content-type"]).toContain(
+            "text/calendar",
+          );
+          expect(createCalendarObject.mock.calls[0][0]).toEqual({
+            calendar: expect.objectContaining({ url }),
+            filename: `${result.uid}.ics`,
+            iCalString: expect.any(String),
+          });
+        } finally {
+          await new Promise(resolve => server.close(resolve));
+        }
       });
 
       it("should count server errors towards opening the circuit", async () => {

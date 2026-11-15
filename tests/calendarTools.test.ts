@@ -666,6 +666,19 @@ describe("Calendar Tools", () => {
       );
     });
 
+    it("should advertise the attendee shape strictly and the default calendar precisely", () => {
+      const tool = createCalendarTools(
+        mockCalendarService as CalendarService,
+      ).find(t => t.name === "create_calendar_event");
+      const properties = tool?.inputSchema.properties as Record<
+        string,
+        { items?: { additionalProperties?: boolean }; description?: string }
+      >;
+
+      expect(properties.attendees.items?.additionalProperties).toBe(false);
+      expect(properties.calendar.description).toContain("MAILBOX_CALENDARS");
+    });
+
     it("should advertise that nobody is notified unless sendInvitations is true", () => {
       const tool = createCalendarTools(
         mockCalendarService as CalendarService,

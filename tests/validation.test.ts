@@ -484,16 +484,45 @@ describe("createCalendarEventSchema", () => {
     expect(result.description).toBe("Agenda:\n- Punkt 1\n- Punkt 2\tdone");
   });
 
-  it("should strip line breaks from single-line fields", () => {
+  it("should turn line breaks in single-line fields into a space", () => {
     const result = validateInput(createCalendarEventSchema, {
       ...valid,
       summary: "Meeting\r\nX-INJECTED:1",
       location: "Room\n1",
       attendees: [{ email: "a@example.com", name: "Al\nice" }],
     });
-    expect(result.summary).toBe("MeetingX-INJECTED:1");
-    expect(result.location).toBe("Room1");
-    expect(result.attendees?.[0].name).toBe("Alice");
+    expect(result.summary).toBe("Meeting X-INJECTED:1");
+    expect(result.location).toBe("Room 1");
+    expect(result.attendees?.[0].name).toBe("Al ice");
+  });
+
+  it("should reject the same attendee twice, whatever the case", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        ...valid,
+        attendees: [{ email: "a@example.com" }, { email: "A@Example.com" }],
+      }),
+    ).toThrow("Each attendee may only be listed once");
+  });
+
+  it("should reject unknown attendee fields", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        ...valid,
+        attendees: [{ email: "a@example.com", role: "CHAIR" }],
+      }),
+    ).toThrow();
+  });
+
+  it("should cap the number of attendees", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        ...valid,
+        attendees: Array.from({ length: 51 }, (_, i) => ({
+          email: `a${i}@example.com`,
+        })),
+      }),
+    ).toThrow("Too many attendees");
   });
 
   it("should reject an empty summary", () => {

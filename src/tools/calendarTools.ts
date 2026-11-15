@@ -197,7 +197,9 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
                 },
               },
               required: ["email"],
+              additionalProperties: false,
             },
+            maxItems: 50,
             description:
               "List of event attendees (optional). Recorded only; nobody is notified unless sendInvitations is true",
           },
@@ -210,7 +212,7 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
           calendar: {
             type: "string",
             description:
-              "Target calendar name (optional, defaults to the first available calendar)",
+              "Target calendar: its exact display name, URL or last URL segment (optional). Defaults to the first calendar listed in MAILBOX_CALENDARS when that is set, otherwise the first calendar on the server that can hold events",
           },
         },
         required: ["summary", "start"],
