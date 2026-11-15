@@ -54,7 +54,7 @@
     "@types/nodemailer": "^8.0.1",
     "dayjs": "^1.11.19",
     "ical.js": "^2.2.1",
-    "imapflow": "^1.2.6",
+    "imapflow": "^2.0.5",
     "mailparser": "^3.14.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^10.3.1",
@@ -64,8 +64,5 @@
   "directories": {
     "doc": "docs",
     "test": "tests"
-  },
-  "overrides": {
-    "nodemailer": "^10.3.1"
   }
 }
