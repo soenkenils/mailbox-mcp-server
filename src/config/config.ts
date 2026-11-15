@@ -255,7 +255,7 @@ export function loadConfig(): ServerConfig {
         imap: {
           minConnections: 1,
           maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 3,
-          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 3000,
+          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
           maxRetries: 5,
           retryDelayMs: 200,
@@ -266,7 +266,7 @@ export function loadConfig(): ServerConfig {
           maxConnections: validatedEnv.POOL_MAX_CONNECTIONS
             ? Math.min(5, validatedEnv.POOL_MAX_CONNECTIONS)
             : 2,
-          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 3000,
+          acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
           maxRetries: 5,
           retryDelayMs: 200,

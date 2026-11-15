@@ -85,8 +85,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
   }
 
   getWaitingQueue(): Array<{
-    resolve: () => void;
+    resolve: (connection: ConnectionWrapper<MockConnection>) => void;
     reject: (error: Error) => void;
+    requestedAt: Date;
+    settled: boolean;
   }> {
     return this.waitingQueue;
   }
@@ -265,6 +267,51 @@ describe("ConnectionPool", () => {
       for (let i = 1; i < connections.length; i++) {
         await pool.release(connections[i]);
       }
+    });
+
+    it("should skip settled requests and serve next unsettled waiter", async () => {
+      // Use a pool with a longer timeout so request 2 doesn't time out
+      const longTimeoutPool = new TestConnectionPool({
+        ...config,
+        acquireTimeoutMs: 500,
+      });
+
+      // Fill the pool to max (3 connections)
+      const connections = await Promise.all(
+        Array.from({ length: config.maxConnections }, () =>
+          longTimeoutPool.acquire(),
+        ),
+      );
+
+      // Start two waiting requests
+      const _waitingPromise1 = longTimeoutPool.acquire();
+      const waitingPromise2 = longTimeoutPool.acquire();
+
+      // Give time to enter the waiting queue
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(longTimeoutPool.getWaitingQueue().length).toBe(2);
+
+      // Manually settle request 1 by accessing the queue directly
+      // This simulates what happens when a timeout fires
+      const queue = longTimeoutPool.getWaitingQueue();
+      const request1 = queue[0];
+      request1.settled = true;
+      request1.reject(new Error("simulated timeout"));
+
+      // Now release a connection - it should skip settled request 1
+      // and serve the unsettled request 2
+      await longTimeoutPool.release(connections[0]);
+
+      // Request 2 should succeed
+      const wrapper2 = await waitingPromise2;
+      expect(wrapper2).toBeDefined();
+
+      // Cleanup
+      await longTimeoutPool.release(wrapper2);
+      for (let i = 1; i < connections.length; i++) {
+        await longTimeoutPool.release(connections[i]);
+      }
+      await longTimeoutPool.destroy();
     });
   });
 

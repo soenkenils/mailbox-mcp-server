@@ -145,10 +145,11 @@ export abstract class ConnectionPool<T> {
     this.metrics.idleConnections++;
     this.metrics.totalReleased++;
 
-    // Process waiting queue
-    if (this.waitingQueue.length > 0) {
+    // Process waiting queue - skip settled (timed-out) requests
+    // to find the next active waiter
+    while (this.waitingQueue.length > 0) {
       const request = this.waitingQueue.shift();
-      if (!request || request.settled) return; // Skip if already settled (e.g., timed out)
+      if (!request || request.settled) continue;
 
       // CRITICAL FIX: If connection is unhealthy, destroy it immediately
       // and create a new connection for the waiting request instead of
@@ -200,6 +201,7 @@ export abstract class ConnectionPool<T> {
           error instanceof Error ? error : new Error(String(error)),
         );
       }
+      return;
     }
 
     this.updateMetrics();
