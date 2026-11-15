@@ -392,6 +392,28 @@ describe("Email Tools - Extended Coverage", () => {
       expect(result.isError).toBe(false);
     });
 
+    it("should report what the service actually did, not what was asked", async () => {
+      vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
+        success: true,
+        message: "Email marked as deleted: no trash folder found",
+      });
+
+      const result = await handleEmailTool(
+        "delete_email",
+        {
+          uid: 123,
+          folder: "INBOX",
+          permanent: false,
+        },
+        mockEmailService as EmailService,
+      );
+
+      expect(result.content[0].text).toContain(
+        "Email marked as deleted: no trash folder found",
+      );
+      expect(result.content[0].text).not.toContain("Moved to trash");
+    });
+
     it("should delete email permanently", async () => {
       vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
         success: true,

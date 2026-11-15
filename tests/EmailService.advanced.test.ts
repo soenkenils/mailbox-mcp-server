@@ -66,7 +66,7 @@ const createMockConnectionWrapper = (
 ): ImapConnectionWrapper => ({
   connection: {
     mailboxOpen: vi.fn(),
-    messageMove: vi.fn(),
+    messageMove: vi.fn().mockResolvedValue({ uidMap: new Map() }),
     messageFlagsAdd: vi.fn(),
     messageFlagsRemove: vi.fn(),
     messageDelete: vi.fn().mockResolvedValue(true),
@@ -446,6 +446,148 @@ describe("EmailService - Advanced Coverage", () => {
     });
   });
 
+  describe("getEmailThread", () => {
+    const ROOT_ID = "<root@example.com>";
+
+    const threadEnvelope = (
+      uid: number,
+      messageId: string,
+      date: string,
+      subject: string,
+    ) => ({
+      uid,
+      flags: new Set<string>(),
+      envelope: {
+        messageId,
+        subject,
+        from: [{ name: "Alice", address: "alice@example.com" }],
+        to: [{ name: "Bob", address: "bob@example.com" }],
+        date: new Date(date),
+      },
+    });
+
+    it("should match the message and its replies by header", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.search = vi.fn().mockResolvedValue([1, 2]);
+      mockWrapper.connection.fetch = vi
+        .fn()
+        .mockImplementation(async function* () {
+          // IMAP returns the reply first to prove the thread gets sorted
+          yield threadEnvelope(
+            2,
+            "<reply@example.com>",
+            "2026-09-15T12:00:00Z",
+            "Re: Root subject",
+          );
+          yield threadEnvelope(
+            1,
+            ROOT_ID,
+            "2026-09-15T10:00:00Z",
+            "Root subject",
+          );
+        });
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const thread = await service.getEmailThread(ROOT_ID, "INBOX");
+
+      expect(mockWrapper.connection.search).toHaveBeenCalledWith(
+        {
+          or: [
+            { header: { "message-id": ROOT_ID } },
+            { header: { references: ROOT_ID } },
+            { header: { "in-reply-to": ROOT_ID } },
+          ],
+        },
+        { uid: true },
+      );
+      expect(thread?.messages.map(m => m.uid)).toEqual([1, 2]);
+      expect(thread?.subject).toBe("Root subject");
+      expect(thread?.lastActivity).toEqual(new Date("2026-09-15T12:00:00Z"));
+      expect(thread?.participants).toEqual([
+        { name: "Alice", address: "alice@example.com" },
+        { name: "Bob", address: "bob@example.com" },
+      ]);
+    });
+
+    it("should find the root when the id is passed without angle brackets", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.search = vi.fn().mockResolvedValue([1, 2]);
+      mockWrapper.connection.fetch = vi
+        .fn()
+        .mockImplementation(async function* () {
+          // The root is not the oldest here, so a fallback would pick wrong
+          yield threadEnvelope(
+            2,
+            ROOT_ID,
+            "2026-09-15T12:00:00Z",
+            "Root subject",
+          );
+          yield threadEnvelope(
+            1,
+            "<earlier@example.com>",
+            "2026-09-15T10:00:00Z",
+            "Unrelated earlier subject",
+          );
+        });
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const thread = await service.getEmailThread("root@example.com", "INBOX");
+
+      expect(thread?.subject).toBe("Root subject");
+    });
+
+    it("should return null when no message matches the id", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.search = vi.fn().mockResolvedValue([]);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const thread = await service.getEmailThread(ROOT_ID, "INBOX");
+
+      expect(thread).toBeNull();
+      expect(mockCache.set).not.toHaveBeenCalled();
+    });
+
+    it("should fail, not report 'not found', when the server refuses the search", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      // imapflow resolves false on a failed SEARCH instead of throwing
+      mockWrapper.connection.search = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      await expect(service.getEmailThread(ROOT_ID, "INBOX")).rejects.toThrow(
+        "IMAP search failed",
+      );
+      expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(mockWrapper);
+    });
+
+    it("should surface a connection error instead of returning null", async () => {
+      mockPool.acquireForFolder.mockRejectedValue(
+        new Error("Connection refused"),
+      );
+
+      await expect(service.getEmailThread(ROOT_ID, "INBOX")).rejects.toThrow(
+        "Connection refused",
+      );
+    });
+
+    it("should release the connection when the search fails", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.search = vi
+        .fn()
+        .mockRejectedValue(new Error("Search failed"));
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      await expect(service.getEmailThread(ROOT_ID, "INBOX")).rejects.toThrow(
+        "Search failed",
+      );
+      expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(mockWrapper);
+    });
+  });
+
   describe("markEmail", () => {
     it("should add flags successfully", async () => {
       const mockWrapper = createMockConnectionWrapper();
@@ -575,12 +717,49 @@ describe("EmailService - Advanced Coverage", () => {
       );
     });
 
+    it("should not claim a trash move when no trash folder exists", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      // messageMove resolves false for a missing mailbox; it does not throw
+      mockWrapper.connection.messageMove = vi.fn().mockResolvedValue(false);
+      mockWrapper.connection.messageFlagsAdd = vi.fn().mockResolvedValue(true);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe(
+        "Email marked as deleted: no trash folder found",
+      );
+      expect(mockWrapper.connection.messageMove).toHaveBeenCalledTimes(4);
+      expect(mockWrapper.connection.messageFlagsAdd).toHaveBeenCalledWith(
+        "123:123",
+        ["\\Deleted"],
+        { uid: true },
+      );
+    });
+
+    it("should report failure when the move throws", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.messageMove = vi
+        .fn()
+        .mockRejectedValue(new Error("Connection lost"));
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Connection lost");
+      expect(mockWrapper.connection.messageFlagsAdd).not.toHaveBeenCalled();
+    });
+
     it("should try alternative trash folder names if Trash doesn't exist", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.messageMove = vi
         .fn()
-        .mockRejectedValueOnce(new Error("Trash not found"))
-        .mockResolvedValueOnce(undefined); // Succeeds on "Deleted Items"
+        .mockResolvedValueOnce(false) // "Trash" does not exist
+        .mockResolvedValueOnce({ uidMap: new Map() }); // "Deleted Items" does
 
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
@@ -605,9 +784,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should mark as deleted if no trash folder found", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.messageMove = vi
-        .fn()
-        .mockRejectedValue(new Error("No trash folder"));
+      mockWrapper.connection.messageMove = vi.fn().mockResolvedValue(false);
 
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);

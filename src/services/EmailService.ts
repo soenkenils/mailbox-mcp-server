@@ -622,26 +622,79 @@ export class EmailService {
     messageId: string,
     folder: string,
   ): Promise<EmailThread | null> {
-    // Basic implementation - can be enhanced with proper thread detection
-    const message = await this.searchEmails({
-      query: messageId.replace(/[<>]/g, ""),
-      folder,
-      limit: 1,
-    });
+    let wrapper: ImapConnectionWrapper | null = null;
 
-    if (message.length === 0) {
-      return null;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+
+      // Match the message itself plus anything replying to it, by header.
+      // A text search would only hit messages quoting the id in their body.
+      const uids = await wrapper.connection.search(
+        {
+          or: [
+            { header: { "message-id": messageId } },
+            { header: { references: messageId } },
+            { header: { "in-reply-to": messageId } },
+          ],
+        },
+        { uid: true },
+      );
+
+      // imapflow resolves false instead of throwing when SEARCH fails; that
+      // is an error, not an empty thread.
+      if (uids === false) {
+        throw new Error(`IMAP search failed in folder ${folder}`);
+      }
+      if (!Array.isArray(uids) || uids.length === 0) {
+        return null;
+      }
+
+      const messages = await this.fetchMessageHeaders(wrapper, uids, folder);
+
+      if (messages.length === 0) {
+        return null;
+      }
+
+      // Oldest first: a thread reads in the order it happened.
+      const ordered = [...messages].sort(
+        (a, b) => a.date.getTime() - b.date.getTime(),
+      );
+      // Callers may pass the id with or without angle brackets, while the
+      // envelope keeps whichever form the sender used.
+      const sameId = (a: string, b: string) =>
+        a.replace(/[<>]/g, "").trim() === b.replace(/[<>]/g, "").trim();
+      const root =
+        ordered.find(message => sameId(message.id, messageId)) ?? ordered[0];
+
+      return {
+        threadId: messageId,
+        messages: ordered,
+        subject: root.subject,
+        participants: this.collectParticipants(ordered),
+        lastActivity: ordered[ordered.length - 1].date,
+      };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+  }
+
+  private collectParticipants(
+    messages: EmailMessage[],
+  ): Array<{ name?: string; address: string }> {
+    const byAddress = new Map<string, { name?: string; address: string }>();
+
+    for (const message of messages) {
+      for (const participant of [...message.from, ...message.to]) {
+        const key = participant.address.toLowerCase();
+        if (!byAddress.has(key)) {
+          byAddress.set(key, participant);
+        }
+      }
     }
 
-    const baseMessage = message[0];
-
-    return {
-      threadId: messageId,
-      messages: [baseMessage],
-      subject: baseMessage.subject,
-      participants: [...baseMessage.from, ...baseMessage.to],
-      lastActivity: baseMessage.date,
-    };
+    return [...byAddress.values()];
   }
 
   async getFolders(): Promise<EmailFolder[]> {
@@ -782,18 +835,44 @@ export class EmailService {
     }
   }
 
+  // Servers disagree on what the trash folder is called, so try the common
+  // names in turn. Returns whether the message actually moved.
+  private async moveToTrash(
+    wrapper: ImapConnectionWrapper,
+    uid: number,
+  ): Promise<boolean> {
+    const trashFolders = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
+
+    for (const trashFolder of trashFolders) {
+      // messageMove resolves false for a missing destination rather than
+      // throwing, so the return value is the only signal that it worked.
+      const moved = await wrapper.connection.messageMove(
+        `${uid}:${uid}`,
+        trashFolder,
+        { uid: true },
+      );
+
+      if (moved) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   async deleteEmail(
     uid: number,
     folder: string,
     permanent = false,
   ): Promise<EmailOperationResult> {
     let wrapper: ImapConnectionWrapper | null = null;
+    let movedToTrash = false;
 
     try {
       wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
-        // Flags the message \\Deleted and expunges it (UID EXPUNGE with
+        // Flags the message \Deleted and expunges it (UID EXPUNGE with
         // UIDPLUS). Resolves false instead of throwing when that fails.
         const expunged = await wrapper.connection.messageDelete(
           `${uid}:${uid}`,
@@ -803,42 +882,18 @@ export class EmailService {
           throw new Error("Server did not expunge the message");
         }
       } else {
-        // Move to Trash folder
-        try {
-          await wrapper.connection.messageMove(`${uid}:${uid}`, "Trash", {
-            uid: true,
-          });
-        } catch (_moveError) {
-          // If Trash folder doesn't exist, try other common names
-          const trashFolders = ["Deleted Items", "Deleted", "INBOX.Trash"];
-          let moved = false;
+        movedToTrash = await this.moveToTrash(wrapper, uid);
 
-          for (const trashFolder of trashFolders) {
-            try {
-              await wrapper.connection.messageMove(
-                `${uid}:${uid}`,
-                trashFolder,
-                {
-                  uid: true,
-                },
-              );
-              moved = true;
-              break;
-            } catch (_error) {
-              // Continue to next folder
-            }
-          }
-
-          if (!moved) {
-            // If no trash folder found, mark as deleted
-            await wrapper.connection.messageFlagsAdd(
-              `${uid}:${uid}`,
-              ["\\Deleted"],
-              {
-                uid: true,
-              },
-            );
-          }
+        if (!movedToTrash) {
+          // No trash folder anywhere: flag the message and say so, rather
+          // than reporting a move that never happened.
+          await wrapper.connection.messageFlagsAdd(
+            `${uid}:${uid}`,
+            ["\\Deleted"],
+            {
+              uid: true,
+            },
+          );
         }
       }
 
@@ -849,7 +904,9 @@ export class EmailService {
         success: true,
         message: permanent
           ? "Email permanently deleted"
-          : "Email moved to trash",
+          : movedToTrash
+            ? "Email moved to trash"
+            : "Email marked as deleted: no trash folder found",
       };
     } catch (error) {
       this.logger.error(

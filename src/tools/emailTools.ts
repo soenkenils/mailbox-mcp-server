@@ -686,7 +686,7 @@ ${thread.messages
             {
               type: "text",
               text: result.success
-                ? `✅ Email deleted successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Type:** ${validatedArgs.permanent ? "Permanent deletion" : "Moved to trash"}`
+                ? `✅ Email deleted successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Result:** ${result.message}`
                 : `❌ Failed to delete email: ${result.message}`,
             },
           ],
