@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Email Integration (IMAP & SMTP)**
 
 **Reading & Search:**
-- ✅ **Search emails** by text content, sender, subject, and date range
+- ✅ **Search emails** by text content, sender, subject, date range, and message flags (read/unread, flagged, answered, draft, deleted)
 - ✅ **Retrieve complete email content** including headers, body, and attachments
 - ✅ **Email thread management** with conversation grouping
 - ✅ **Folder browsing** and navigation (INBOX, Sent, Drafts, etc.)
@@ -92,6 +92,12 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    DEBUG=false
    ```
 
+   > **Note**: The server reads its configuration from environment variables
+   > only; it does not load `.env` itself. Bun loads `.env` from the working
+   > directory when it runs the code (`bun src/main.ts`, `bun dist/main.js`);
+   > `node` needs `node --env-file=.env dist/main.js`. In Claude Desktop, set
+   > the variables in the server's `env` block instead.
+
 4. Add to Claude Desktop configuration:
 
    Add this server to your Claude Desktop `claude_desktop_config.json`:
@@ -112,7 +118,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Email Tools**
 
 #### **Reading & Search**
-- **`search_emails`** - Search your mailbox by text, sender, date, etc.
+- **`search_emails`** - Search your mailbox by text, sender, date, and flags (read/unread, flagged, etc.)
 - **`get_email`** - Retrieve complete email content by UID
 - **`get_email_thread`** - Get conversation threads by message ID
 - **`get_folders`** - List all available email folders
@@ -224,8 +230,16 @@ Configuration is automatically validated at startup using comprehensive validati
   - Must be a non-empty string
 - `MAILBOX_SIEVE_PORT`: Sieve server port (default: `4190`)
   - Must be a valid port number (1-65535)
-- `MAILBOX_SIEVE_SECURE`: Use TLS encryption (default: `false`)
+- `MAILBOX_SIEVE_SECURE`: How the connection is encrypted (default: `false`)
   - Must be `"true"` or `"false"`
+  - `false`: connect in plain text and upgrade with STARTTLS. STARTTLS is
+    mandatory: the client refuses to authenticate if the server does not
+    offer it or the upgrade fails. This is what the standard ManageSieve
+    port `4190` (including mailbox.org) expects.
+  - `true`: implicit TLS from the first byte. Only for servers that offer
+    ManageSieve on a dedicated TLS port; the standard port `4190` does not
+    speak implicit TLS.
+  - In both modes the server certificate is always verified.
 
 #### **Optional Cache Configuration**
 

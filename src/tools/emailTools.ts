@@ -50,7 +50,7 @@ export function createEmailTools(
     {
       name: "search_emails",
       description:
-        "Search for emails in mailbox.org account with various filters",
+        "Search for emails in mailbox.org account with various filters including text query, date range, and IMAP flags (seen, answered, flagged, draft, deleted)",
       inputSchema: {
         type: "object",
         properties: {
@@ -87,6 +87,31 @@ export function createEmailTools(
             description: "Number of emails to skip for pagination (default: 0)",
             default: 0,
             minimum: 0,
+          },
+          seen: {
+            type: "boolean",
+            description:
+              "Filter by read status: false = unread only, true = read only, omit = both",
+          },
+          answered: {
+            type: "boolean",
+            description:
+              "Filter by replied status: true = replied only, false = not yet replied only, omit = both",
+          },
+          flagged: {
+            type: "boolean",
+            description:
+              "Filter by flagged/starred status: true = flagged only, false = not flagged only, omit = both",
+          },
+          draft: {
+            type: "boolean",
+            description:
+              "Filter by draft status: true = drafts only, false = non-drafts only, omit = both",
+          },
+          deleted: {
+            type: "boolean",
+            description:
+              "Filter by deleted status: true = messages marked deleted only, false = not deleted only, omit = both",
           },
         },
         additionalProperties: false,
@@ -391,6 +416,11 @@ export async function handleEmailTool(
             : undefined,
           limit: validatedArgs.limit,
           offset: validatedArgs.offset,
+          seen: validatedArgs.seen,
+          answered: validatedArgs.answered,
+          flagged: validatedArgs.flagged,
+          draft: validatedArgs.draft,
+          deleted: validatedArgs.deleted,
         };
 
         const emails = await emailService.searchEmails(options);
@@ -408,6 +438,7 @@ To: ${email.to.map(t => `${t.name || ""} <${t.address}>`).join(", ")}
 Date: ${email.date.toISOString()}
 UID: ${email.uid}
 Folder: ${email.folder}
+Flags: ${email.flags.length > 0 ? email.flags.join(", ") : "None"}
 `,
                 )
                 .join("\n---\n")}`,

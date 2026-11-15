@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
@@ -1267,6 +1275,104 @@ describe("EmailService - Advanced Coverage", () => {
       const testableService = service as TestableEmailService;
       const result = testableService.parseAddressesFromParsed(input);
       expect(result).toEqual(expected);
+    });
+  });
+  describe("getEmail fetch failures", () => {
+    const rawMessage = {
+      uid: 7,
+      envelope: { messageId: "<m7@example.com>", subject: "Hi" },
+      flags: new Set<string>(),
+      source: Buffer.from(
+        "From: a@example.com\r\nTo: b@example.com\r\nSubject: Hi\r\n\r\nBody\r\n",
+      ),
+    };
+
+    const wrapperWithFetchOne = (fetchOne: Mock) =>
+      createMockConnectionWrapper({
+        connection: { fetchOne } as any,
+        isHealthy: true,
+      } as Partial<ImapConnectionWrapper>);
+
+    let emailService: EmailService;
+
+    beforeEach(() => {
+      // The outer suite passes (connection, poolConfig, cache), which leaves
+      // the cache unusable; getEmail needs a working cache mock.
+      emailService = new EmailService(
+        mockImapConnection,
+        mockCache,
+        poolConfig,
+      );
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("surfaces a fetch timeout as an error and retires the connection", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const wrapper = wrapperWithFetchOne(
+        vi.fn().mockReturnValue(new Promise(() => {})),
+      );
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      const assertion = expect(
+        emailService.getEmail(7, "INBOX"),
+      ).rejects.toThrow(/timed out/);
+      await vi.advanceTimersByTimeAsync(10000);
+      await assertion;
+
+      expect(wrapper.isHealthy).toBe(false);
+      expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(wrapper);
+    });
+
+    it("surfaces a server NO response as an error, not as a missing email", async () => {
+      const wrapper = wrapperWithFetchOne(
+        vi.fn().mockRejectedValue(new Error("Command failed: NO [SERVERBUG]")),
+      );
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      await expect(emailService.getEmail(7, "INBOX")).rejects.toThrow(
+        /Command failed/,
+      );
+      expect(wrapper.isHealthy).toBe(false);
+    });
+
+    it("returns stale cached data when the fetch times out", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const stale = { uid: 7, subject: "stale copy" };
+      (mockCache.getStale as Mock).mockReturnValue(stale);
+      const wrapper = wrapperWithFetchOne(
+        vi.fn().mockReturnValue(new Promise(() => {})),
+      );
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      const result = emailService.getEmail(7, "INBOX");
+      await vi.advanceTimersByTimeAsync(10000);
+
+      await expect(result).resolves.toBe(stale);
+      expect(mockCache.getStale).toHaveBeenCalledWith("email:INBOX:7");
+    });
+
+    it("returns null only when the server has no such message", async () => {
+      const wrapper = wrapperWithFetchOne(vi.fn().mockResolvedValue(false));
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      await expect(emailService.getEmail(7, "INBOX")).resolves.toBeNull();
+      expect(wrapper.isHealthy).toBe(true);
+    });
+
+    it("clears the fetch timeout after a successful fetch", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const wrapper = wrapperWithFetchOne(
+        vi.fn().mockResolvedValue(rawMessage),
+      );
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      const email = await emailService.getEmail(7, "INBOX");
+
+      expect(email?.subject).toBe("Hi");
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });

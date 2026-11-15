@@ -69,6 +69,22 @@ const BACKSLASH = 0x5c;
 const LBRACE = 0x7b;
 
 /**
+ * Length announced by a literal marker `{n}` / `{n+}` (RFC 5804 allows any
+ * number of digits). Throws if it exceeds MAX_LITERAL_BYTES, so an
+ * oversized marker can never fall through and be parsed as ordinary lines.
+ */
+function literalLength(digits: string): number {
+  // Number() keeps huge values huge (1e20, Infinity), never wraps them
+  const length = Number(digits);
+  if (length > MAX_LITERAL_BYTES) {
+    throw new SieveError(
+      `Server response too large: literal of ${digits.replace(/^0+(?=\d)/, "")} bytes exceeds the ${MAX_LITERAL_BYTES} byte limit`,
+    );
+  }
+  return length;
+}
+
+/**
  * If the bytes [from, crlf) end with a literal marker `{n}` / `{n+}`,
  * return n, otherwise null.
  */
@@ -81,8 +97,8 @@ function literalLengthBefore(
     return null;
   }
   const segment = buf.subarray(from, crlf).toString("latin1");
-  const match = /\{(\d{1,9})\+?\}$/.exec(segment);
-  return match ? Number.parseInt(match[1], 10) : null;
+  const match = /\{(\d+)\+?\}$/.exec(segment);
+  return match ? literalLength(match[1]) : null;
 }
 
 /**
@@ -108,11 +124,6 @@ export function findResponseEnd(
       }
       const literal = literalLengthBefore(buf, cursor, crlf);
       if (literal !== null) {
-        if (literal > MAX_LITERAL_BYTES) {
-          throw new SieveError(
-            `Server response too large: literal of ${literal} bytes exceeds the ${MAX_LITERAL_BYTES} byte limit`,
-          );
-        }
         const literalEnd = crlf + 2 + literal;
         if (buf.length < literalEnd) {
           return null;
@@ -170,12 +181,14 @@ export function tokenizeSieveData(buf: Buffer): SieveToken[][] {
       continue;
     }
     if (byte === LBRACE) {
-      const match = /^\{(\d{1,9})\+?\}\r\n/.exec(
-        buf.subarray(i, Math.min(i + 16, buf.length)).toString("latin1"),
-      );
+      const crlf = buf.indexOf("\r\n", i);
+      const match =
+        crlf < 0
+          ? null
+          : /^\{(\d+)\+?\}$/.exec(buf.subarray(i, crlf).toString("latin1"));
       if (match) {
-        const length = Number.parseInt(match[1], 10);
-        const start = i + match[0].length;
+        const length = literalLength(match[1]);
+        const start = crlf + 2;
         line.push({
           kind: "string",
           value: buf.subarray(start, start + length).toString("utf8"),
@@ -696,7 +709,12 @@ export class SieveService {
     );
     const tokens = tokenizeSieveData(rest)[0] ?? [];
     const text = tokens.find(token => token.kind === "string");
-    const message = text?.value ?? tokens.map(token => token.value).join(" ");
+    let message = text?.value ?? tokens.map(token => token.value).join(" ");
+    if (status !== "OK" && !message.trim()) {
+      // Errors are reported as "<what failed>: <message>"; the response code
+      // (if any) travels separately in SieveError.code.
+      message = "no reason given by the server";
+    }
     const data = raw.toString("utf8").replace(/\r\n$/, "");
     if (status === "OK") {
       return {
