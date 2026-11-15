@@ -177,7 +177,10 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<number[] | null> {
     const searchCriteria = this.buildSearchCriteria(options);
-    const result = await wrapper.connection.search(searchCriteria);
+    // Search by UID (stable across expunges) instead of sequence numbers.
+    const result = await wrapper.connection.search(searchCriteria, {
+      uid: true,
+    });
     return Array.isArray(result) ? result : null;
   }
 
@@ -185,9 +188,13 @@ export class EmailService {
     searchResult: number[],
     options: EmailSearchOptions,
   ): number[] {
+    // IMAP SEARCH returns results sorted ascending (oldest first). Callers
+    // expect the NEWEST emails, so reverse before paginating; otherwise
+    // slicing from the front always yields the oldest matches.
+    const newestFirst = [...searchResult].reverse();
     const offset = options.offset || 0;
     const end = options.limit ? offset + options.limit : undefined;
-    return searchResult.slice(offset, end);
+    return newestFirst.slice(offset, end);
   }
 
   private async fetchMessageHeaders(
@@ -198,11 +205,15 @@ export class EmailService {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      const iterator = wrapper.connection.fetch(uids, {
-        envelope: true,
-        uid: true,
-        flags: true,
-      });
+      const iterator = wrapper.connection.fetch(
+        uids,
+        {
+          envelope: true,
+          uid: true,
+          flags: true,
+        },
+        { uid: true },
+      );
 
       try {
         for await (const message of iterator) {

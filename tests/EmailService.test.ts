@@ -25,6 +25,7 @@ interface TestableEmailService extends EmailService {
     addresses: unknown,
   ): Array<{ name?: string; address: string }>;
   buildSearchCriteria(options: unknown): unknown;
+  applyPagination(searchResult: number[], options: unknown): number[];
 }
 
 // Mock factories for cleaner test setup
@@ -477,6 +478,50 @@ describe("EmailService", () => {
 
       expect(mockCache.get).toHaveBeenCalledWith(
         `email_search:${JSON.stringify(options)}`,
+      );
+    });
+  });
+
+  describe("applyPagination", () => {
+    const applyPagination = (searchResult: number[], options: unknown) =>
+      (emailService as TestableEmailService).applyPagination(
+        searchResult,
+        options,
+      );
+
+    it("should return newest matches first (IMAP returns oldest-first)", () => {
+      // IMAP SEARCH returns ascending order (oldest UID first).
+      expect(applyPagination([1, 2, 3, 4, 5], { limit: 2 })).toEqual([5, 4]);
+    });
+
+    it("should apply offset against the newest-first order", () => {
+      expect(applyPagination([1, 2, 3, 4, 5], { limit: 2, offset: 2 })).toEqual(
+        [3, 2],
+      );
+    });
+
+    it("should not mutate the original search result", () => {
+      const ascending = [1, 2, 3];
+      applyPagination(ascending, { limit: 2 });
+      expect(ascending).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("executeSearch", () => {
+    it("should search and fetch by UID, not sequence number", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([6126, 6127, 6128]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({ uid: 6128 });
+      });
+
+      await emailService.searchEmails({ query: "test", limit: 10 });
+
+      expect(mockSearch).toHaveBeenCalledWith(expect.anything(), { uid: true });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        { uid: true },
       );
     });
   });
