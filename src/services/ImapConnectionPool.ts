@@ -21,6 +21,26 @@ export interface ImapPoolConfig extends ConnectionPoolConfig {
   circuitBreaker?: CircuitBreakerConfig;
 }
 
+/**
+ * Rejects if the operation takes longer than `ms`. The timer is cleared
+ * once the operation settles, so it does not keep the process alive.
+ */
+async function withTimeout<R>(
+  operation: Promise<R>,
+  ms: number,
+  message: string,
+): Promise<R> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
   private connectionConfig: ImapConnection;
   private circuitBreaker: CircuitBreaker;
@@ -78,15 +98,11 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
 
       // Try a simple operation to verify the connection with a timeout
       // to prevent hanging on stuck connections
-      const noopPromise = connection.noop();
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error("Connection validation timeout")),
-          3000,
-        );
-      });
-
-      await Promise.race([noopPromise, timeoutPromise]);
+      await withTimeout(
+        connection.noop(),
+        3000,
+        "Connection validation timeout",
+      );
       return true;
     } catch (error) {
       await this.logger.warning(
@@ -125,15 +141,11 @@ export class ImapConnectionPool extends ConnectionPool<ImapFlow> {
       // Ensure the correct folder is selected
       if (wrapper.selectedFolder !== folder) {
         // Add timeout protection to prevent hanging on mailboxOpen
-        const openPromise = wrapper.connection.mailboxOpen(folder);
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error("Folder selection timed out after 5000ms")),
-            5000,
-          );
-        });
-
-        await Promise.race([openPromise, timeoutPromise]);
+        await withTimeout(
+          wrapper.connection.mailboxOpen(folder),
+          5000,
+          "Folder selection timed out after 5000ms",
+        );
         wrapper.selectedFolder = folder;
       }
 

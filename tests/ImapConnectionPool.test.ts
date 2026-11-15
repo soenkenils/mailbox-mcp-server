@@ -482,4 +482,43 @@ describe("ImapConnectionPool", () => {
       await pool.releaseFromFolder(wrapper2);
     });
   });
+
+  describe("timeout timers", () => {
+    let timerPool: ImapConnectionPool;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      timerPool = new ImapConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await timerPool.destroy();
+      vi.useRealTimers();
+    });
+
+    it("should clear the validation timeout once noop answers", async () => {
+      const before = vi.getTimerCount();
+
+      const isValid = await timerPool.validateConnection(
+        new MockImapFlow() as never,
+      );
+
+      expect(isValid).toBe(true);
+      expect(vi.getTimerCount()).toBe(before);
+    });
+
+    it("should clear the folder selection timeout once the folder is open", async () => {
+      await timerPool.release(await timerPool.acquire());
+      const before = vi.getTimerCount();
+
+      const wrapper = await timerPool.acquireForFolder("INBOX");
+
+      expect(wrapper.selectedFolder).toBe("INBOX");
+      expect(vi.getTimerCount()).toBe(before);
+      await timerPool.releaseFromFolder(wrapper);
+    });
+  });
 });
