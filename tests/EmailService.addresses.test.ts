@@ -55,17 +55,13 @@ const makeService = () =>
     } as never,
   );
 
-async function* iterate(items: unknown[]) {
-  for (const item of items) yield item;
-}
-
 const useRawMessage = (raw: string) => {
   const connection = {
-    fetch: vi.fn(() =>
-      iterate([
-        { uid: 101, flags: new Set<string>(), source: Buffer.from(raw) },
-      ]),
-    ),
+    fetchOne: vi.fn().mockResolvedValue({
+      uid: 101,
+      flags: [],
+      source: Buffer.from(raw),
+    }),
   };
   mockPool.acquireForFolder.mockResolvedValue({
     connection,
