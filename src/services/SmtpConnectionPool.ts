@@ -42,8 +42,13 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
         user: this.smtpConfig.user,
         pass: this.smtpConfig.password,
       },
+      // Never send credentials unencrypted: without requireTLS nodemailer
+      // falls back to plaintext AUTH if STARTTLS is not offered (or stripped)
+      requireTLS: true,
       tls: {
-        rejectUnauthorized: false,
+        // Verify the server certificate so a man in the middle cannot
+        // capture the password
+        rejectUnauthorized: true,
       },
       pool: false, // We handle pooling ourselves
       maxConnections: 1,
