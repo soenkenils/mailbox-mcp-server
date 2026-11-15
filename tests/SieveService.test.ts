@@ -155,8 +155,13 @@ OK Capability completed.`;
 
     it("should require authentication before operations", async () => {
       // ensureAuthenticated should connect and authenticate if needed
-      // But without a real connection, operations should fail gracefully
+      // Stub connect() so the test never opens a real network connection
+      const connectSpy = vi
+        .spyOn(sieveService, "connect")
+        .mockRejectedValue(new Error("connection refused"));
+
       await expect(sieveService.listScripts()).rejects.toThrow();
+      expect(connectSpy).toHaveBeenCalledTimes(1);
     });
   });
 
