@@ -149,6 +149,23 @@ describe("CalendarService recurring events", () => {
     expect(events[0].start.getDate()).toBe(1);
   });
 
+  it("should expand a daily series that started decades ago", async () => {
+    const events = await eventsFor(
+      vcalendar(
+        vevent([
+          "UID:standup@example.com",
+          "SUMMARY:Standup",
+          "DTSTART:19950101T090000Z",
+          "DTEND:19950101T091500Z",
+          "RRULE:FREQ=DAILY",
+        ]),
+      ),
+    );
+
+    expect(events).toHaveLength(7);
+    expect(events[0].start.toISOString()).toBe("2026-11-09T09:00:00.000Z");
+  });
+
   it("should skip an occurrence excluded by EXDATE", async () => {
     const events = await eventsFor(
       vcalendar(vevent([...WEEKLY, "EXDATE:20261109T100000Z"])),

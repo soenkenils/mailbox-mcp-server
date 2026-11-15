@@ -28,8 +28,12 @@ interface EventRange {
   end?: Date;
 }
 
-/** Upper bound on recurrence instances examined per event and call. */
-const MAX_RECURRENCE_SCAN = 10_000;
+/**
+ * Upper bound on recurrence instances examined per event and call. The scan
+ * starts at DTSTART, so a daily series since 1990 needs ~13,000 steps to
+ * reach today; the time budget below is the tighter bound in practice.
+ */
+const MAX_RECURRENCE_SCAN = 50_000;
 /** Wall-clock budget for expanding one recurring event. */
 const RECURRENCE_TIME_BUDGET_MS = 250;
 /** Days per month, February counted with 29 (leap years). */
@@ -877,6 +881,10 @@ export class CalendarService {
     const seen = new Set<string>();
     let scanned = 0;
     let next = iterator.next();
+    // Without overrides every slot lasts the master's duration, so slots that
+    // end before the range can be skipped without computing their details.
+    const durationMs = master.duration.toSeconds() * 1000;
+    const rangeStartMs = range.start.getTime();
 
     const add = (item: ICAL.Event, start: Date, end: Date, rid: Date) => {
       const id = `${item.uid}:${rid.toISOString()}`;
@@ -912,6 +920,13 @@ export class CalendarService {
           { uid: master.uid, scanned, occurrences: occurrences.length },
         );
         break;
+      }
+      if (
+        overrides.length === 0 &&
+        next.toJSDate().getTime() + durationMs < rangeStartMs
+      ) {
+        next = iterator.next();
+        continue;
       }
       const details = master.getOccurrenceDetails(next);
       const occurrence = {
