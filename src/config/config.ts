@@ -262,7 +262,10 @@ export function loadConfig(): ServerConfig {
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
         smtp: {
-          minConnections: 1,
+          // Connect on demand: with pool:false every nodemailer verify() is a
+          // full TCP+TLS+AUTH session, so a warm idle transporter only costs
+          // repeated logins while saving little on the next send.
+          minConnections: 0,
           maxConnections: validatedEnv.POOL_MAX_CONNECTIONS
             ? Math.min(5, validatedEnv.POOL_MAX_CONNECTIONS)
             : 2,

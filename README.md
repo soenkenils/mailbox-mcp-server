@@ -253,6 +253,8 @@ All cache TTL values must be non-negative numbers (in milliseconds):
 - `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `6000`)
   - Must be at least 1000ms
 
+The IMAP pool keeps one connection open while idle. The SMTP pool connects on demand: checking an idle SMTP connection means a full login, so it is opened for a send and closed again once idle for `POOL_IDLE_TIMEOUT_MS`.
+
 #### **Optional Debug Configuration**
 
 - `DEBUG`: Enable debug logging (default: `false`)

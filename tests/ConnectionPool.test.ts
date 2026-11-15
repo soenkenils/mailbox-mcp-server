@@ -369,6 +369,50 @@ describe("ConnectionPool", () => {
       expect(metrics.totalDestroyed).toBeGreaterThan(0);
     });
 
+    it("should not validate idle connections the pool says need no verification yet", async () => {
+      class RecentlyVerifiedPool extends TestConnectionPool {
+        protected needsVerification(): boolean {
+          return false;
+        }
+      }
+      const verifiedPool = new RecentlyVerifiedPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+      try {
+        await verifiedPool.release(await verifiedPool.acquire());
+        const validate = vi.spyOn(verifiedPool, "validateConnection");
+
+        await (
+          verifiedPool as unknown as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+
+        expect(validate).not.toHaveBeenCalled();
+        expect(verifiedPool.getConnections().size).toBe(1);
+      } finally {
+        await verifiedPool.destroy();
+      }
+    });
+
+    it("should validate idle connections by default", async () => {
+      const checkPool = new TestConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+      try {
+        await checkPool.release(await checkPool.acquire());
+        const validate = vi.spyOn(checkPool, "validateConnection");
+
+        await (
+          checkPool as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+
+        expect(validate).toHaveBeenCalledTimes(1);
+      } finally {
+        await checkPool.destroy();
+      }
+    });
+
     it("should maintain minimum connections", async () => {
       // Pool should create minimum connections during health check
       await new Promise(resolve => setTimeout(resolve, 150));

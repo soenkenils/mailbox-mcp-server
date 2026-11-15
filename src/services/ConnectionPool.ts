@@ -98,6 +98,15 @@ export abstract class ConnectionPool<T> {
   abstract validateConnection(connection: T): Promise<boolean>;
   abstract destroyConnection(connection: T): Promise<void>;
 
+  /**
+   * Whether an idle connection is due for validation by the health check.
+   * Pools whose validation is expensive override this with their own
+   * verification interval.
+   */
+  protected needsVerification(_wrapper: ConnectionWrapper<T>): boolean {
+    return true;
+  }
+
   async acquire(): Promise<ConnectionWrapper<T>> {
     if (this.isShuttingDown) {
       throw new Error("Connection pool is shutting down");
@@ -624,7 +633,11 @@ export abstract class ConnectionPool<T> {
       return true;
     }
 
-    // Validate idle connections periodically
+    // Validate idle connections periodically, but no more often than the
+    // pool wants them verified: a check may cost a full login.
+    if (!this.needsVerification(wrapper)) {
+      return false;
+    }
     try {
       const isValid = await this.validateConnection(wrapper.connection);
       wrapper.isHealthy = isValid;
