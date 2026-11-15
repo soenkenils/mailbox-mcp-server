@@ -207,6 +207,7 @@ Configuration is automatically validated at startup using comprehensive validati
 **SMTP (Sending Emails):**
 - `MAILBOX_SMTP_HOST`: SMTP server host (default: `smtp.mailbox.org`)
   - Must be a non-empty string
+  - IPv4/IPv6 (dual-stack) connection is handled by nodemailer: it resolves both address families and falls back to the other one when one is unreachable
 - `MAILBOX_SMTP_PORT`: SMTP server port (default: `465`)
   - Must be a valid port number (1-65535)
 - `MAILBOX_SMTP_SECURE`: Use TLS encryption (default: `true`)
