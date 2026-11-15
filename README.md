@@ -29,6 +29,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Retrieve calendar events** within specified date ranges
 - ✅ **Search calendar events** by title, description, location
 - ✅ **Free/busy time checking** for scheduling
+- ✅ **Create calendar events** (timed or all-day, with attendees)
 - ✅ **Multi-calendar support** and aggregation
 - ✅ **Recurring events** and exception handling
 - ✅ **Connection pooling** for CalDAV with automatic retry logic
@@ -137,6 +138,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
+- **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events are stored in UTC; all-day events as dates with an exclusive end (an end on the start date makes a one-day event). Listing attendees may cause mailbox.org to send them invitations. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
 
 ### **Sieve Filter Tools**
 
@@ -222,7 +224,7 @@ Configuration is automatically validated at startup using comprehensive validati
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
   - Must be a valid URL format
-- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access. Also limits where `create_calendar_event` may write; the first entry is its default calendar
 
 #### **Optional Sieve Configuration**
 
