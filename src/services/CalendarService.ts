@@ -17,6 +17,21 @@ import {
 } from "./CircuitBreaker.js";
 import { createLogger } from "./Logger.js";
 
+/** Optional time window used to expand recurring events. */
+interface EventRange {
+  start?: Date;
+  end?: Date;
+}
+
+/** Upper bound on recurrence instances examined per event and call. */
+const MAX_RECURRENCE_SCAN = 10_000;
+/** Wall-clock budget for expanding one recurring event. */
+const RECURRENCE_TIME_BUDGET_MS = 250;
+/** Days per month, February counted with 29 (leap years). */
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+/** Upper bound on occurrences returned per recurring event and call. */
+const MAX_OCCURRENCES_PER_EVENT = 1_000;
+
 export class CalendarService {
   private connection: CalDavConnection;
   private cache: LocalCache;
@@ -233,7 +248,10 @@ export class CalendarService {
         },
       );
 
-      return await this.parseCalendarObjects(calendarObjects, calendar);
+      return await this.parseCalendarObjects(calendarObjects, calendar, {
+        start: options.start,
+        end: options.end,
+      });
     } catch (error) {
       this.logger.error(
         `Error fetching events from calendar ${calendar}`,
@@ -254,13 +272,14 @@ export class CalendarService {
   private parseCalendarObjects(
     calendarObjects: DAVObject[],
     calendar: string,
+    range: EventRange = {},
   ): CalendarEvent[] {
     const events: CalendarEvent[] = [];
 
     try {
       for (const obj of calendarObjects) {
         if (obj.data) {
-          const parsedEvents = this.parseICalData(obj.data, calendar);
+          const parsedEvents = this.parseICalData(obj.data, calendar, range);
           events.push(...parsedEvents);
         }
       }
@@ -278,19 +297,70 @@ export class CalendarService {
     return events;
   }
 
-  private parseICalData(icalData: string, calendar: string): CalendarEvent[] {
+  private parseICalData(
+    icalData: string,
+    calendar: string,
+    range: EventRange = {},
+  ): CalendarEvent[] {
     const events: CalendarEvent[] = [];
 
     try {
       const jcalData = ICAL.parse(icalData);
       const comp = new ICAL.Component(jcalData);
       const vevents = comp.getAllSubcomponents("vevent");
+      const expand = !!(range.start && range.end);
 
-      for (const vevent of vevents) {
+      // RFC 5545: a recurring event is a master VEVENT (RRULE/RDATE) plus
+      // overridden instances that carry a RECURRENCE-ID and the same UID.
+      const isOverride = (vevent: ICAL.Component): boolean =>
+        typeof vevent.hasProperty === "function" &&
+        vevent.hasProperty("recurrence-id");
+      const uidOf = (vevent: ICAL.Component): unknown =>
+        typeof vevent.getFirstPropertyValue === "function"
+          ? vevent.getFirstPropertyValue("uid")
+          : undefined;
+      const masters = vevents.filter(vevent => !isOverride(vevent));
+      const overrides = vevents.filter(isOverride);
+      const masterUids = new Set(masters.map(uidOf));
+
+      for (const vevent of masters) {
+        if (expand) {
+          const own = overrides.filter(o => uidOf(o) === uidOf(vevent));
+          try {
+            const master = new ICAL.Event(vevent, { exceptions: own });
+            if (master.isRecurring() && this.canExpand(master)) {
+              events.push(
+                ...this.expandOccurrences(master, own, calendar, range),
+              );
+              continue;
+            }
+          } catch (error) {
+            // A rule ical.js cannot expand must not hide the event: fall back
+            // to the single (first) instance, as before expansion existed.
+            this.logger.warning(
+              "Recurring event could not be expanded",
+              { operation: "parseICalData", service: "CalendarService" },
+              { error: error instanceof Error ? error.message : String(error) },
+            );
+          }
+        }
         const event = this.parseVEvent(vevent, calendar);
         if (event) {
           events.push(event);
         }
+      }
+      // An override whose master is not in this object stands on its own.
+      for (const vevent of overrides) {
+        if (!masterUids.has(uidOf(vevent))) {
+          const event = this.parseOverride(vevent, calendar);
+          if (event) {
+            events.push(event);
+          }
+        }
+      }
+
+      if (expand) {
+        return events.filter(event => this.overlaps(event, range));
       }
     } catch (error) {
       this.logger.error(
@@ -304,6 +374,179 @@ export class CalendarService {
     }
 
     return events;
+  }
+
+  /** RFC 4791 9.9: zero-length events at the range start count as inside. */
+  private overlaps(event: CalendarEvent, range: EventRange): boolean {
+    const zeroLength = event.end.getTime() === event.start.getTime();
+    return (
+      (!range.end || event.start < range.end) &&
+      (!range.start ||
+        event.end > range.start ||
+        (zeroLength && event.start >= range.start))
+    );
+  }
+
+  /** An overridden instance, with an id unique per RECURRENCE-ID. */
+  private parseOverride(
+    vevent: ICAL.Component,
+    calendar: string,
+  ): CalendarEvent | null {
+    const event = this.parseVEvent(vevent, calendar);
+    const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
+    if (event && recurrenceId instanceof ICAL.Time) {
+      event.id = `${event.uid}:${recurrenceId.toJSDate().toISOString()}`;
+    }
+    return event;
+  }
+
+  /**
+   * Whether ical.js can expand the rule without spinning. Its iterator only
+   * guards MONTHLY/YEARLY against unsatisfiable rules; for sub-daily
+   * frequencies, or DAILY/WEEKLY rules restricted to impossible days
+   * (e.g. BYMONTH=2;BYMONTHDAY=30), next() can loop forever and block the
+   * event loop. Such events fall back to their single first instance.
+   */
+  private canExpand(master: ICAL.Event): boolean {
+    for (const property of master.component.getAllProperties("rrule")) {
+      const recur = property.getFirstValue() as ICAL.Recur;
+      if (["SECONDLY", "MINUTELY", "HOURLY"].includes(recur.freq)) {
+        return false;
+      }
+      const parts = recur.parts as Record<
+        string,
+        Array<number | string> | undefined
+      >;
+      if (recur.freq === "DAILY" || recur.freq === "WEEKLY") {
+        if (parts.BYWEEKNO || parts.BYYEARDAY || parts.BYSETPOS) {
+          return false;
+        }
+        // RFC 5545 forbids ordinals (1MO, -1FR) here; ical.js can spin on them.
+        if (parts.BYDAY?.some(day => /^[+-]?\d/.test(String(day)))) {
+          return false;
+        }
+      }
+      // For every frequency: BYMONTHDAY must name a day that exists in one of
+      // the allowed months, otherwise next() searches for years per call.
+      const days = parts.BYMONTHDAY?.map(Number);
+      if (days?.length) {
+        const months = parts.BYMONTH?.length
+          ? parts.BYMONTH.map(Number)
+          : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        const satisfiable = months.some(month =>
+          days.some(
+            day =>
+              day !== 0 && Math.abs(day) <= (DAYS_IN_MONTH[month - 1] ?? 0),
+          ),
+        );
+        if (!satisfiable) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * The occurrences of a recurring event that overlap the range. Without this
+   * a recurring event shows up once, at its first occurrence (a birthday in
+   * 1933, a weekly meeting at the week it was created). Overridden instances
+   * (RECURRENCE-ID) replace their occurrence; EXDATEs are skipped by ical.js.
+   * Bounded so a dense rule (e.g. every minute for years) cannot stall a call.
+   */
+  private expandOccurrences(
+    master: ICAL.Event,
+    overrides: ICAL.Component[],
+    calendar: string,
+    range: EventRange,
+  ): CalendarEvent[] {
+    const occurrences: CalendarEvent[] = [];
+    if (!range.start || !range.end) {
+      return occurrences;
+    }
+    const rule = master.component.getFirstPropertyValue("rrule")?.toString();
+    const deadline = Date.now() + RECURRENCE_TIME_BUDGET_MS;
+    const iterator = master.iterator();
+    const seen = new Set<string>();
+    let scanned = 0;
+    let next = iterator.next();
+
+    const add = (item: ICAL.Event, start: Date, end: Date, rid: Date) => {
+      const id = `${item.uid}:${rid.toISOString()}`;
+      if (seen.has(id)) {
+        return;
+      }
+      const base = this.parseVEvent(item.component, calendar);
+      if (base) {
+        seen.add(id);
+        occurrences.push({
+          ...base,
+          id,
+          start,
+          end,
+          recurring: true,
+          recurrenceRule: base.recurrenceRule ?? rule,
+        });
+      }
+    };
+
+    // Iterate by RECURRENCE-ID (the original slot), not by the possibly moved
+    // start of an override: an instance moved out of the range must not end
+    // the scan early. Overlap with the range decides inclusion.
+    while (next && next.toJSDate() < range.end) {
+      if (
+        ++scanned > MAX_RECURRENCE_SCAN ||
+        Date.now() > deadline ||
+        occurrences.length >= MAX_OCCURRENCES_PER_EVENT
+      ) {
+        this.logger.warning(
+          "Recurrence expansion stopped at its limit",
+          { operation: "expandOccurrences", service: "CalendarService" },
+          { uid: master.uid, scanned, occurrences: occurrences.length },
+        );
+        break;
+      }
+      const details = master.getOccurrenceDetails(next);
+      const occurrence = {
+        start: details.startDate.toJSDate(),
+        end: details.endDate.toJSDate(),
+      } as CalendarEvent;
+      if (this.overlaps(occurrence, range)) {
+        add(
+          details.item,
+          occurrence.start,
+          occurrence.end,
+          details.recurrenceId.toJSDate(),
+        );
+      }
+      next = iterator.next();
+    }
+
+    // Instances whose original slot lies after the range but were moved into
+    // it are never reached by the scan above.
+    for (const vevent of overrides) {
+      const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
+      if (!(recurrenceId instanceof ICAL.Time)) {
+        continue;
+      }
+      const rid = recurrenceId.toJSDate();
+      if (rid < range.end) {
+        continue;
+      }
+      const item = new ICAL.Event(vevent);
+      if (!item.startDate || !item.endDate) {
+        continue;
+      }
+      const occurrence = {
+        start: item.startDate.toJSDate(),
+        end: item.endDate.toJSDate(),
+      } as CalendarEvent;
+      if (this.overlaps(occurrence, range)) {
+        add(item, occurrence.start, occurrence.end, rid);
+      }
+    }
+
+    return occurrences;
   }
 
   private parseVEvent(vevent: unknown, calendar: string): CalendarEvent | null {
