@@ -126,6 +126,27 @@ function deferred() {
 /** Lets pending promise callbacks run without advancing any timer. */
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+/** Records how a promise settles, so a test can check it at any point. */
+const track = <V>(promise: Promise<V>) => {
+  const state: { value?: V; error?: Error } = {};
+  promise.then(
+    value => {
+      state.value = value;
+    },
+    error => {
+      state.error = error;
+    },
+  );
+  return state;
+};
+
+/** Resolves with how the promise settled, never rejects. */
+const outcome = <V>(promise: Promise<V>) =>
+  promise.then(
+    value => ({ value, error: undefined }),
+    (error: Error) => ({ value: undefined, error }),
+  );
+
 describe("ConnectionPool", () => {
   let pool: TestConnectionPool;
   let config: ConnectionPoolConfig;
@@ -948,18 +969,26 @@ describe("ConnectionPool", () => {
       await slotPool.destroy();
     });
 
-    const track = <V>(promise: Promise<V>) => {
-      const state: { value?: V; error?: Error } = {};
-      promise.then(
-        value => {
-          state.value = value;
-        },
-        error => {
-          state.error = error;
-        },
-      );
-      return state;
-    };
+    it("should not hand a waiter a connection destroy() closed while it was validated", async () => {
+      const held = await slotPool.acquire();
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+      const destroySpy = vi.spyOn(slotPool, "destroyConnection");
+
+      const releasing = slotPool.release(held);
+      await flush();
+      await slotPool.destroy();
+      gate.resolve();
+      await releasing;
+
+      expect((await waiting).error?.message).toMatch(/shut/);
+      expect(destroySpy).toHaveBeenCalledTimes(1);
+    });
 
     it("should give a waiter a new connection when the handed-off one fails validation", async () => {
       const held = await slotPool.acquire();
@@ -977,18 +1006,21 @@ describe("ConnectionPool", () => {
 
     it("should reject every waiter with the connect error when no replacement can be opened", async () => {
       const held = await slotPool.acquire();
-      const first = track(slotPool.acquire());
-      const second = track(slotPool.acquire());
+      const first = outcome(slotPool.acquire());
+      const second = outcome(slotPool.acquire());
       await flush();
 
       slotPool.setShouldFailValidation(true);
       slotPool.setShouldFailCreation(true);
       const createSpy = vi.spyOn(slotPool, "createConnection");
       await slotPool.release(held);
-      await flush();
 
-      expect(first.error?.message).toContain("Failed to create connection");
-      expect(second.error?.message).toContain("Failed to create connection");
+      expect((await first).error?.message).toContain(
+        "Failed to create connection",
+      );
+      expect((await second).error?.message).toContain(
+        "Failed to create connection",
+      );
       // One bounded attempt per waiter, no retry loop.
       expect(createSpy).toHaveBeenCalledTimes(2);
     });
@@ -1006,20 +1038,19 @@ describe("ConnectionPool", () => {
         return createConnection();
       };
 
-      const first = track(slotPool.acquire());
+      const first = outcome(slotPool.acquire());
       await flush();
       // The slot is held by the connect in flight, so this waits.
-      const second = track(slotPool.acquire());
+      const second = outcome(slotPool.acquire());
       await flush();
       expect(slotPool.getWaitingQueue()).toHaveLength(1);
 
       gate.resolve();
-      await flush();
-      await flush();
 
-      expect(first.error?.message).toContain("connect refused");
-      expect(second.error).toBeUndefined();
-      expect(second.value?.connection.isValid).toBe(true);
+      expect((await first).error?.message).toContain("connect refused");
+      const served = await second;
+      expect(served.error).toBeUndefined();
+      expect(served.value?.connection.isValid).toBe(true);
     });
 
     it("should serve a waiter when the health check destroys the connection it was checking", async () => {

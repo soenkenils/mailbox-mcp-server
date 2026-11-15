@@ -164,55 +164,58 @@ export abstract class ConnectionPool<T> {
   /**
    * Gives a claimed connection to the next waiter, or returns it to the idle
    * set when nobody is waiting. The connection stays claimed throughout, so
-   * nothing else can take it while it is validated for the waiter.
+   * nothing else can take it while it is validated for the waiter. Waiters
+   * stay queued during that validation, so destroy() or their own timeout can
+   * still reach them; the connection goes to whoever is first afterwards.
    */
   private async handOff(wrapper: ConnectionWrapper<T>): Promise<void> {
-    // Set once the connection passes validation, so it is not checked again
-    // (another network round-trip) if that waiter gave up in the meantime.
-    let activated: ConnectionWrapper<T> | undefined;
-
-    for (;;) {
-      const request = this.nextWaiter();
-      if (!request) {
-        wrapper.inUse = false;
-        this.updateMetrics();
-        return;
-      }
-
-      if (!activated && wrapper.isHealthy) {
-        try {
-          activated = await this.activateClaimed(wrapper);
-        } catch {
-          // Failed validation: the connection is gone or no longer claimed.
-          // The waiter is served below rather than rejected.
-        }
-      } else if (!activated) {
-        // Unhealthy: destroy it instead of reusing a corrupted connection.
-        await this.logger.warning(
-          "Destroying unhealthy connection instead of reusing for waiting request",
-          {
-            operation: "release",
-            service: "ConnectionPool",
-          },
-          { connectionId: wrapper.id },
-        );
-        this.destroyInBackground(wrapper);
-      }
-
-      if (!activated) {
-        await this.serveWaiter(request);
-        // The slot may still be free, e.g. when the connect failed.
-        await this.serveQueuedWaiters();
-        return;
-      }
-
-      if (!request.settled) {
-        request.resolve(activated);
-        return;
-      }
-      // The waiter timed out during validation; offer it to the next one
-      // rather than leaving it claimed by nobody.
+    if (!this.hasLiveWaiter()) {
+      wrapper.inUse = false;
+      this.updateMetrics();
+      return;
     }
+
+    if (!wrapper.isHealthy) {
+      // Unhealthy: destroy it instead of reusing a corrupted connection.
+      await this.logger.warning(
+        "Destroying unhealthy connection instead of reusing for waiting request",
+        {
+          operation: "release",
+          service: "ConnectionPool",
+        },
+        { connectionId: wrapper.id },
+      );
+      this.destroyInBackground(wrapper);
+      await this.serveQueuedWaiters();
+      return;
+    }
+
+    let activated: ConnectionWrapper<T>;
+    try {
+      activated = await this.activateClaimed(wrapper);
+    } catch {
+      // Failed validation: the connection is gone or no longer claimed.
+      // The waiters are served from what is left rather than rejected.
+      await this.serveQueuedWaiters();
+      return;
+    }
+
+    if (this.isShuttingDown) {
+      // destroy() closed the connection and rejected the waiters meanwhile.
+      return;
+    }
+    const request = this.nextWaiter();
+    if (!request) {
+      // Every waiter gave up during validation.
+      activated.inUse = false;
+      this.updateMetrics();
+      return;
+    }
+    request.resolve(activated);
+  }
+
+  private hasLiveWaiter(): boolean {
+    return this.waitingQueue.some(request => !request.settled);
   }
 
   /**
@@ -236,6 +239,14 @@ export abstract class ConnectionPool<T> {
 
     if (!wrapper) {
       this.waitingQueue.unshift(request);
+      return;
+    }
+    if (this.isShuttingDown) {
+      // destroy() ran meanwhile and closed every connection it could see.
+      if (this.connections.has(wrapper.id)) {
+        this.destroyInBackground(wrapper);
+      }
+      request.reject(this.shutDownError());
       return;
     }
     if (request.settled) {
