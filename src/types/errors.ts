@@ -42,6 +42,8 @@ export enum ErrorCode {
   EVENT_NOT_FOUND = "EVENT_NOT_FOUND",
   INVALID_DATE_RANGE = "INVALID_DATE_RANGE",
   CALENDAR_CONFLICT = "CALENDAR_CONFLICT",
+  EVENT_MODIFIED = "EVENT_MODIFIED",
+  EVENT_WRITE_REJECTED = "EVENT_WRITE_REJECTED",
 
   // Cache errors
   CACHE_ERROR = "CACHE_ERROR",
@@ -313,6 +315,10 @@ export class CalendarError extends MCPError {
         return "The specified date range is invalid.";
       case ErrorCode.CALENDAR_CONFLICT:
         return "There is a scheduling conflict with this calendar event.";
+      case ErrorCode.EVENT_MODIFIED:
+        return "The event was changed on the server after it was read. Fetch it again and retry.";
+      case ErrorCode.EVENT_WRITE_REJECTED:
+        return this.message;
       default:
         return "A calendar operation failed. Please try again.";
     }

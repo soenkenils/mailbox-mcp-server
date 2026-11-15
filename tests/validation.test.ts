@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { describe, expect, it } from "vitest";
 import {
+  createCalendarEventSchema,
   createDraftSchema,
   deleteEmailSchema,
   getCalendarEventsSchema,
@@ -10,6 +11,7 @@ import {
   moveEmailSchema,
   safeValidateInput,
   sanitizeHtml,
+  sanitizeMultilineString,
   sanitizeString,
   searchCalendarSchema,
   searchEmailsSchema,
@@ -459,5 +461,86 @@ describe("Folder path sanitizing order", () => {
     expect(() =>
       validateInput(getEmailSchema, { uid: 1, folder: "INBOX/\u0001" }),
     ).toThrow("Validation failed");
+  });
+});
+
+describe("createCalendarEventSchema", () => {
+  const valid = {
+    summary: "Meeting",
+    start: "2026-11-10T10:00:00Z",
+    end: "2026-11-10T11:00:00Z",
+  };
+
+  it("should accept a minimal event and default allDay to false", () => {
+    const result = validateInput(createCalendarEventSchema, valid);
+    expect(result.allDay).toBe(false);
+  });
+
+  it("should keep line breaks in an event description", () => {
+    const result = validateInput(createCalendarEventSchema, {
+      ...valid,
+      description: "Agenda:\r\n- Punkt 1\n- Punkt 2\tdone\u0007",
+    });
+    expect(result.description).toBe("Agenda:\n- Punkt 1\n- Punkt 2\tdone");
+  });
+
+  it("should strip line breaks from single-line fields", () => {
+    const result = validateInput(createCalendarEventSchema, {
+      ...valid,
+      summary: "Meeting\r\nX-INJECTED:1",
+      location: "Room\n1",
+      attendees: [{ email: "a@example.com", name: "Al\nice" }],
+    });
+    expect(result.summary).toBe("MeetingX-INJECTED:1");
+    expect(result.location).toBe("Room1");
+    expect(result.attendees?.[0].name).toBe("Alice");
+  });
+
+  it("should reject an empty summary", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, { ...valid, summary: "  " }),
+    ).toThrow("Summary cannot be empty");
+  });
+
+  it("should reject an invalid attendee email", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        ...valid,
+        attendees: [{ email: "not-an-email" }],
+      }),
+    ).toThrow("Invalid email format");
+  });
+
+  it("should reject a timed event that does not end after it starts", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, { ...valid, end: valid.start }),
+    ).toThrow("Start date must be before end date");
+  });
+
+  it("should accept an all-day event that ends on its start date", () => {
+    const result = validateInput(createCalendarEventSchema, {
+      summary: "Holiday",
+      start: "2026-12-24",
+      end: "2026-12-24",
+      allDay: true,
+    });
+    expect(result.allDay).toBe(true);
+  });
+
+  it("should reject an all-day event that ends before its start date", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        summary: "Holiday",
+        start: "2026-12-24",
+        end: "2026-12-23",
+        allDay: true,
+      }),
+    ).toThrow("Start date must be before end date");
+  });
+});
+
+describe("sanitizeMultilineString", () => {
+  it("should normalise line endings and drop other control characters", () => {
+    expect(sanitizeMultilineString(" a\r\nb\rc\u0000\td ")).toBe("a\nb\nc\td");
   });
 });

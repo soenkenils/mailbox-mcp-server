@@ -40,10 +40,11 @@ describe("main.ts module structure and logic", () => {
         "get_calendar_events",
         "search_calendar",
         "get_free_busy",
+        "create_calendar_event",
       ];
 
       // Verify all tools are present
-      expect(expectedCalendarTools).toHaveLength(3);
+      expect(expectedCalendarTools).toHaveLength(4);
 
       // Verify specific tools exist
       expect(expectedCalendarTools).toContain("get_calendar_events");
@@ -348,6 +349,7 @@ describe("main.ts module structure and logic", () => {
           "get_calendar_events",
           "search_calendar",
           "get_free_busy",
+          "create_calendar_event",
         ].includes(toolName);
       };
 
@@ -357,7 +359,7 @@ describe("main.ts module structure and logic", () => {
       }
 
       // Verify we have the expected number of tools
-      expect(implementedCalendarToolNames).toHaveLength(3);
+      expect(implementedCalendarToolNames).toHaveLength(4);
     });
   });
 });

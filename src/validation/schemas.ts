@@ -20,6 +20,30 @@ export const sanitizeString = (str: string): string => {
     .join("");
 };
 
+/**
+ * For free text such as event descriptions, where line breaks and tabs are
+ * content. Line endings are normalised to LF; the iCalendar layer produces
+ * the escapes its format requires. Every other control character is removed.
+ */
+export const sanitizeMultilineString = (str: string): string =>
+  str
+    .trim()
+    .replace(/\r\n?/g, "\n")
+    .split("")
+    .filter(char => {
+      const code = char.charCodeAt(0);
+      return (
+        code === 10 ||
+        code === 9 ||
+        !(
+          (code >= 0 && code <= 31) ||
+          code === 127 ||
+          (code >= 128 && code <= 159)
+        )
+      );
+    })
+    .join("");
+
 export const sanitizeHtml = (html: string): string => {
   // Basic HTML sanitization - remove dangerous tags and attributes
   return html
@@ -174,6 +198,43 @@ const calendarNameSchema = v.pipe(
   v.minLength(1, "Calendar name cannot be empty"),
   v.maxLength(255, "Calendar name too long"),
   v.transform(sanitizeString),
+);
+
+// Event fields for create_calendar_event
+const eventAttendeeSchema = v.object({
+  email: emailSchema,
+  name: v.optional(
+    v.pipe(
+      v.string("Name must be a string"),
+      v.maxLength(255, "Name too long"),
+      v.transform(sanitizeString),
+    ),
+  ),
+});
+
+const eventSummarySchema = v.pipe(
+  v.string("Summary must be a string"),
+  v.trim(),
+  v.minLength(1, "Summary cannot be empty"),
+  v.maxLength(500, "Summary too long"),
+  v.transform(sanitizeString),
+);
+
+const eventDescriptionSchema = v.pipe(
+  v.string("Description must be a string"),
+  v.maxLength(10000, "Description too long"),
+  v.transform(sanitizeMultilineString),
+);
+
+const eventLocationSchema = v.pipe(
+  v.string("Location must be a string"),
+  v.maxLength(500, "Location too long"),
+  v.transform(sanitizeString),
+);
+
+const eventAttendeesSchema = v.pipe(
+  v.array(eventAttendeeSchema, "Attendees must be an array"),
+  v.maxLength(50, "Too many attendees"),
 );
 
 // =============================================================================
@@ -357,6 +418,27 @@ export const searchCalendarSchema = v.pipe(
   }, "Start date must be before end date"),
 );
 
+export const createCalendarEventSchema = v.pipe(
+  v.object({
+    summary: eventSummarySchema,
+    start: dateSchema,
+    end: dateSchema,
+    description: v.optional(eventDescriptionSchema),
+    location: v.optional(eventLocationSchema),
+    allDay: v.optional(v.boolean("allDay must be a boolean"), false),
+    attendees: v.optional(eventAttendeesSchema),
+    calendar: v.optional(calendarNameSchema),
+  }),
+  // An all-day event may start and end on the same date: that is one day.
+  v.check(
+    data =>
+      data.allDay
+        ? data.start.slice(0, 10) <= data.end.slice(0, 10)
+        : new Date(data.start) < new Date(data.end),
+    "Start date must be before end date",
+  ),
+);
+
 export const getFreeBusySchema = v.pipe(
   v.object({
     start: dateSchema,
@@ -387,6 +469,9 @@ export type GetCalendarEventsInput = v.InferOutput<
   typeof getCalendarEventsSchema
 >;
 export type SearchCalendarInput = v.InferOutput<typeof searchCalendarSchema>;
+export type CreateCalendarEventInput = v.InferOutput<
+  typeof createCalendarEventSchema
+>;
 export type GetFreeBusyInput = v.InferOutput<typeof getFreeBusySchema>;
 
 // =============================================================================

@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
 import ICAL from "ical.js";
 import { createDAVClient, type DAVCalendar, type DAVObject } from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
@@ -7,8 +9,11 @@ import type {
   CalDavConnection,
   CalendarEvent,
   CalendarSearchOptions,
+  CreateCalendarEventOptions,
+  CreateCalendarEventResult,
   FreeBusyInfo,
 } from "../types/calendar.types.js";
+import { CalendarError, ErrorCode, ValidationError } from "../types/errors.js";
 import { withCacheFallback } from "../utils/cacheFallback.js";
 import {
   CircuitBreaker,
@@ -16,6 +21,23 @@ import {
   type CircuitBreakerMetrics,
 } from "./CircuitBreaker.js";
 import { createLogger } from "./Logger.js";
+
+dayjs.extend(utc);
+
+type DAVClient = Awaited<ReturnType<typeof createDAVClient>>;
+
+/** Cache key prefixes of every result derived from the event list. */
+const EVENT_CACHE_PREFIXES = [
+  "calendar_events:",
+  "calendar_search:",
+  "freebusy:",
+] as const;
+
+/** RFC 5545 section 3.1: content lines SHOULD NOT exceed 75 octets. */
+const MAX_LINE_OCTETS = 75;
+
+const calendarLabel = (calendar: DAVCalendar): string =>
+  (calendar.displayName as string) || calendar.url;
 
 export class CalendarService {
   private connection: CalDavConnection;
@@ -41,9 +63,7 @@ export class CalendarService {
     this.circuitBreaker = new CircuitBreaker(cbConfig);
   }
 
-  protected async getClient(): Promise<
-    Awaited<ReturnType<typeof createDAVClient>>
-  > {
+  protected async getClient(): Promise<DAVClient> {
     if (!this.client) {
       this.client = await createDAVClient({
         serverUrl: this.connection.baseUrl,
@@ -137,6 +157,297 @@ export class CalendarService {
         calendar,
       },
     });
+  }
+
+  async createCalendarEvent(
+    options: CreateCalendarEventOptions,
+  ): Promise<CreateCalendarEventResult> {
+    const uid = randomUUID();
+    const allDay = options.allDay ?? false;
+    const dates = allDay ? this.allDayDates(options) : undefined;
+    const iCalString = this.buildICalString(uid, options, dates);
+
+    // Only the network calls sit inside the breaker: a calendar name the
+    // caller got wrong must not count towards opening the circuit.
+    const { client, candidates } = await this.circuitBreaker.execute(
+      async () => {
+        const client = await this.getClient();
+        return {
+          client,
+          candidates: await this.selectCalendars(client, options.calendar),
+        };
+      },
+    );
+    const target = this.chooseCreateTarget(candidates, options.calendar);
+    const calendarName = calendarLabel(target);
+
+    const response = await this.circuitBreaker.execute(() =>
+      client.createCalendarObject({
+        calendar: target,
+        filename: `${uid}.ics`,
+        iCalString,
+      }),
+    );
+    this.assertWritten(response, "create", calendarName, uid);
+    this.invalidateEventCaches();
+
+    this.logger.info("Calendar event created", {
+      operation: "createCalendarEvent",
+      service: "CalendarService",
+    });
+
+    return {
+      uid,
+      summary: options.summary,
+      start: options.start,
+      end: options.end,
+      allDay,
+      ...dates,
+      calendar: calendarName,
+    };
+  }
+
+  /**
+   * The calendar a new event goes to: the one the caller named, or the first
+   * candidate. A name that matches several calendars is refused rather than
+   * guessed, unless exactly one of them carries it as its display name.
+   */
+  private chooseCreateTarget(
+    candidates: DAVCalendar[],
+    calendarFilter?: string,
+  ): DAVCalendar {
+    if (candidates.length === 0) {
+      throw calendarFilter
+        ? new ValidationError(
+            `Calendar "${calendarFilter}" not found`,
+            "calendar",
+            calendarFilter,
+          )
+        : new CalendarError(
+            "No calendar available to create the event in",
+            ErrorCode.CALENDAR_NOT_FOUND,
+          );
+    }
+
+    if (calendarFilter && candidates.length > 1) {
+      const exact = candidates.filter(
+        calendar => calendar.displayName === calendarFilter.trim(),
+      );
+      if (exact.length === 1) {
+        return exact[0];
+      }
+      throw new ValidationError(
+        `Calendar "${calendarFilter}" matches several calendars (${candidates
+          .map(calendarLabel)
+          .join(", ")}); use the exact name`,
+        "calendar",
+        calendarFilter,
+      );
+    }
+
+    return candidates[0];
+  }
+
+  /**
+   * Calendars a write may touch: those that can hold events and match the
+   * optional filter.
+   */
+  private async selectCalendars(
+    client: DAVClient,
+    calendarFilter?: string,
+  ): Promise<DAVCalendar[]> {
+    const calendars = await client.fetchCalendars();
+
+    return calendars.filter(
+      calendar =>
+        this.holdsEvents(calendar) &&
+        (!calendarFilter || this.calendarMatches(calendar, calendarFilter)),
+    );
+  }
+
+  private calendarMatches(calendar: DAVCalendar, name: string): boolean {
+    const wanted = name.trim();
+    return calendar.displayName === wanted || calendar.url.includes(wanted);
+  }
+
+  /** A collection that only takes tasks or journals cannot store a VEVENT. */
+  private holdsEvents(calendar: DAVCalendar): boolean {
+    return (
+      !calendar.components?.length || calendar.components.includes("VEVENT")
+    );
+  }
+
+  private assertWritten(
+    response: Response,
+    action: "create" | "update" | "delete",
+    calendar: string,
+    uid: string,
+  ): void {
+    if (response.ok) {
+      return;
+    }
+
+    // A create is sent with If-None-Match: *, so 412 there means the name is
+    // taken; on update and delete it means the event changed meanwhile.
+    if (response.status === 412 && action !== "create") {
+      throw new CalendarError(
+        `The event changed on the server during the ${action}`,
+        ErrorCode.EVENT_MODIFIED,
+        calendar,
+        uid,
+      );
+    }
+
+    throw new CalendarError(
+      `The CalDAV server rejected the ${action} in calendar "${calendar}" (HTTP ${response.status})`,
+      ErrorCode.EVENT_WRITE_REJECTED,
+      calendar,
+      uid,
+    );
+  }
+
+  /** Reads are cached for minutes, so a write must not leave them stale. */
+  private invalidateEventCaches(): void {
+    for (const key of [...this.cache.keys()]) {
+      if (EVENT_CACHE_PREFIXES.some(prefix => key.startsWith(prefix))) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  /** The YYYY-MM-DD an all-day event falls on. */
+  private calendarDate(value: Date, writtenDate?: string): string {
+    return writtenDate ?? dayjs(value).utc().format("YYYY-MM-DD");
+  }
+
+  /**
+   * DTSTART and the exclusive DTEND of an all-day event. An end on or before
+   * the start date makes it a one-day event, since DTEND must come after
+   * DTSTART.
+   */
+  private allDayDates(options: CreateCalendarEventOptions): {
+    startDate: string;
+    endDate: string;
+  } {
+    const startDate = this.calendarDate(options.start, options.startDate);
+    const endDate = this.calendarDate(options.end, options.endDate);
+    return {
+      startDate,
+      endDate:
+        endDate > startDate
+          ? endDate
+          : dayjs.utc(startDate).add(1, "day").format("YYYY-MM-DD"),
+    };
+  }
+
+  /**
+   * Timed events are written in UTC (DTSTART:...Z); all-day events as
+   * VALUE=DATE with an exclusive DTEND. No TZID or floating times.
+   */
+  private buildICalString(
+    uid: string,
+    options: CreateCalendarEventOptions,
+    allDayDates?: { startDate: string; endDate: string },
+  ): string {
+    const utcStamp = (value: Date) =>
+      dayjs(value).utc().format("YYYYMMDDTHHmmss[Z]");
+    const lines: string[] = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//mailbox-mcp-server//EN",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      `DTSTAMP:${utcStamp(new Date())}`,
+    ];
+
+    if (allDayDates) {
+      const basic = (date: string) => date.replaceAll("-", "");
+      lines.push(`DTSTART;VALUE=DATE:${basic(allDayDates.startDate)}`);
+      lines.push(`DTEND;VALUE=DATE:${basic(allDayDates.endDate)}`);
+    } else {
+      lines.push(`DTSTART:${utcStamp(options.start)}`);
+      lines.push(`DTEND:${utcStamp(options.end)}`);
+    }
+
+    lines.push(`SUMMARY:${this.escapeICalText(options.summary)}`);
+
+    if (options.description) {
+      lines.push(`DESCRIPTION:${this.escapeICalText(options.description)}`);
+    }
+
+    if (options.location) {
+      lines.push(`LOCATION:${this.escapeICalText(options.location)}`);
+    }
+
+    if (options.attendees?.length) {
+      // RFC 5545 3.8.4.3: a group-scheduled event must name its organizer.
+      if (this.connection.username.includes("@")) {
+        lines.push(`ORGANIZER:mailto:${this.connection.username}`);
+      }
+      for (const attendee of options.attendees) {
+        const cn = attendee.name
+          ? `;CN=${this.quoteICalParameter(attendee.name)}`
+          : "";
+        lines.push(`ATTENDEE${cn}:mailto:${attendee.email}`);
+      }
+    }
+
+    lines.push("END:VEVENT", "END:VCALENDAR");
+    return `${lines.map(line => this.foldICalLine(line)).join("\r\n")}\r\n`;
+  }
+
+  /**
+   * Quotes a parameter value so ",", ";" and ":" in it cannot end it early.
+   * A quoted value cannot hold a double quote, so those (and "^") use the
+   * RFC 6868 caret escapes, which ical.js and other clients decode.
+   */
+  private quoteICalParameter(value: string): string {
+    const escaped = value
+      .replace(/\^/g, "^^")
+      .replace(/"/g, "^'")
+      .replace(/\r\n?|\n/g, "^n");
+    return `"${escaped}"`;
+  }
+
+  /**
+   * RFC 5545 3.3.11 TEXT: backslash, semicolon and comma are escaped, and a
+   * line break becomes "\n". There is no escape for a bare CR, so every line
+   * ending counts as one break.
+   */
+  private escapeICalText(text: string): string {
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,")
+      .replace(/\r\n?|\n/g, "\\n");
+  }
+
+  /**
+   * RFC 5545 3.1: lines longer than 75 octets are folded with CRLF and a
+   * space. Splits fall between characters, never inside a UTF-8 sequence.
+   */
+  private foldICalLine(line: string): string {
+    const encoder = new TextEncoder();
+    const parts: string[] = [];
+    let current = "";
+    let currentOctets = 0;
+    // The first line holds 75 octets; continuations lose one to the space.
+    let limit = MAX_LINE_OCTETS;
+
+    for (const char of line) {
+      const octets = encoder.encode(char).length;
+      if (currentOctets + octets > limit) {
+        parts.push(current);
+        current = "";
+        currentOctets = 0;
+        limit = MAX_LINE_OCTETS - 1;
+      }
+      current += char;
+      currentOctets += octets;
+    }
+    parts.push(current);
+
+    return parts.join("\r\n ");
   }
 
   private async fetchCalendarEvents(

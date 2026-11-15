@@ -9,6 +9,7 @@ import {
   ValidationError,
 } from "../types/errors.js";
 import {
+  createCalendarEventSchema,
   getCalendarEventsSchema,
   getFreeBusySchema,
   searchCalendarSchema,
@@ -20,6 +21,7 @@ export const CALENDAR_TOOLS = [
   "get_calendar_events",
   "search_calendar",
   "get_free_busy",
+  "create_calendar_event",
 ] as const;
 
 export type CalendarToolName = (typeof CALENDAR_TOOLS)[number];
@@ -143,8 +145,75 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
         additionalProperties: false,
       },
     },
+    {
+      name: "create_calendar_event",
+      description:
+        "Create an event in a mailbox.org calendar. Listing attendees may cause the server to send them invitations. Calling twice creates two events. Returns the new event's UID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description: "Event title/summary (required)",
+          },
+          start: {
+            type: "string",
+            format: "date-time",
+            description:
+              "Event start (ISO 8601, required). Include an offset or Z; a time without one is read in the server's local time zone. For all-day events only the date part (YYYY-MM-DD) is used.",
+          },
+          end: {
+            type: "string",
+            format: "date-time",
+            description:
+              "Event end (ISO 8601, required). For all-day events this is the day after the last day (exclusive, as in iCalendar); an end on the start date makes a one-day event.",
+          },
+          description: {
+            type: "string",
+            description: "Event description (optional, may span several lines)",
+          },
+          location: {
+            type: "string",
+            description: "Event location (optional)",
+          },
+          allDay: {
+            type: "boolean",
+            description: "Whether this is an all-day event (default: false)",
+            default: false,
+          },
+          attendees: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                email: {
+                  type: "string",
+                  description: "Attendee email address",
+                },
+                name: {
+                  type: "string",
+                  description: "Attendee display name (optional)",
+                },
+              },
+              required: ["email"],
+            },
+            description: "List of event attendees (optional)",
+          },
+          calendar: {
+            type: "string",
+            description:
+              "Target calendar name (optional, defaults to the first available calendar)",
+          },
+        },
+        required: ["summary", "start", "end"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
+
+/** The YYYY-MM-DD part of an ISO 8601 string, as the caller wrote it. */
+const writtenDate = (value: string): string => value.slice(0, 10);
 
 export async function handleCalendarTool(
   name: string,
@@ -276,6 +345,51 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
             },
           ],
         };
+      }
+
+      case "create_calendar_event": {
+        const validatedArgs = validateInput(createCalendarEventSchema, args);
+
+        const result = await calendarService.createCalendarEvent({
+          summary: validatedArgs.summary,
+          start: new Date(validatedArgs.start),
+          end: new Date(validatedArgs.end),
+          startDate: writtenDate(validatedArgs.start),
+          endDate: writtenDate(validatedArgs.end),
+          description: validatedArgs.description,
+          location: validatedArgs.location,
+          allDay: validatedArgs.allDay,
+          attendees: validatedArgs.attendees,
+          calendar: validatedArgs.calendar,
+        });
+
+        const parts = [
+          "Calendar event created successfully:\n",
+          `**${result.summary}**`,
+          ...(result.allDay
+            ? [
+                `Start: ${result.startDate} (All Day)`,
+                `End: ${result.endDate} (exclusive)`,
+              ]
+            : [
+                `Start: ${dayjs(result.start).format("YYYY-MM-DD HH:mm")}`,
+                `End: ${dayjs(result.end).format("YYYY-MM-DD HH:mm")}`,
+              ]),
+          `Calendar: ${result.calendar}`,
+          `UID: ${result.uid}`,
+        ];
+
+        if (validatedArgs.location) {
+          parts.push(`Location: ${validatedArgs.location}`);
+        }
+
+        if (validatedArgs.attendees?.length) {
+          parts.push(
+            `Attendees: ${validatedArgs.attendees.map(a => a.name || a.email).join(", ")}`,
+          );
+        }
+
+        return { content: [{ type: "text", text: parts.join("\n") }] };
       }
 
       default:
