@@ -388,6 +388,48 @@ describe("CalendarService event changes", () => {
         ).rejects.toMatchObject({ code: ErrorCode.EVENT_WRITE_REJECTED });
       });
 
+      it("should count server errors towards opening the circuit", async () => {
+        const service = makeService();
+        createCalendarObject.mockResolvedValue(
+          new Response(null, { status: 503 }),
+        );
+        for (let i = 0; i < 3; i++) {
+          await expect(
+            service.createCalendarEvent(newEvent),
+          ).rejects.toMatchObject({
+            code: ErrorCode.EVENT_WRITE_REJECTED,
+            message: expect.stringContaining("HTTP 503"),
+          });
+        }
+
+        createCalendarObject.mockResolvedValue(
+          new Response(null, { status: 201 }),
+        );
+        await expect(service.createCalendarEvent(newEvent)).rejects.toThrow(
+          /Circuit breaker is OPEN/,
+        );
+        expect(createCalendarObject).toHaveBeenCalledTimes(3);
+      });
+
+      it("should not count refusals by the server towards opening the circuit", async () => {
+        const service = makeService();
+        createCalendarObject.mockResolvedValue(
+          new Response(null, { status: 403 }),
+        );
+        for (let i = 0; i < 5; i++) {
+          await expect(service.createCalendarEvent(newEvent)).rejects.toThrow(
+            /HTTP 403/,
+          );
+        }
+
+        createCalendarObject.mockResolvedValue(
+          new Response(null, { status: 201 }),
+        );
+        await expect(
+          service.createCalendarEvent(newEvent),
+        ).resolves.toMatchObject({ calendar: "work" });
+      });
+
       it("should propagate network failures", async () => {
         createCalendarObject.mockRejectedValue(new Error("ECONNRESET"));
 

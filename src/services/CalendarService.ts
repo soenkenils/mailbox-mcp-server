@@ -182,13 +182,19 @@ export class CalendarService {
     );
     const calendarName = calendarLabel(target);
 
-    const response = await this.circuitBreaker.execute(() =>
-      client.createCalendarObject({
+    const response = await this.circuitBreaker.execute(async () => {
+      const response = await client.createCalendarObject({
         calendar: target,
         filename: `${uid}.ics`,
         iCalString,
-      }),
-    );
+      });
+      // A server error counts towards opening the circuit; a refusal (4xx)
+      // is about this request and is reported below without counting.
+      if (response.status >= 500) {
+        this.assertWritten(response, "create", calendarName, uid);
+      }
+      return response;
+    });
     this.assertWritten(response, "create", calendarName, uid);
     this.invalidateEventCaches();
 
