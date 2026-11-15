@@ -22,7 +22,8 @@ interface ImapMessage {
     date?: Date;
   };
   uid: number;
-  flags: string[];
+  /** imapflow returns a Set; arrays are accepted for robustness */
+  flags?: Set<string> | string[];
   bodystructure?: unknown;
   size?: number;
 }
@@ -525,7 +526,7 @@ export class EmailService {
       to: this.parseAddressesFromEnvelope(envelope.to),
       cc: this.parseAddressesFromEnvelope(envelope.cc),
       date: envelope.date || new Date(),
-      flags: message.flags || [],
+      flags: Array.from(message.flags ?? []),
       folder,
     };
   }
@@ -552,7 +553,7 @@ export class EmailService {
         size: att.size,
         contentId: att.cid,
       })),
-      flags: message.flags || [],
+      flags: Array.from(message.flags ?? []),
       folder,
     };
   }
