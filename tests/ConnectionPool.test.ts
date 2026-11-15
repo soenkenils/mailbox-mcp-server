@@ -884,6 +884,126 @@ describe("ConnectionPool", () => {
     });
   });
 
+  describe("waiters after a connection is destroyed", () => {
+    // A single slot makes every freed slot observable; a long acquire timeout
+    // means a stranded waiter shows up as still pending, not as a timeout.
+    let slotPool: TestConnectionPool;
+
+    beforeEach(() => {
+      slotPool = new TestConnectionPool({
+        ...config,
+        minConnections: 0,
+        maxConnections: 1,
+        maxRetries: 0,
+        acquireTimeoutMs: 60_000,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await slotPool.destroy();
+    });
+
+    const track = <V>(promise: Promise<V>) => {
+      const state: { value?: V; error?: Error } = {};
+      promise.then(
+        value => {
+          state.value = value;
+        },
+        error => {
+          state.error = error;
+        },
+      );
+      return state;
+    };
+
+    it("should give a waiter a new connection when the handed-off one fails validation", async () => {
+      const held = await slotPool.acquire();
+      const waiting = slotPool.acquire();
+      await flush();
+
+      slotPool.setShouldFailValidation(true);
+      await slotPool.release(held);
+
+      const wrapper = await waiting;
+      expect(wrapper.id).not.toBe(held.id);
+      expect(wrapper.connection.isValid).toBe(true);
+      expect(slotPool.getConnections().size).toBe(1);
+    });
+
+    it("should reject every waiter with the connect error when no replacement can be opened", async () => {
+      const held = await slotPool.acquire();
+      const first = track(slotPool.acquire());
+      const second = track(slotPool.acquire());
+      await flush();
+
+      slotPool.setShouldFailValidation(true);
+      slotPool.setShouldFailCreation(true);
+      const createSpy = vi.spyOn(slotPool, "createConnection");
+      await slotPool.release(held);
+      await flush();
+
+      expect(first.error?.message).toContain("Failed to create connection");
+      expect(second.error?.message).toContain("Failed to create connection");
+      // One bounded attempt per waiter, no retry loop.
+      expect(createSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("should serve a waiter queued behind a connect that fails", async () => {
+      const gate = deferred();
+      const createConnection = slotPool.createConnection.bind(slotPool);
+      let calls = 0;
+      slotPool.createConnection = async () => {
+        calls++;
+        if (calls === 1) {
+          await gate.promise;
+          throw new Error("connect refused");
+        }
+        return createConnection();
+      };
+
+      const first = track(slotPool.acquire());
+      await flush();
+      // The slot is held by the connect in flight, so this waits.
+      const second = track(slotPool.acquire());
+      await flush();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+
+      gate.resolve();
+      await flush();
+      await flush();
+
+      expect(first.error?.message).toContain("connect refused");
+      expect(second.error).toBeUndefined();
+      expect(second.value?.connection.isValid).toBe(true);
+    });
+
+    it("should serve a waiter when the health check destroys the connection it was checking", async () => {
+      await slotPool.release(await slotPool.acquire());
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return false;
+      };
+
+      const healthCheck = (
+        slotPool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+      await flush();
+      // The only connection is claimed by the health check, so this waits.
+      const waiting = track(slotPool.acquire());
+      await flush();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+
+      gate.resolve();
+      await healthCheck;
+      await flush();
+
+      expect(waiting.error).toBeUndefined();
+      expect(waiting.value?.connection.isValid).toBe(true);
+    });
+  });
+
   describe("waiting request metric", () => {
     let waitPool: TestConnectionPool;
 

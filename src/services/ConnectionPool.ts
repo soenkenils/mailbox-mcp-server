@@ -42,15 +42,17 @@ export interface PoolMetrics {
   }>;
 }
 
+interface WaitingRequest<T> {
+  resolve: (connection: ConnectionWrapper<T>) => void;
+  reject: (error: Error) => void;
+  requestedAt: Date;
+  settled: boolean;
+}
+
 export abstract class ConnectionPool<T> {
   protected config: ConnectionPoolConfig;
   protected connections: Map<string, ConnectionWrapper<T>>;
-  protected waitingQueue: Array<{
-    resolve: (connection: ConnectionWrapper<T>) => void;
-    reject: (error: Error) => void;
-    requestedAt: Date;
-    settled: boolean;
-  }>;
+  protected waitingQueue: Array<WaitingRequest<T>>;
   protected metrics: PoolMetrics;
   protected logger = createLogger("ConnectionPool");
   private healthCheckInterval?: NodeJS.Timeout;
@@ -126,6 +128,11 @@ export abstract class ConnectionPool<T> {
       return await this.waitForConnection();
     } catch (error) {
       this.metrics.totalErrors++;
+      // A failed connect or validation frees the slot this call held, which
+      // a waiter queued behind it may need.
+      if (this.waitingQueue.length > 0) {
+        this.serveQueuedWaiters().catch(() => undefined);
+      }
       throw error;
     } finally {
       this.metrics.waitingRequests--;
@@ -169,9 +176,15 @@ export abstract class ConnectionPool<T> {
         return;
       }
 
-      // If connection is unhealthy, destroy it and create a new one
-      // for the waiting request instead of reusing a corrupted connection
-      if (!wrapper.isHealthy) {
+      if (!activated && wrapper.isHealthy) {
+        try {
+          activated = await this.activateClaimed(wrapper);
+        } catch {
+          // Failed validation: the connection is gone or no longer claimed.
+          // The waiter is served below rather than rejected.
+        }
+      } else if (!activated) {
+        // Unhealthy: destroy it instead of reusing a corrupted connection.
         await this.logger.warning(
           "Destroying unhealthy connection instead of reusing for waiting request",
           {
@@ -180,51 +193,14 @@ export abstract class ConnectionPool<T> {
           },
           { connectionId: wrapper.id },
         );
-
-        // Destroy the unhealthy connection (don't await to avoid blocking)
-        this.destroyConnectionWrapper(wrapper).catch(error => {
-          this.logger.warning(
-            "Error destroying unhealthy connection in background",
-            {
-              operation: "release",
-              service: "ConnectionPool",
-            },
-            {
-              connectionId: wrapper.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-        });
-
-        // Try to create a new connection for the waiting request
-        let newWrapper: ConnectionWrapper<T>;
-        try {
-          newWrapper = await this.createNewConnection();
-        } catch (error) {
-          request.reject(
-            error instanceof Error ? error : new Error(String(error)),
-          );
-          return;
-        }
-
-        if (request.settled) {
-          // The waiter gave up while the connection was opened.
-          await this.handOff(newWrapper);
-        } else {
-          request.resolve(newWrapper);
-        }
-        return;
+        this.destroyInBackground(wrapper);
       }
 
       if (!activated) {
-        try {
-          activated = await this.activateClaimed(wrapper);
-        } catch (error) {
-          request.reject(
-            error instanceof Error ? error : new Error(String(error)),
-          );
-          return;
-        }
+        await this.serveWaiter(request);
+        // The slot may still be free, e.g. when the connect failed.
+        await this.serveQueuedWaiters();
+        return;
       }
 
       if (!request.settled) {
@@ -234,6 +210,88 @@ export abstract class ConnectionPool<T> {
       // The waiter timed out during validation; offer it to the next one
       // rather than leaving it claimed by nobody.
     }
+  }
+
+  /**
+   * Serves a waiter already taken off the queue: with an idle connection, a
+   * new one if a slot is free, or by putting it back at the head of the
+   * queue. A failed connect rejects it with that error instead of retrying,
+   * so a server that is down cannot keep the pool spinning.
+   */
+  private async serveWaiter(request: WaitingRequest<T>): Promise<void> {
+    if (request.settled) {
+      return;
+    }
+
+    let wrapper: ConnectionWrapper<T> | null;
+    try {
+      wrapper = await this.connectionForWaiter();
+    } catch (error) {
+      request.reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    if (!wrapper) {
+      this.waitingQueue.unshift(request);
+      return;
+    }
+    if (request.settled) {
+      // The waiter gave up while the connection was opened.
+      await this.handOff(wrapper);
+      return;
+    }
+    request.resolve(wrapper);
+  }
+
+  /** Opens connections for live waiters while slots are free. */
+  private async serveQueuedWaiters(): Promise<void> {
+    while (this.hasCapacity() && !this.isShuttingDown) {
+      const request = this.nextWaiter();
+      if (!request) {
+        return;
+      }
+      await this.serveWaiter(request);
+    }
+  }
+
+  /**
+   * A claimed connection for a waiter: an idle one that passes validation,
+   * else a new one if a slot is free, else null. Idle attempts are bounded
+   * because a failed validation does not have to destroy the connection.
+   */
+  private async connectionForWaiter(): Promise<ConnectionWrapper<T> | null> {
+    for (let attempt = 0; attempt < this.config.maxConnections; attempt++) {
+      const idle = this.claimIdleConnection();
+      if (!idle) {
+        break;
+      }
+      try {
+        return await this.activateClaimed(idle);
+      } catch {
+        // Try the next idle connection, or open a new one.
+      }
+    }
+
+    if (this.isShuttingDown) {
+      throw this.shutDownError();
+    }
+    return this.hasCapacity() ? await this.createNewConnection() : null;
+  }
+
+  private destroyInBackground(wrapper: ConnectionWrapper<T>): void {
+    this.destroyConnectionWrapper(wrapper).catch(error => {
+      this.logger.warning(
+        "Error destroying unhealthy connection in background",
+        {
+          operation: "release",
+          service: "ConnectionPool",
+        },
+        {
+          connectionId: wrapper.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    });
   }
 
   /** Next waiter that has not already timed out. */
@@ -438,7 +496,7 @@ export abstract class ConnectionPool<T> {
 
   private async waitForConnection(): Promise<ConnectionWrapper<T>> {
     return new Promise((resolve, reject) => {
-      const request = {
+      const request: WaitingRequest<T> = {
         resolve: (wrapper: ConnectionWrapper<T>) => {
           if (request.settled) return;
           request.settled = true;
@@ -475,6 +533,9 @@ export abstract class ConnectionPool<T> {
   protected async destroyConnectionWrapper(
     wrapper: ConnectionWrapper<T>,
   ): Promise<void> {
+    // Leaves the pool before the close is awaited, so the slot is free for a
+    // waiter right away.
+    this.connections.delete(wrapper.id);
     try {
       await this.destroyConnection(wrapper.connection);
     } catch (error) {
@@ -490,7 +551,6 @@ export abstract class ConnectionPool<T> {
         },
       );
     } finally {
-      this.connections.delete(wrapper.id);
       if (wrapper.inUse) {
         this.metrics.activeConnections--;
       } else {
@@ -513,6 +573,8 @@ export abstract class ConnectionPool<T> {
     }
     const connectionsToDestroy = await this.identifyConnectionsToDestroy();
     await this.destroyUnhealthyConnections(connectionsToDestroy);
+    // Destroying freed slots that waiters may be queued for.
+    await this.serveQueuedWaiters();
     await this.ensureMinimumConnections();
     this.updateMetrics();
   }
@@ -577,7 +639,10 @@ export abstract class ConnectionPool<T> {
     connectionsToDestroy: ConnectionWrapper<T>[],
   ): Promise<void> {
     for (const wrapper of connectionsToDestroy) {
-      await this.destroyConnectionWrapper(wrapper);
+      // destroy() may have closed it already.
+      if (this.connections.has(wrapper.id)) {
+        await this.destroyConnectionWrapper(wrapper);
+      }
     }
   }
 
