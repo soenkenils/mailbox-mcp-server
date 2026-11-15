@@ -60,7 +60,7 @@ import {
   ErrorCode,
   type ErrorContext,
 } from "../types/errors.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
+import { createCacheFetcher } from "../utils/cacheFallback.js";
 import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
@@ -72,6 +72,7 @@ export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
   private logger = createLogger("EmailService");
+  private cachedFetch: ReturnType<typeof createCacheFetcher>;
 
   constructor(
     connection: ImapConnection,
@@ -79,6 +80,11 @@ export class EmailService {
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
   ) {
     this.cache = cache;
+    this.cachedFetch = createCacheFetcher(
+      this.cache,
+      this.logger,
+      "EmailService",
+    );
     this.pool = new ImapConnectionPool({
       ...poolConfig,
       connectionConfig: connection,
@@ -92,30 +98,25 @@ export class EmailService {
   async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
     const cacheKey = `email_search:${JSON.stringify(options)}`;
 
-    return withCacheFallback({
+    return this.cachedFetch(
       cacheKey,
-      cache: this.cache,
-      fetch: async () => {
+      async () => {
         const folder = options.folder || "INBOX";
         let wrapper: ImapConnectionWrapper | null = null;
 
         try {
           wrapper = await this.pool.acquireForFolder(folder);
-          const messages = await this.performEmailSearch(wrapper, options);
-          return messages;
+          return await this.performEmailSearch(wrapper, options);
         } finally {
           if (wrapper) {
             await this.pool.releaseFromFolder(wrapper);
           }
         }
       },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "searchEmails",
-      service: "EmailService",
-      ttl: 300000, // 5 minutes TTL
-      logContext: { folder: options.folder, query: options.query },
-    });
+      "searchEmails",
+      300000, // 5 minutes TTL
+      { defaultValue: [] },
+    );
   }
 
   async getEmail(uid: number, folder = "INBOX"): Promise<EmailMessage | null> {
@@ -123,22 +124,17 @@ export class EmailService {
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      return await withCacheFallback({
+      // No fallback: when the connection fails and there is no stale copy,
+      // the error must surface instead of reading as "not found".
+      return await this.cachedFetch(
         cacheKey,
-        cache: this.cache,
-        fetch: async () => {
+        async () => {
           wrapper = await this.pool.acquireForFolder(folder);
-          const message = await this.fetchEmailByUid(wrapper, uid, folder);
-          return message;
+          return await this.fetchEmailByUid(wrapper, uid, folder);
         },
-        // No defaultValue: when the connection fails and there is no stale
-        // copy, the error must surface instead of reading as "not found".
-        logger: this.logger,
-        operation: "getEmail",
-        service: "EmailService",
-        ttl: 600000, // 10 minutes TTL
-        logContext: { uid, folder },
-      });
+        "getEmail",
+        600000, // 10 minutes TTL
+      );
     } finally {
       // A timed-out or failed fetch has already marked the connection
       // unhealthy (fetchRawMessageByUid), so releasing it retires it.
@@ -652,14 +648,13 @@ export class EmailService {
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      return await withCacheFallback({
+      return await this.cachedFetch(
         cacheKey,
-        cache: this.cache,
-        fetch: async () => {
+        async (): Promise<EmailFolder[]> => {
           wrapper = await this.pool.acquire();
           const folders = await wrapper.connection.list();
 
-          const result: EmailFolder[] = folders.map(folder => ({
+          return folders.map(folder => ({
             name: folder.name,
             path: folder.path,
             delimiter: folder.delimiter || "/",
@@ -670,15 +665,11 @@ export class EmailService {
                 : [],
             specialUse: folder.specialUse,
           }));
-
-          return result;
         },
-        defaultValue: this.getDefaultFolders(),
-        logger: this.logger,
-        operation: "getFolders",
-        service: "EmailService",
-        ttl: 900000, // Cache for 15 minutes
-      });
+        "getFolders",
+        900000, // Cache for 15 minutes
+        { defaultValue: this.getDefaultFolders() },
+      );
     } finally {
       if (wrapper) {
         await this.pool.release(wrapper);

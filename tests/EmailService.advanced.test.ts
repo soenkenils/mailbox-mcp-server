@@ -903,7 +903,6 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockLogger.warning).toHaveBeenCalledWith(
         "Returning stale cached data due to connection failure",
         expect.any(Object),
-        expect.any(Object),
       );
     });
 
@@ -932,7 +931,6 @@ describe("EmailService - Advanced Coverage", () => {
       ]);
       expect(mockLogger.warning).toHaveBeenCalledWith(
         "No cached data available, returning default value due to connection failure",
-        expect.any(Object),
         expect.any(Object),
       );
     });
