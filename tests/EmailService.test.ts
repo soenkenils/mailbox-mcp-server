@@ -16,6 +16,11 @@ interface TestableEmailService extends EmailService {
     options: unknown,
   ): EmailMessage[];
   parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
+  parseFullEmailMessage(
+    parsed: unknown,
+    message: unknown,
+    folder: string,
+  ): EmailMessage;
   parseAddressesFromEnvelope(
     addresses: unknown,
   ): Array<{ name?: string; address: string }>;
@@ -477,6 +482,40 @@ describe("EmailService", () => {
         folder: "INBOX",
       });
     });
+
+    it("should convert imapflow flag Sets to arrays", () => {
+      // imapflow returns message flags as Set<string>, not as an array
+      const message = createMockImapMessage({
+        flags: new Set(["\\Seen", "\\Flagged"]),
+      });
+      const result = (emailService as TestableEmailService).parseEmailMessage(
+        message,
+        "INBOX",
+      );
+      expect(Array.isArray(result?.flags)).toBe(true);
+      expect(result?.flags).toEqual(["\\Seen", "\\Flagged"]);
+    });
+  });
+
+  describe("parseFullEmailMessage", () => {
+    it("should convert imapflow flag Sets to arrays", () => {
+      const message = createMockImapMessage({
+        flags: new Set(["\\Answered"]),
+      });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(Array.isArray(result.flags)).toBe(true);
+      expect(result.flags).toEqual(["\\Answered"]);
+    });
+
+    it("should return an empty array when flags are missing", () => {
+      const message = createMockImapMessage({ flags: undefined });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.flags).toEqual([]);
+    });
   });
 
   describe("parseAddressesFromEnvelope", () => {
@@ -664,16 +703,9 @@ describe("EmailService", () => {
         source: Buffer.from("Second Email"),
       };
 
-      // Mock the fetch to return an async iterator with proper cleanup
-      let fetchCallCount = 0;
-      mockFetch.mockImplementation(async function* () {
-        fetchCallCount++;
-        if (fetchCallCount === 1) {
-          yield mockMessage1;
-        } else {
-          yield mockMessage2;
-        }
-      });
+      mockFetchOne
+        .mockResolvedValueOnce(mockMessage1)
+        .mockResolvedValueOnce(mockMessage2);
 
       // Mock simpleParser to return parsed data matching the message
       (simpleParser as Mock).mockImplementation(async (source: Buffer) => {
@@ -721,7 +753,7 @@ describe("EmailService", () => {
       expect(email2?.subject).toBe("Second Email");
 
       // Verify both fetches were called
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetchOne).toHaveBeenCalledTimes(2);
     });
 
     it("should reuse connections properly between sequential calls", async () => {
@@ -740,9 +772,7 @@ describe("EmailService", () => {
         source: Buffer.from("Test content"),
       };
 
-      mockFetch.mockImplementation(async function* () {
-        yield mockMessage;
-      });
+      mockFetchOne.mockResolvedValue(mockMessage);
 
       // Make multiple calls
       await emailService.getEmail(100);
@@ -751,83 +781,45 @@ describe("EmailService", () => {
 
       // Should have opened the folder multiple times (once per call)
       expect(mockMailboxOpen).toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetchOne).toHaveBeenCalledTimes(3);
     });
   });
 
-  describe("Iterator Cleanup", () => {
-    it("should properly clean up fetch iterator when returning early", async () => {
+  describe("Single-message fetch does not leave the connection blocked (issue #8)", () => {
+    it("completes the FETCH command so the connection is free for the next call", async () => {
       (mockCache.get as Mock).mockReturnValue(null);
 
-      let iteratorClosed = false;
-      const mockIterator = {
-        async *[Symbol.asyncIterator]() {
-          try {
-            yield {
-              uid: 1,
-              envelope: {
-                messageId: "msg-1",
-                subject: "Test",
-                from: [{ name: "Test", address: "test@example.com" }],
-                to: [{ name: "Recipient", address: "recipient@example.com" }],
-                date: new Date(),
-              },
-              flags: [],
-              source: Buffer.from("content"),
-            };
-          } finally {
-            iteratorClosed = true;
-          }
+      // Models imapflow 1.x: a FETCH command only completes once its response
+      // stream has been fully consumed. Returning early from a for-await loop
+      // left the command pending and blocked the connection.
+      let commandPending = false;
+      const message = {
+        uid: 1,
+        envelope: {
+          messageId: "msg-1",
+          subject: "Test",
+          from: [{ name: "Test", address: "test@example.com" }],
+          to: [{ name: "Recipient", address: "recipient@example.com" }],
+          date: new Date(),
         },
-        return: vi.fn(async () => {
-          iteratorClosed = true;
-          return { done: true, value: undefined };
-        }),
+        flags: new Set<string>(),
+        source: Buffer.from("content"),
       };
+      mockFetch.mockImplementation(async function* () {
+        commandPending = true;
+        yield message;
+        commandPending = false; // only reached if fully drained
+      });
+      mockFetchOne.mockImplementation(async () => {
+        commandPending = true;
+        commandPending = false;
+        return message;
+      });
 
-      mockFetch.mockReturnValue(mockIterator);
-
-      // Fetch email which will return early from iterator
       const email = await emailService.getEmail(1);
+
       expect(email).toBeDefined();
-
-      // Verify iterator was properly closed
-      // Note: This tests that our code attempts to call return()
-      // The actual cleanup depends on the iterator implementation
-      expect(mockIterator.return).toHaveBeenCalled();
-    });
-
-    it("should mark connection unhealthy if iterator cleanup fails", async () => {
-      (mockCache.get as Mock).mockReturnValue(null);
-
-      const failingIterator = {
-        async *[Symbol.asyncIterator]() {
-          yield {
-            uid: 1,
-            envelope: {
-              messageId: "msg-1",
-              subject: "Test",
-              from: [{ name: "Test", address: "test@example.com" }],
-              to: [{ name: "Recipient", address: "recipient@example.com" }],
-              date: new Date(),
-            },
-            flags: [],
-            source: Buffer.from("content"),
-          };
-        },
-        return: vi.fn(async () => {
-          throw new Error("Iterator cleanup failed");
-        }),
-      };
-
-      mockFetch.mockReturnValue(failingIterator);
-
-      // This should still complete but log a warning
-      const email = await emailService.getEmail(1);
-      expect(email).toBeDefined();
-
-      // Verify cleanup was attempted
-      expect(failingIterator.return).toHaveBeenCalled();
+      expect(commandPending).toBe(false);
     });
   });
 
@@ -835,19 +827,17 @@ describe("EmailService", () => {
     it("should maintain healthy connection state after successful fetch", async () => {
       (mockCache.get as Mock).mockReturnValue(null);
 
-      mockFetch.mockImplementation(async function* () {
-        yield {
-          uid: 1,
-          envelope: {
-            messageId: "msg-1",
-            subject: "Test",
-            from: [{ name: "Test", address: "test@example.com" }],
-            to: [{ name: "Recipient", address: "recipient@example.com" }],
-            date: new Date(),
-          },
-          flags: [],
-          source: Buffer.from("content"),
-        };
+      mockFetchOne.mockResolvedValue({
+        uid: 1,
+        envelope: {
+          messageId: "msg-1",
+          subject: "Test",
+          from: [{ name: "Test", address: "test@example.com" }],
+          to: [{ name: "Recipient", address: "recipient@example.com" }],
+          date: new Date(),
+        },
+        flags: [],
+        source: Buffer.from("content"),
       });
 
       // Perform fetch

@@ -27,7 +27,8 @@ interface ImapMessage {
     date?: Date;
   };
   uid: number;
-  flags: string[];
+  /** imapflow returns a Set; arrays are accepted for robustness */
+  flags?: Set<string> | string[];
   bodystructure?: unknown;
   size?: number;
 }
@@ -342,9 +343,11 @@ export class EmailService {
     wrapper: ImapConnectionWrapper,
     uid: number,
   ): Promise<ImapMessage | null> {
-    // Create iterator explicitly so we can properly close it
-    const iterator = wrapper.connection.fetch(
-      `${uid}:${uid}`,
+    // fetchOne issues the FETCH and resolves once the command has completed.
+    // Avoid returning early from a fetch() async iterator: on imapflow 1.x that
+    // left the command pending and blocked the connection (issue #8).
+    const message = await wrapper.connection.fetchOne(
+      uid,
       {
         source: true,
         envelope: true,
@@ -354,37 +357,7 @@ export class EmailService {
       { uid: true },
     );
 
-    try {
-      // Get the first (and should be only) message
-      for await (const msg of iterator) {
-        return msg as unknown as ImapMessage;
-      }
-      return null;
-    } finally {
-      // Explicitly close the iterator to prevent connection state issues
-      // This is critical for connection reuse - without this, the connection
-      // may be left in a state where it's waiting for the iterator to complete
-      try {
-        if (iterator && typeof iterator.return === "function") {
-          await iterator.return();
-        }
-      } catch (error) {
-        // If iterator cleanup fails, mark the connection as unhealthy
-        // to prevent reuse of a potentially corrupted connection
-        await this.logger.warning(
-          "Failed to properly close fetch iterator",
-          {
-            operation: "performFetch",
-            service: "EmailService",
-          },
-          {
-            uid,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-        wrapper.isHealthy = false;
-      }
-    }
+    return message ? (message as unknown as ImapMessage) : null;
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {
@@ -558,7 +531,7 @@ export class EmailService {
       to: this.parseAddressesFromEnvelope(envelope.to),
       cc: this.parseAddressesFromEnvelope(envelope.cc),
       date: envelope.date || new Date(),
-      flags: message.flags || [],
+      flags: Array.from(message.flags ?? []),
       folder,
     };
   }
@@ -585,7 +558,7 @@ export class EmailService {
         size: att.size,
         contentId: att.cid,
       })),
-      flags: message.flags || [],
+      flags: Array.from(message.flags ?? []),
       folder,
     };
   }
