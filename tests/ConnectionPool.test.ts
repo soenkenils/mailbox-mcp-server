@@ -43,6 +43,10 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
   /** Widens the await inside creation and validation so races can be hit. */
   creationDelayMs = 0;
   validationDelayMs = 0;
+  /** When set, every connect waits for this promise before completing. */
+  creationGate?: Promise<void>;
+  /** Every connection this pool has opened, including unregistered ones. */
+  created: MockConnection[] = [];
 
   setShouldFailCreation(fail: boolean): void {
     this.shouldFailCreation = fail;
@@ -61,12 +65,18 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
       await new Promise(resolve => setTimeout(resolve, this.creationDelayMs));
     }
 
+    if (this.creationGate) {
+      await this.creationGate;
+    }
+
     this.connectionCounter++;
-    return new MockConnection(
+    const connection = new MockConnection(
       `conn-${this.connectionCounter}`,
       true,
       this.shouldFailCreation,
     );
+    this.created.push(connection);
+    return connection;
   }
 
   async validateConnection(connection: MockConnection): Promise<boolean> {
@@ -104,6 +114,17 @@ class TestConnectionPool extends ConnectionPool<MockConnection> {
     return this.waitingQueue;
   }
 }
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(r => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Lets pending promise callbacks run without advancing any timer. */
+const flush = () => new Promise(resolve => setImmediate(resolve));
 
 describe("ConnectionPool", () => {
   let pool: TestConnectionPool;
@@ -404,6 +425,94 @@ describe("ConnectionPool", () => {
         await pool.release(conn);
       }
       await shutdownPromise;
+    });
+
+    describe("with connects in flight", () => {
+      let shutdownPool: TestConnectionPool;
+
+      beforeEach(() => {
+        shutdownPool = new TestConnectionPool({
+          ...config,
+          healthCheckIntervalMs: 60_000,
+        });
+      });
+
+      afterEach(async () => {
+        await shutdownPool.destroy();
+      });
+
+      it("should close a connection that finishes opening after destroy", async () => {
+        const gate = deferred();
+        shutdownPool.creationGate = gate.promise;
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+        expect(shutdownPool.created).toHaveLength(1);
+        expect(shutdownPool.created[0].isValid).toBe(false);
+        expect(shutdownPool.getConnections().size).toBe(0);
+        const metrics = shutdownPool.getMetrics();
+        expect(metrics.totalConnections).toBe(0);
+        expect(metrics.activeConnections).toBe(0);
+      });
+
+      it("should close a minimum connection the health check opens during destroy", async () => {
+        const gate = deferred();
+        shutdownPool.creationGate = gate.promise;
+
+        const healthCheck = (
+          shutdownPool as TestableConnectionPool<MockConnection>
+        ).performHealthCheck();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+        await healthCheck;
+
+        expect(shutdownPool.created).toHaveLength(1);
+        expect(shutdownPool.created[0].isValid).toBe(false);
+        expect(shutdownPool.getConnections().size).toBe(0);
+      });
+
+      it("should not retry a failed connect once the pool is destroyed", async () => {
+        shutdownPool.setShouldFailCreation(true);
+        const createSpy = vi.spyOn(shutdownPool, "createConnection");
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+        expect(createSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it("should reject acquire immediately once destroyed", async () => {
+        await shutdownPool.destroy();
+        const createSpy = vi.spyOn(shutdownPool, "createConnection");
+
+        await expect(shutdownPool.acquire()).rejects.toThrow(
+          "Connection pool is shutting down",
+        );
+        expect(createSpy).not.toHaveBeenCalled();
+      });
+
+      it("should not hand out an idle connection destroyed while it was validated", async () => {
+        await shutdownPool.release(await shutdownPool.acquire());
+        const gate = deferred();
+        shutdownPool.validateConnection = async () => {
+          await gate.promise;
+          return true;
+        };
+
+        const acquiring = shutdownPool.acquire();
+        await flush();
+        await shutdownPool.destroy();
+        gate.resolve();
+
+        await expect(acquiring).rejects.toThrow("Connection pool is shut down");
+      });
     });
   });
 

@@ -110,7 +110,12 @@ export abstract class ConnectionPool<T> {
       // cannot take the same connection in the meantime.
       const idleConnection = this.claimIdleConnection();
       if (idleConnection) {
-        return await this.activateClaimed(idleConnection);
+        const activated = await this.activateClaimed(idleConnection);
+        // destroy() closed it while it was being validated.
+        if (this.isShuttingDown) {
+          throw this.shutDownError();
+        }
+        return activated;
       }
 
       if (this.hasCapacity()) {
@@ -242,6 +247,11 @@ export abstract class ConnectionPool<T> {
     return undefined;
   }
 
+  /**
+   * Rejects waiters and closes every registered connection. Connects still in
+   * flight are not awaited: each closes its connection itself once it
+   * completes, so nothing opened after this point joins the pool.
+   */
   async destroy(): Promise<void> {
     this.isShuttingDown = true;
 
@@ -325,12 +335,18 @@ export abstract class ConnectionPool<T> {
       try {
         return await this.createConnectionWrapper();
       } catch (error) {
+        if (this.isShuttingDown) {
+          throw this.shutDownError();
+        }
         lastError = error instanceof Error ? error : new Error(String(error));
         this.recordConnectionCreationError(lastError, attempt);
 
         // If this is not the last attempt, wait with exponential backoff
         if (attempt < this.config.maxRetries) {
           await this.handleConnectionCreationError(lastError, attempt);
+          if (this.isShuttingDown) {
+            throw this.shutDownError();
+          }
         }
       }
     }
@@ -342,6 +358,16 @@ export abstract class ConnectionPool<T> {
 
   private async createConnectionWrapper(): Promise<ConnectionWrapper<T>> {
     const connection = await this.createConnection();
+    if (this.isShuttingDown) {
+      // destroy() already ran and will not see this connection: close it
+      // here rather than register it in a pool nobody drains any more.
+      try {
+        await this.destroyConnection(connection);
+      } catch {
+        // Already shutting down; nothing left to recover.
+      }
+      throw this.shutDownError();
+    }
     const wrapper: ConnectionWrapper<T> = {
       connection,
       createdAt: new Date(),
@@ -482,6 +508,9 @@ export abstract class ConnectionPool<T> {
   }
 
   private async performHealthCheck(): Promise<void> {
+    if (this.isShuttingDown) {
+      return;
+    }
     const connectionsToDestroy = await this.identifyConnectionsToDestroy();
     await this.destroyUnhealthyConnections(connectionsToDestroy);
     await this.ensureMinimumConnections();
@@ -563,6 +592,9 @@ export abstract class ConnectionPool<T> {
         // actually available rather than held by nobody forever.
         await this.handOff(await this.createNewConnection());
       } catch (error) {
+        if (this.isShuttingDown) {
+          break;
+        }
         const errorMsg = error instanceof Error ? error.message : String(error);
         await this.logger.warning(
           "Failed to create minimum connection during health check",
@@ -645,6 +677,10 @@ export abstract class ConnectionPool<T> {
     if (this.connectionErrors.length > this.maxErrorHistory) {
       this.connectionErrors.shift();
     }
+  }
+
+  private shutDownError(): Error {
+    return new Error("Connection pool is shut down");
   }
 
   private generateConnectionId(): string {
