@@ -1257,11 +1257,7 @@ describe("EmailService - Advanced Coverage", () => {
         },
         [{ name: undefined, address: "carla@example.com" }],
       ],
-      [
-        "entry without address field",
-        { value: [{ name: "Alice Brown" }] },
-        [],
-      ],
+      ["entry without address field", { value: [{ name: "Alice Brown" }] }, []],
       ["address object with empty value", { value: [] }, []],
       ["empty array", [], []],
     ])("should parse %s", (_description: string, input: unknown, expected: Array<{
