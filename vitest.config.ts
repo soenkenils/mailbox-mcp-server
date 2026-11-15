@@ -43,13 +43,14 @@ export default defineConfig({
         '**/.eslintrc.{js,cjs}',
       ],
       all: true,
-      // Temporarily lowered from 80: SieveService.ts (~32% covered) drags the
-      // totals down. Raise again once the Sieve protocol tests land (PR #9).
+      // Not yet at 80 everywhere: branch coverage (72%) is the gap, mostly
+      // in the older services. Thresholds are the measured floor after the
+      // Sieve protocol tests landed (PR #9); raise towards 80 over time.
       thresholds: {
-        lines: 77,
-        functions: 79,
-        branches: 67,
-        statements: 77,
+        lines: 86,
+        functions: 86,
+        branches: 72,
+        statements: 85,
       }
     },
   },
