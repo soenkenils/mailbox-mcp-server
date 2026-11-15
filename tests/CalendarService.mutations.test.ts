@@ -367,6 +367,17 @@ describe("CalendarService event changes", () => {
         expect(writtenTo()).toBe(WORK_URL);
       });
 
+      it("should refuse to write when no calendar can hold events", async () => {
+        fetchCalendars.mockResolvedValue([
+          { displayName: "tasks", url: TASKS_URL, components: ["VTODO"] },
+        ]);
+
+        await expect(
+          makeService().createCalendarEvent(newEvent),
+        ).rejects.toThrow(/No calendar that can hold events/);
+        expect(createCalendarObject).not.toHaveBeenCalled();
+      });
+
       it("should write to the calendar named in the request", async () => {
         const result = await makeService().createCalendarEvent({
           ...newEvent,
@@ -411,6 +422,73 @@ describe("CalendarService event changes", () => {
         });
 
         expect(writtenTo()).toBe(WORK_URL);
+      });
+
+      describe("MAILBOX_CALENDARS", () => {
+        it("should default to the first calendar MAILBOX_CALENDARS allows", async () => {
+          const result = await makeService({
+            calendars: ["private"],
+          }).createCalendarEvent(newEvent);
+
+          expect(writtenTo()).toBe(PRIVATE_URL);
+          expect(result.calendar).toBe("private");
+        });
+
+        it("should default in the order MAILBOX_CALENDARS lists, not the server's", async () => {
+          await makeService({
+            calendars: ["private", "work"],
+          }).createCalendarEvent(newEvent);
+
+          expect(writtenTo()).toBe(PRIVATE_URL);
+        });
+
+        it("should tolerate spaces around configured names", async () => {
+          await makeService({
+            calendars: [" work", " private"],
+          }).createCalendarEvent({ ...newEvent, calendar: "private" });
+
+          expect(writtenTo()).toBe(PRIVATE_URL);
+        });
+
+        it("should accept a named calendar that MAILBOX_CALENDARS allows", async () => {
+          await makeService({
+            calendars: ["work", "private"],
+          }).createCalendarEvent({ ...newEvent, calendar: "private" });
+
+          expect(writtenTo()).toBe(PRIVATE_URL);
+        });
+
+        it("should refuse a named calendar outside MAILBOX_CALENDARS", async () => {
+          await expect(
+            makeService({ calendars: ["work"] }).createCalendarEvent({
+              ...newEvent,
+              calendar: "private",
+            }),
+          ).rejects.toThrow(/Calendar "private" not found.*MAILBOX_CALENDARS/);
+
+          expect(createCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should refuse a URL fragment that reaches an excluded calendar", async () => {
+          await expect(
+            makeService({ calendars: ["work"] }).createCalendarEvent({
+              ...newEvent,
+              calendar: "/caldav/private/",
+            }),
+          ).rejects.toThrow(/not found/);
+
+          expect(createCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should not write when MAILBOX_CALENDARS matches no calendar", async () => {
+          await expect(
+            makeService({ calendars: ["holidays"] }).createCalendarEvent(
+              newEvent,
+            ),
+          ).rejects.toThrow(/MAILBOX_CALENDARS/);
+
+          expect(createCalendarObject).not.toHaveBeenCalled();
+        });
       });
 
       it("should not count a wrong calendar name as a server failure", async () => {

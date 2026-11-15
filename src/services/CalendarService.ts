@@ -209,23 +209,30 @@ export class CalendarService {
 
   /**
    * The calendar a new event goes to: the one the caller named, or the first
-   * candidate. A name that matches several calendars is refused rather than
-   * guessed, unless exactly one of them carries it as its display name.
+   * candidate (the first MAILBOX_CALENDARS entry, when that is set). A name
+   * that matches several calendars is refused rather than guessed, unless
+   * exactly one of them carries it as its display name. Refusals are
+   * ValidationErrors so the user sees the reason, not a generic message.
    */
   private chooseCreateTarget(
     candidates: DAVCalendar[],
     calendarFilter?: string,
   ): DAVCalendar {
     if (candidates.length === 0) {
+      const scope = this.allowedCalendars()
+        ? " among the calendars MAILBOX_CALENDARS allows"
+        : "";
       throw calendarFilter
         ? new ValidationError(
-            `Calendar "${calendarFilter}" not found`,
+            `Calendar "${calendarFilter}" not found${scope}`,
             "calendar",
             calendarFilter,
           )
-        : new CalendarError(
-            "No calendar available to create the event in",
-            ErrorCode.CALENDAR_NOT_FOUND,
+        : new ValidationError(
+            scope
+              ? "No calendar available to create the event in; check MAILBOX_CALENDARS"
+              : "No calendar that can hold events was found",
+            "calendar",
           );
     }
 
@@ -249,20 +256,37 @@ export class CalendarService {
   }
 
   /**
-   * Calendars a write may touch: those that can hold events and match the
-   * optional filter.
+   * Calendars a write may touch: those that can hold events, match the
+   * optional filter and, when MAILBOX_CALENDARS restricts the server, are
+   * listed there, in the order it lists them. Every write chooses from this.
    */
   private async selectCalendars(
     client: DAVClient,
     calendarFilter?: string,
   ): Promise<DAVCalendar[]> {
     const calendars = await client.fetchCalendars();
+    const allowed = this.allowedCalendars();
+    const rank = (calendar: DAVCalendar): number =>
+      allowed
+        ? allowed.findIndex(name => this.calendarMatches(calendar, name))
+        : 0;
 
-    return calendars.filter(
-      calendar =>
-        this.holdsEvents(calendar) &&
-        (!calendarFilter || this.calendarMatches(calendar, calendarFilter)),
-    );
+    return calendars
+      .filter(
+        calendar =>
+          this.holdsEvents(calendar) &&
+          rank(calendar) !== -1 &&
+          (!calendarFilter || this.calendarMatches(calendar, calendarFilter)),
+      )
+      .sort((a, b) => rank(a) - rank(b));
+  }
+
+  /** The MAILBOX_CALENDARS names, or undefined when it restricts nothing. */
+  private allowedCalendars(): string[] | undefined {
+    const names = this.connection.calendars
+      ?.map(name => name.trim())
+      .filter(name => name.length > 0);
+    return names?.length ? names : undefined;
   }
 
   private calendarMatches(calendar: DAVCalendar, name: string): boolean {
