@@ -20,54 +20,10 @@ export interface ServerConfig {
   debug: boolean;
 }
 
-// Custom validation functions for security
-const isStrongPassword = (value: string): boolean => {
-  // Minimum 8 characters, at least one uppercase, lowercase, and number
-  const minLength = value.length >= 8;
-  const hasUppercase = /[A-Z]/.test(value);
-  const hasLowercase = /[a-z]/.test(value);
-  const hasNumber = /\d/.test(value);
-
-  return minLength && hasUppercase && hasLowercase && hasNumber;
-};
-
-const isSecureEmail = (value: string): boolean => {
-  // Basic email validation plus ensure it's not from common insecure domains
-  const insecureDomains = ["example.com", "test.com", "localhost"];
-  const domain = value.split("@")[1]?.toLowerCase();
-  return !insecureDomains.includes(domain);
-};
-
-const strongPasswordTransform = (value: string) => {
-  // App passwords from mailbox.org may not follow standard password patterns
-  // Just ensure it's not empty
-  if (!value || value.trim().length === 0) {
-    throw new Error("Password cannot be empty");
-  }
-  return value;
-};
-
-const secureEmailTransform = (value: string) => {
-  if (!isSecureEmail(value)) {
-    throw new Error("Email domain appears to be insecure or for testing only");
-  }
-  return value;
-};
-
 // Environment variables validation schema
 const EnvSchema = v.object({
-  // Required variables with enhanced security validation
-  MAILBOX_EMAIL: v.pipe(
-    v.string(),
-    v.email("Invalid email format"),
-    v.minLength(5, "Email too short"),
-    v.transform(secureEmailTransform),
-  ),
-  MAILBOX_PASSWORD: v.pipe(
-    v.string(),
-    v.minLength(1, "Password is required"),
-    v.transform(strongPasswordTransform),
-  ),
+  MAILBOX_EMAIL: v.pipe(v.string(), v.email("Invalid email format")),
+  MAILBOX_PASSWORD: v.pipe(v.string(), v.minLength(1, "Password is required")),
 
   // Optional IMAP configuration
   MAILBOX_IMAP_HOST: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -189,16 +145,8 @@ export function loadConfig(): ServerConfig {
   try {
     const validatedEnv = v.parse(EnvSchema, process.env);
 
-    // We've validated these exist and are secure, so they're safe to use
     const email = validatedEnv.MAILBOX_EMAIL;
     const password = validatedEnv.MAILBOX_PASSWORD;
-
-    // Security recommendations logging (non-sensitive info only)
-    if (password.length < 12) {
-      console.warn(
-        "⚠️  Security Recommendation: Consider using a password with 12+ characters for enhanced security",
-      );
-    }
 
     // Validate connection security settings
     const imapSecure = validatedEnv.MAILBOX_IMAP_SECURE !== "false";
@@ -214,14 +162,14 @@ export function loadConfig(): ServerConfig {
       email: {
         host: validatedEnv.MAILBOX_IMAP_HOST || "imap.mailbox.org",
         port: validatedEnv.MAILBOX_IMAP_PORT || 993,
-        secure: validatedEnv.MAILBOX_IMAP_SECURE !== "false",
+        secure: imapSecure,
         user: email,
         password: password,
       },
       smtp: {
         host: validatedEnv.MAILBOX_SMTP_HOST || "smtp.mailbox.org",
         port: validatedEnv.MAILBOX_SMTP_PORT || 465,
-        secure: validatedEnv.MAILBOX_SMTP_SECURE !== "false",
+        secure: smtpSecure,
         user: email,
         password: password,
       },
