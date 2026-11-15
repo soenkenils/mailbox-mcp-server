@@ -76,8 +76,9 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 
 ### Code Quality
 
-- `bun run check` - Run linting and formatting checks
+- `bun run check` - Check linting and formatting (read-only, as run in CI)
 - `bun run format` - Auto-format code with Biome
+- `bun run fix` - Auto-fix lint and formatting issues with Biome
 
 ## Workflow
 
