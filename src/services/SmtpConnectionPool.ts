@@ -1,6 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import type { SmtpConnection } from "../types/email.types.js";
-import { isIpLiteral, resolveReachableHost } from "../utils/happyEyeballs.js";
 import {
   ConnectionPool,
   type ConnectionPoolConfig,
@@ -35,16 +34,8 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   async createConnection(): Promise<Transporter> {
-    // nodemailer connects to one address family only; pick one that is
-    // reachable on this network (see resolveReachableHost)
-    const { host } = this.smtpConfig;
-    const reachableHost = await resolveReachableHost(
-      host,
-      this.smtpConfig.port,
-    );
-
     const transportOptions = {
-      host: reachableHost,
+      host: this.smtpConfig.host,
       port: this.smtpConfig.port,
       secure: this.smtpConfig.secure,
       auth: {
@@ -58,9 +49,6 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
         // Verify the server certificate so a man in the middle cannot
         // capture the password
         rejectUnauthorized: true,
-        // We connect to an IP literal: keep the configured hostname for SNI
-        // and certificate checks. An IP has no name to send.
-        ...(isIpLiteral(host) ? {} : { servername: host }),
       },
       pool: false, // We handle pooling ourselves
       maxConnections: 1,
@@ -162,8 +150,8 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       smtpWrapper.verificationFailures = 0;
     }
 
-    // An unhealthy connection stays bound to the address it was probed on
-    // (see createConnection); drop it so the next acquire probes again.
+    // Drop an unhealthy connection (e.g. after a network-level error) instead
+    // of keeping it idle; the next acquire creates and verifies a fresh one.
     // With a waiting request, super.release already destroys it.
     const dropUnhealthy =
       !smtpWrapper.isHealthy && this.waitingQueue.length === 0;
