@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+#!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -30,6 +30,7 @@ import {
   isSieveTool,
 } from "./tools/sieveTools.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
+import { isMainModule } from "./utils/isMainModule.js";
 
 class MailboxMcpServer {
   private server: Server;
@@ -467,7 +468,7 @@ async function main(): Promise<void> {
   await server.start();
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   main().catch(error => {
     const mcpError = ErrorUtils.toMCPError(error as Error, {
       operation: "main",
