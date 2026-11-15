@@ -67,12 +67,10 @@ import {
   type ImapPoolConfig,
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
-import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
-  private offlineService: OfflineService;
   private logger = createLogger("EmailService");
 
   constructor(
@@ -81,7 +79,6 @@ export class EmailService {
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
   ) {
     this.cache = cache;
-    this.offlineService = new OfflineService(cache);
     this.pool = new ImapConnectionPool({
       ...poolConfig,
       connectionConfig: connection,
@@ -1050,48 +1047,6 @@ export class EmailService {
   // Pool management methods
   getPoolMetrics() {
     return this.pool.getImapMetrics();
-  }
-
-  // Offline capabilities
-  getOfflineCapabilities(): OfflineCapabilities {
-    return this.offlineService.getOfflineCapabilities();
-  }
-
-  async searchEmailsOffline(
-    options: EmailSearchOptions,
-  ): Promise<EmailMessage[]> {
-    return this.offlineService.searchEmailsOffline(options);
-  }
-
-  async getEmailOffline(
-    uid: number,
-    folder = "INBOX",
-  ): Promise<EmailMessage | null> {
-    return this.offlineService.getEmailOffline(uid, folder);
-  }
-
-  async getFoldersOffline(): Promise<EmailFolder[]> {
-    return this.offlineService.getFoldersOffline();
-  }
-
-  async validatePoolHealth(): Promise<boolean> {
-    try {
-      const metrics = this.pool.getMetrics();
-      return (
-        metrics.totalConnections > 0 &&
-        metrics.totalErrors < metrics.totalConnections
-      );
-    } catch (error) {
-      this.logger.error(
-        "Error checking pool health",
-        {
-          operation: "isHealthy",
-          service: "EmailService",
-        },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-      return false;
-    }
   }
 
   async createDirectory(
