@@ -91,7 +91,7 @@ class MailboxMcpServer {
 
 **Email Tools (Implemented)**:
 
-- `search_emails`: Full-text search with folder filter and time range limitation
+- `search_emails`: Full-text search with folder, date range, and IMAP flag filters (seen, answered, flagged, draft, deleted)
 - `get_email`: Complete email content with attachment references
 - `get_email_thread`: Conversation threading with chronological sorting
 - `send_email`: Compose and send emails via SMTP

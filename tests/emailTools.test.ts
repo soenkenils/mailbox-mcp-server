@@ -48,6 +48,27 @@ describe("Email Tools", () => {
       expect(searchTool?.inputSchema.properties).toHaveProperty("before");
     });
 
+    it.each([
+      "seen",
+      "answered",
+      "flagged",
+      "draft",
+      "deleted",
+    ])("should document %s as an optional boolean with omit = both", name => {
+      const tools = createEmailTools(mockEmailService);
+      const searchTool = tools.find(t => t.name === "search_emails");
+      const prop = (
+        searchTool?.inputSchema.properties as Record<
+          string,
+          { type: string; description: string }
+        >
+      )[name];
+
+      expect(prop.type).toBe("boolean");
+      expect(prop.description).toContain("omit = both");
+      expect(searchTool?.inputSchema.required ?? []).not.toContain(name);
+    });
+
     it("should have proper schema for get_email tool", () => {
       const tools = createEmailTools(mockEmailService);
       const getTool = tools.find(t => t.name === "get_email");
@@ -96,6 +117,48 @@ describe("Email Tools", () => {
 
         expect(result.content[0].text).toContain("Test Subject");
         expect(result.content[0].text).toContain("test@example.com");
+      });
+
+      it("should pass flag filters through to the service", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([]);
+
+        await handleEmailTool(
+          "search_emails",
+          { seen: false, flagged: true },
+          mockEmailService,
+        );
+
+        expect(mockEmailService.searchEmails).toHaveBeenCalledWith(
+          expect.objectContaining({ seen: false, flagged: true }),
+        );
+      });
+
+      it("should print real flags in the Flags line", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([
+          { ...mockEmail, flags: ["\\Seen", "\\Flagged"] },
+        ]);
+
+        const result = await handleEmailTool(
+          "search_emails",
+          {},
+          mockEmailService,
+        );
+
+        expect(result.content[0].text).toContain("Flags: \\Seen, \\Flagged");
+      });
+
+      it("should print None in the Flags line for an empty flag array", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([
+          { ...mockEmail, flags: [] },
+        ]);
+
+        const result = await handleEmailTool(
+          "search_emails",
+          {},
+          mockEmailService,
+        );
+
+        expect(result.content[0].text).toContain("Flags: None");
       });
 
       it("should handle date parameters", async () => {
