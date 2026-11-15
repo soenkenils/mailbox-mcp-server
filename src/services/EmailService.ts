@@ -15,6 +15,11 @@ interface ImapSearchCriteria {
   subject?: string;
   body?: string;
   or?: Array<{ [key: string]: string | Date }>;
+  seen?: boolean;
+  answered?: boolean;
+  flagged?: boolean;
+  draft?: boolean;
+  deleted?: boolean;
 }
 
 interface ImapMessage {
@@ -365,6 +370,7 @@ export class EmailService {
 
     criteria = this.addDateFilters(criteria, options);
     criteria = this.addQueryFilters(criteria, options);
+    criteria = this.addFlagFilters(criteria, options);
 
     return Object.keys(criteria).length === 0 ? { all: true } : criteria;
   }
@@ -378,6 +384,28 @@ export class EmailService {
     }
     if (options.before) {
       criteria.before = options.before;
+    }
+    return criteria;
+  }
+
+  private addFlagFilters(
+    criteria: ImapSearchCriteria,
+    options: EmailSearchOptions,
+  ): ImapSearchCriteria {
+    if (options.seen !== undefined) {
+      criteria.seen = options.seen;
+    }
+    if (options.answered !== undefined) {
+      criteria.answered = options.answered;
+    }
+    if (options.flagged !== undefined) {
+      criteria.flagged = options.flagged;
+    }
+    if (options.draft !== undefined) {
+      criteria.draft = options.draft;
+    }
+    if (options.deleted !== undefined) {
+      criteria.deleted = options.deleted;
     }
     return criteria;
   }

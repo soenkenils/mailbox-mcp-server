@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Email Integration (IMAP & SMTP)**
 
 **Reading & Search:**
-- ✅ **Search emails** by text content, sender, subject, and date range
+- ✅ **Search emails** by text content, sender, subject, date range, and message flags (read/unread, flagged, answered, draft, deleted)
 - ✅ **Retrieve complete email content** including headers, body, and attachments
 - ✅ **Email thread management** with conversation grouping
 - ✅ **Folder browsing** and navigation (INBOX, Sent, Drafts, etc.)
@@ -112,7 +112,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 ### **Email Tools**
 
 #### **Reading & Search**
-- **`search_emails`** - Search your mailbox by text, sender, date, etc.
+- **`search_emails`** - Search your mailbox by text, sender, date, and flags (read/unread, flagged, etc.)
 - **`get_email`** - Retrieve complete email content by UID
 - **`get_email_thread`** - Get conversation threads by message ID
 - **`get_folders`** - List all available email folders

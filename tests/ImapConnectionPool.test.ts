@@ -375,21 +375,22 @@ describe("ImapConnectionPool", () => {
 
   describe("concurrent folder access", () => {
     it("should handle concurrent folder acquisitions", async () => {
+      // As many as the pool allows (maxConnections is 3); each must get its
+      // own connection, or one would switch the other's selected folder.
       const promises = [
         pool.acquireForFolder("INBOX"),
         pool.acquireForFolder("Sent"),
-        pool.acquireForFolder("INBOX"),
         pool.acquireForFolder("Drafts"),
       ];
 
       const wrappers = await Promise.all(promises);
 
-      // Check that all acquisitions succeeded
-      expect(wrappers).toHaveLength(4);
-      for (const wrapper of wrappers) {
-        expect(wrapper).toBeDefined();
-        expect(wrapper.selectedFolder).toBeDefined();
-      }
+      expect(new Set(wrappers.map(wrapper => wrapper.id)).size).toBe(3);
+      expect(wrappers.map(wrapper => wrapper.selectedFolder)).toEqual([
+        "INBOX",
+        "Sent",
+        "Drafts",
+      ]);
 
       // Clean up
       for (const wrapper of wrappers) {
