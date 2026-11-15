@@ -162,11 +162,15 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
       smtpWrapper.verificationFailures = 0;
     }
 
+    // An unhealthy connection stays bound to the address it was probed on
+    // (see createConnection); drop it so the next acquire probes again.
+    // With a waiting request, super.release already destroys it.
+    const dropUnhealthy =
+      !smtpWrapper.isHealthy && this.waitingQueue.length === 0;
+
     await super.release(wrapper);
 
-    // An unhealthy connection stays bound to the address it was probed on
-    // (see createConnection); drop it so the next acquire probes again
-    if (!smtpWrapper.isHealthy && this.connections.has(wrapper.id)) {
+    if (dropUnhealthy && this.connections.has(wrapper.id)) {
       await this.destroyConnectionWrapper(wrapper);
     }
   }

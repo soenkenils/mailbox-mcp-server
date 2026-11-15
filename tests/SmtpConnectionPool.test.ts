@@ -487,6 +487,32 @@ describe("SmtpConnectionPool", () => {
       expect(next.id).not.toBe(wrapper.id);
       await pool.release(next);
     });
+
+    it("should destroy an unhealthy connection only once when a request is waiting", async () => {
+      const singlePool = new SmtpConnectionPool({
+        ...config,
+        maxConnections: 1,
+        acquireTimeoutMs: 1000,
+      });
+      try {
+        const wrapper = await singlePool.acquire();
+        const closeSpy = vi.spyOn(wrapper.connection, "close");
+        const waiting = singlePool.acquire();
+        wrapper.isHealthy = false;
+
+        await singlePool.release(wrapper);
+        const next = await waiting;
+
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(next.id).not.toBe(wrapper.id);
+        const metrics = singlePool.getMetrics();
+        expect(metrics.totalDestroyed).toBe(1);
+        expect(metrics.totalConnections).toBe(1);
+        await singlePool.release(next);
+      } finally {
+        await singlePool.destroy();
+      }
+    });
   });
 
   describe("concurrent verification", () => {
