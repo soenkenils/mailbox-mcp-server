@@ -6,7 +6,7 @@ import {
   EmailError,
   ErrorCode,
   type ErrorContext,
-  ErrorUtils,
+  toMCPError,
   ValidationError,
 } from "../types/errors.js";
 import {
@@ -775,7 +775,7 @@ ${folder.specialUse ? `Special Use: ${folder.specialUse}\n` : ""}`,
     // Convert to structured error if not already
     const mcpError =
       error instanceof Error
-        ? ErrorUtils.toMCPError(error, context)
+        ? toMCPError(error, context)
         : new EmailError(
             String(error),
             ErrorCode.OPERATION_FAILED,

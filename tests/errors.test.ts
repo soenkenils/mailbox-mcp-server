@@ -7,10 +7,13 @@ import {
   ConnectionError,
   EmailError,
   ErrorCode,
-  ErrorUtils,
+  getErrorCode,
+  getUserMessage,
+  isRetryableError,
   MailboxError,
   type MCPError,
   RateLimitError,
+  toMCPError,
   ValidationError,
 } from "../src/types/errors.js";
 
@@ -134,22 +137,22 @@ describe("Custom Error Types", () => {
     });
   });
 
-  describe("ErrorUtils", () => {
+  describe("Error utility functions", () => {
     it("should correctly identify retryable errors", () => {
       const connectionError = new ConnectionError("Connection failed");
       const authError = new AuthenticationError("Invalid credentials");
 
-      expect(ErrorUtils.isRetryable(connectionError)).toBe(true);
-      expect(ErrorUtils.isRetryable(authError)).toBe(false);
+      expect(isRetryableError(connectionError)).toBe(true);
+      expect(isRetryableError(authError)).toBe(false);
 
       // Test with regular Error
       const networkError = new Error("ECONNRESET");
-      expect(ErrorUtils.isRetryable(networkError)).toBe(true);
+      expect(isRetryableError(networkError)).toBe(true);
     });
 
     it("should convert regular errors to MCPErrors", () => {
       const originalError = new Error("ECONNRESET");
-      const mcpError = ErrorUtils.toMCPError(originalError);
+      const mcpError = toMCPError(originalError);
 
       expect(mcpError).toBeInstanceOf(ConnectionError);
       expect(mcpError.code).toBe(ErrorCode.CONNECTION_FAILED);
@@ -158,7 +161,7 @@ describe("Custom Error Types", () => {
 
     it("should categorize authentication errors correctly", () => {
       const authError = new Error("auth failed");
-      const mcpError = ErrorUtils.toMCPError(authError);
+      const mcpError = toMCPError(authError);
 
       expect(mcpError).toBeInstanceOf(AuthenticationError);
       expect(mcpError.code).toBe(ErrorCode.AUTH_FAILED);
@@ -166,7 +169,7 @@ describe("Custom Error Types", () => {
 
     it("should categorize timeout errors correctly", () => {
       const timeoutError = new Error("Request timeout");
-      const mcpError = ErrorUtils.toMCPError(timeoutError);
+      const mcpError = toMCPError(timeoutError);
 
       expect(mcpError).toBeInstanceOf(ConnectionError);
       expect(mcpError.code).toBe(ErrorCode.CONNECTION_TIMEOUT);
@@ -174,7 +177,7 @@ describe("Custom Error Types", () => {
 
     it("should return MCPError unchanged", () => {
       const originalError = new ValidationError("Test error");
-      const result = ErrorUtils.toMCPError(originalError);
+      const result = toMCPError(originalError);
 
       expect(result).toBe(originalError);
     });
@@ -183,10 +186,10 @@ describe("Custom Error Types", () => {
       const connectionError = new ConnectionError("Network error");
       const regularError = new Error("Some error");
 
-      expect(ErrorUtils.getUserMessage(connectionError)).toBe(
+      expect(getUserMessage(connectionError)).toBe(
         "Unable to connect to the server. Please try again later.",
       );
-      expect(ErrorUtils.getUserMessage(regularError)).toBe(
+      expect(getUserMessage(regularError)).toBe(
         "An unexpected error occurred. Please try again.",
       );
     });
@@ -195,10 +198,8 @@ describe("Custom Error Types", () => {
       const mcpError = new EmailError("Test", ErrorCode.EMAIL_NOT_FOUND);
       const regularError = new Error("Test");
 
-      expect(ErrorUtils.getErrorCode(mcpError)).toBe(ErrorCode.EMAIL_NOT_FOUND);
-      expect(ErrorUtils.getErrorCode(regularError)).toBe(
-        ErrorCode.INTERNAL_ERROR,
-      );
+      expect(getErrorCode(mcpError)).toBe(ErrorCode.EMAIL_NOT_FOUND);
+      expect(getErrorCode(regularError)).toBe(ErrorCode.INTERNAL_ERROR);
     });
   });
 
