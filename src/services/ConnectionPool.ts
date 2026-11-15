@@ -62,6 +62,9 @@ export abstract class ConnectionPool<T> {
    * connect completes, so capacity checks count them separately.
    */
   private pendingCreations = 0;
+  /** The running serveQueuedWaiters() pass, if any. */
+  private serving?: Promise<void>;
+  private serveAgain = false;
   private connectionErrors: Array<{
     timestamp: Date;
     error: string;
@@ -136,7 +139,7 @@ export abstract class ConnectionPool<T> {
       // A failed connect or validation frees the slot this call held, which
       // a waiter queued behind it may need.
       if (this.waitingQueue.length > 0) {
-        this.serveQueuedWaiters().catch(() => undefined);
+        this.serveWaitersInBackground();
       }
       throw error;
     }
@@ -186,7 +189,7 @@ export abstract class ConnectionPool<T> {
         { connectionId: wrapper.id },
       );
       this.destroyInBackground(wrapper);
-      await this.serveQueuedWaiters();
+      this.serveWaitersInBackground();
       return;
     }
 
@@ -195,8 +198,9 @@ export abstract class ConnectionPool<T> {
       activated = await this.activateClaimed(wrapper);
     } catch {
       // Failed validation: the connection is gone or no longer claimed.
-      // The waiters are served from what is left rather than rejected.
-      await this.serveQueuedWaiters();
+      // The waiters are served from what is left rather than rejected,
+      // without making release() wait for someone else's connect.
+      this.serveWaitersInBackground();
       return;
     }
 
@@ -257,8 +261,41 @@ export abstract class ConnectionPool<T> {
     request.resolve(wrapper);
   }
 
-  /** Opens connections for live waiters while slots are free. */
-  private async serveQueuedWaiters(): Promise<void> {
+  /**
+   * Opens connections for live waiters while slots are free. Only one run
+   * at a time, so two callers cannot open two connections for one waiter;
+   * a call during a run makes it check the queue once more at the end.
+   */
+  private serveQueuedWaiters(): Promise<void> {
+    if (this.serving) {
+      this.serveAgain = true;
+      return this.serving;
+    }
+    this.serving = (async () => {
+      do {
+        this.serveAgain = false;
+        await this.serveWaitersWhileCapacity();
+      } while (this.serveAgain && !this.isShuttingDown);
+    })().finally(() => {
+      this.serving = undefined;
+    });
+    return this.serving;
+  }
+
+  private serveWaitersInBackground(): void {
+    this.serveQueuedWaiters().catch(error => {
+      this.logger.warning(
+        "Error serving waiting requests in background",
+        {
+          operation: "serveQueuedWaiters",
+          service: "ConnectionPool",
+        },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    });
+  }
+
+  private async serveWaitersWhileCapacity(): Promise<void> {
     while (this.hasCapacity() && !this.isShuttingDown) {
       const request = this.nextWaiter();
       if (!request) {

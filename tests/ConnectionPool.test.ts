@@ -990,6 +990,27 @@ describe("ConnectionPool", () => {
       expect(destroySpy).toHaveBeenCalledTimes(1);
     });
 
+    it("should not make release() wait for a waiter's replacement connect", async () => {
+      const held = await slotPool.acquire();
+      const waiting = outcome(slotPool.acquire());
+      await flush();
+      slotPool.setShouldFailValidation(true);
+      const gate = deferred();
+      slotPool.creationGate = gate.promise;
+
+      let released = false;
+      const releasing = slotPool.release(held).then(() => {
+        released = true;
+      });
+      await flush();
+      await flush();
+      expect(released).toBe(true);
+
+      gate.resolve();
+      await releasing;
+      expect((await waiting).value?.connection.isValid).toBe(true);
+    });
+
     it("should give a waiter a new connection when the handed-off one fails validation", async () => {
       const held = await slotPool.acquire();
       const waiting = slotPool.acquire();
