@@ -121,20 +121,19 @@ export abstract class ConnectionPool<T> {
     }
 
     try {
-      // Claimed before activation awaits validation, so a concurrent acquire
-      // cannot take the same connection in the meantime.
-      const idleConnection = this.claimIdleConnection();
-      if (idleConnection) {
-        const activated = await this.activateClaimed(idleConnection);
-        // destroy() closed it while it was being validated.
+      // Same path as a waiter: the next idle connection that passes
+      // validation, else a new one if a slot is free. An idle connection the
+      // server dropped is replaced instead of failing the acquire.
+      const wrapper = await this.connectionForWaiter();
+      if (wrapper) {
         if (this.isShuttingDown) {
+          // destroy() ran meanwhile and closed every connection it could see.
+          if (this.connections.has(wrapper.id)) {
+            this.destroyInBackground(wrapper);
+          }
           throw this.shutDownError();
         }
-        return activated;
-      }
-
-      if (this.hasCapacity()) {
-        return await this.createNewConnection();
+        return wrapper;
       }
 
       // Wait for a connection to become available
@@ -312,15 +311,17 @@ export abstract class ConnectionPool<T> {
 
   /**
    * A claimed connection for a waiter: an idle one that passes validation,
-   * else a new one if a slot is free, else null. Idle attempts are bounded
-   * because a failed validation does not have to destroy the connection.
+   * else a new one if a slot is free, else null. Each idle connection is
+   * tried once, because a failed validation does not have to destroy it.
    */
   private async connectionForWaiter(): Promise<ConnectionWrapper<T> | null> {
-    for (let attempt = 0; attempt < this.config.maxConnections; attempt++) {
-      const idle = this.claimIdleConnection();
+    const tried = new Set<string>();
+    for (;;) {
+      const idle = this.claimIdleConnection(tried);
       if (!idle) {
         break;
       }
+      tried.add(idle.id);
       try {
         return await this.activateClaimed(idle);
       } catch {
@@ -398,9 +399,9 @@ export abstract class ConnectionPool<T> {
     return { ...this.metrics };
   }
 
-  private claimIdleConnection(): ConnectionWrapper<T> | null {
+  private claimIdleConnection(skip?: Set<string>): ConnectionWrapper<T> | null {
     for (const wrapper of this.connections.values()) {
-      if (!wrapper.inUse && wrapper.isHealthy) {
+      if (!wrapper.inUse && wrapper.isHealthy && !skip?.has(wrapper.id)) {
         wrapper.inUse = true;
         return wrapper;
       }

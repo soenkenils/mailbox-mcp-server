@@ -239,13 +239,15 @@ describe("ConnectionPool", () => {
       const wrapper1 = await pool.acquire();
       await pool.release(wrapper1);
 
-      // Make validation fail
+      // The server dropped the idle connection.
       pool.setShouldFailValidation(true);
 
-      // Should create a new connection instead of reusing invalid one
-      await expect(pool.acquire()).rejects.toThrow(
-        "Connection validation failed",
-      );
+      // A new connection replaces it instead of the acquire failing.
+      const wrapper2 = await pool.acquire();
+      expect(wrapper2.id).not.toBe(wrapper1.id);
+      expect(wrapper1.connection.isValid).toBe(false);
+      expect(pool.getConnections().size).toBe(1);
+      await pool.release(wrapper2);
     });
 
     it("should handle connection creation failures", async () => {
