@@ -48,6 +48,13 @@
 				"formatter": {
 					"enabled": true
 				}
+			},
+			"linter": {
+				"rules": {
+					"complexity": {
+						"useArrowFunction": "off"
+					}
+				}
 			}
 		}
 	]

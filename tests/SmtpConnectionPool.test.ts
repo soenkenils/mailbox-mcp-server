@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   SmtpConnectionPool,
   type SmtpConnectionWrapper,
@@ -143,6 +143,18 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
     });
 
+    it("should verify the server certificate", async () => {
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      expect(nodemailer.default.createTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tls: expect.objectContaining({ rejectUnauthorized: true }),
+        }),
+      );
+      await pool.release(wrapper);
+    });
+
     it("should not send a servername when an IP address is configured", async () => {
       await pool.destroy();
       pool = new SmtpConnectionPool({
@@ -156,6 +168,27 @@ describe("SmtpConnectionPool", () => {
         .calls[0][0];
       expect(options.host).toBe("192.0.2.20");
       expect(options.tls).not.toHaveProperty("servername");
+      await pool.release(wrapper);
+    });
+
+    it("should require TLS when the connection starts unencrypted", async () => {
+      await pool.destroy();
+      pool = new SmtpConnectionPool({
+        ...config,
+        connectionConfig: { ...connection, port: 587, secure: false },
+      });
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      // Without requireTLS nodemailer silently falls back to plaintext
+      // AUTH if the server (or a man in the middle) omits STARTTLS
+      expect(nodemailer.default.createTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          secure: false,
+          requireTLS: true,
+          tls: expect.objectContaining({ rejectUnauthorized: true }),
+        }),
+      );
       await pool.release(wrapper);
     });
 
