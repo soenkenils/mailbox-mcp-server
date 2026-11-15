@@ -406,6 +406,7 @@ describe("ImapConnectionPool", () => {
       expect(wrapper.isHealthy).toBe(true);
 
       // Validation should succeed for a working connection
+      // biome-ignore lint/complexity/useLiteralKeys: validateConnection is private
       const isValid = await pool["validateConnection"](wrapper.connection);
       expect(isValid).toBe(true);
 
