@@ -69,6 +69,7 @@ const createMockConnectionWrapper = (
     messageMove: vi.fn(),
     messageFlagsAdd: vi.fn(),
     messageFlagsRemove: vi.fn(),
+    messageDelete: vi.fn().mockResolvedValue(true),
     append: vi.fn(),
     mailboxCreate: vi.fn(),
     list: vi.fn(),
@@ -528,7 +529,7 @@ describe("EmailService - Advanced Coverage", () => {
   });
 
   describe("deleteEmail", () => {
-    it("should permanently delete email with \\Deleted flag", async () => {
+    it("should permanently delete (flag and expunge) the email", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
@@ -537,11 +538,25 @@ describe("EmailService - Advanced Coverage", () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toBe("Email permanently deleted");
-      expect(mockWrapper.connection.messageFlagsAdd).toHaveBeenCalledWith(
+      // messageDelete sets \Deleted and expunges; flagging alone left the
+      // message in the folder.
+      expect(mockWrapper.connection.messageDelete).toHaveBeenCalledWith(
         "123:123",
-        ["\\Deleted"],
         { uid: true },
       );
+    });
+
+    it("should report failure when the server does not expunge", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.messageDelete = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", true);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Failed to delete email");
+      expect(mockCache.delete).not.toHaveBeenCalled();
     });
 
     it("should move to Trash folder for soft delete", async () => {
@@ -622,7 +637,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should handle errors and return failure result", async () => {
       const mockWrapper = createMockConnectionWrapper();
-      mockWrapper.connection.messageFlagsAdd = vi
+      mockWrapper.connection.messageDelete = vi
         .fn()
         .mockRejectedValue(new Error("Delete failed"));
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
@@ -987,6 +1002,28 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockWrapper.connection.mailboxCreate).toHaveBeenCalledWith(
         "NewFolder",
       );
+    });
+
+    it("should drop the cached folder list so get_folders shows the new folder", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockPool.acquire.mockResolvedValue(mockWrapper);
+      mockPool.release.mockResolvedValue(undefined);
+
+      await service.createDirectory("NewFolder");
+
+      expect(mockCache.delete).toHaveBeenCalledWith("email_folders");
+    });
+
+    it("should keep the cached folder list when creation fails", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.mailboxCreate = vi
+        .fn()
+        .mockRejectedValue(new Error("NO [CANNOT] invalid name"));
+      mockPool.acquire.mockResolvedValue(mockWrapper);
+
+      await service.createDirectory("Bad");
+
+      expect(mockCache.delete).not.toHaveBeenCalled();
     });
 
     it("should create nested folder with parent path", async () => {

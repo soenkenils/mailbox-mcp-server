@@ -56,6 +56,8 @@ import {
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
 
+const FOLDERS_CACHE_KEY = "email_folders";
+
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
@@ -643,7 +645,7 @@ export class EmailService {
   }
 
   async getFolders(): Promise<EmailFolder[]> {
-    const cacheKey = "email_folders";
+    const cacheKey = FOLDERS_CACHE_KEY;
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
@@ -791,16 +793,15 @@ export class EmailService {
       wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
-        // Add deleted flag and expunge
-        await wrapper.connection.messageFlagsAdd(
+        // Flags the message \\Deleted and expunges it (UID EXPUNGE with
+        // UIDPLUS). Resolves false instead of throwing when that fails.
+        const expunged = await wrapper.connection.messageDelete(
           `${uid}:${uid}`,
-          ["\\Deleted"],
-          {
-            uid: true,
-          },
+          { uid: true },
         );
-        // Note: expunge is called automatically after messageDelete in newer ImapFlow versions
-        // await wrapper.connection.expunge(); // This method may not exist in current ImapFlow version
+        if (expunged !== true) {
+          throw new Error("Server did not expunge the message");
+        }
       } else {
         // Move to Trash folder
         try {
@@ -1055,6 +1056,8 @@ export class EmailService {
 
       // Create the folder using IMAP CREATE command
       await wrapper.connection.mailboxCreate(folderPath);
+      // Otherwise get_folders keeps serving the old list for up to 15 minutes.
+      this.cache.delete(FOLDERS_CACHE_KEY);
 
       return {
         success: true,
