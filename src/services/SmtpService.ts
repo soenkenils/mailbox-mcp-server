@@ -19,20 +19,42 @@ import {
   type SmtpPoolConfig,
 } from "./SmtpConnectionPool.js";
 
-// Errors that mean the pooled connection (and the address it was pinned to)
-// is no longer usable, e.g. after a VPN or network change
-const NETWORK_ERROR_CODES = new Set([
-  "ETIMEDOUT",
-  "ECONNREFUSED",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-  "ECONNRESET",
+// Connection-level error types nodemailer sets as `code`: its transient
+// errors (ECONNECTION, ESOCKET, ETIMEDOUT, see isTransientError) plus a failed
+// DNS lookup. nodemailer replaces the system errno with these and keeps the
+// errno in `originalCode`.
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNECTION",
   "ESOCKET",
+  "ETIMEDOUT",
+  "EDNS",
 ]);
 
+// Raw system errnos, as found in `originalCode` (or in `code` of an error
+// that did not pass through nodemailer)
+const SYSTEM_NETWORK_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+
+// True when the error means the pooled connection is no longer usable, e.g.
+// after a VPN or network change
 function isNetworkError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && NETWORK_ERROR_CODES.has(code);
+  const { code, originalCode } =
+    (error as { code?: unknown; originalCode?: unknown } | null) ?? {};
+  return (
+    (typeof code === "string" &&
+      (CONNECTION_ERROR_CODES.has(code) ||
+        SYSTEM_NETWORK_ERROR_CODES.has(code))) ||
+    (typeof originalCode === "string" &&
+      SYSTEM_NETWORK_ERROR_CODES.has(originalCode))
+  );
 }
 
 export class SmtpService {
