@@ -565,11 +565,8 @@ describe("Calendar Tools", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
       const createTool = tools.find(t => t.name === "create_calendar_event");
 
-      expect(createTool?.inputSchema.required).toEqual([
-        "summary",
-        "start",
-        "end",
-      ]);
+      // end is required for timed events only; the validator enforces it.
+      expect(createTool?.inputSchema.required).toEqual(["summary", "start"]);
       for (const property of [
         "summary",
         "start",
@@ -618,8 +615,8 @@ describe("Calendar Tools", () => {
         summary: "New Meeting",
         start: new Date("2025-07-01T10:00:00Z"),
         end: new Date("2025-07-01T11:00:00Z"),
-        startDate: "2025-07-01",
-        endDate: "2025-07-01",
+        startDate: undefined,
+        endDate: undefined,
         description: "Discuss project\nand budget",
         location: "Room 42",
         allDay: false,
@@ -701,8 +698,8 @@ describe("Calendar Tools", () => {
         summary: "Quick Sync",
         start: new Date("2025-07-01T10:00:00Z"),
         end: new Date("2025-07-01T10:30:00Z"),
-        startDate: "2025-07-01",
-        endDate: "2025-07-01",
+        startDate: undefined,
+        endDate: undefined,
         description: undefined,
         location: undefined,
         allDay: false,
@@ -713,15 +710,15 @@ describe("Calendar Tools", () => {
       expect(result.isError).toBeUndefined();
     });
 
-    it("should show the dates an all-day event was written with", async () => {
+    it("should take an all-day end as the last day and show it so", async () => {
       vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue({
         ...createResult,
         summary: "Holiday",
         start: new Date("2025-07-04"),
-        end: new Date("2025-07-05"),
+        end: new Date("2025-07-06"),
         allDay: true,
         startDate: "2025-07-04",
-        endDate: "2025-07-05",
+        endDate: "2025-07-07",
       });
 
       const result = await handleCalendarTool(
@@ -729,18 +726,22 @@ describe("Calendar Tools", () => {
         {
           summary: "Holiday",
           start: "2025-07-04",
-          end: "2025-07-05",
+          end: "2025-07-06",
           allDay: true,
         },
         mockCalendarService as CalendarService,
       );
 
+      // The last day is inclusive for the caller, DTEND exclusive on the wire.
       expect(mockCalendarService.createCalendarEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ allDay: true }),
+        expect.objectContaining({
+          allDay: true,
+          startDate: "2025-07-04",
+          endDate: "2025-07-07",
+        }),
       );
       const text = result.content[0].text as string;
-      expect(text).toContain("Start: 2025-07-04 (All Day)");
-      expect(text).toContain("End: 2025-07-05 (exclusive)");
+      expect(text).toContain("Dates: 2025-07-04 to 2025-07-06 (All Day)");
     });
 
     it("should pass all-day dates as written, whatever their offset", async () => {
@@ -763,28 +764,59 @@ describe("Calendar Tools", () => {
       expect(mockCalendarService.createCalendarEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           startDate: "2025-07-04",
-          endDate: "2025-07-05",
+          endDate: "2025-07-06",
         }),
       );
     });
 
-    it("should accept a one-day all-day event that ends on its start date", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
-        createResult,
-      );
+    it.each([
+      ["omitted", undefined],
+      ["equal to start", "2025-12-31"],
+    ])("should make a one-day all-day event when end is %s", async (_, end) => {
+      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue({
+        ...createResult,
+        allDay: true,
+        startDate: "2025-12-31",
+        endDate: "2026-01-01",
+      });
 
       const result = await handleCalendarTool(
         "create_calendar_event",
-        {
-          summary: "Holiday",
-          start: "2025-07-04",
-          end: "2025-07-04",
-          allDay: true,
-        },
+        { summary: "Holiday", start: "2025-12-31", end, allDay: true },
         mockCalendarService as CalendarService,
       );
 
       expect(result.isError).toBeUndefined();
+      expect(mockCalendarService.createCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startDate: "2025-12-31",
+          endDate: "2026-01-01",
+        }),
+      );
+      expect(result.content[0].text).toContain("Date: 2025-12-31 (All Day)");
+    });
+
+    it("should require an end for timed events", async () => {
+      const result = await handleCalendarTool(
+        "create_calendar_event",
+        { summary: "Call", start: "2025-07-01T10:00:00Z" },
+        mockCalendarService as CalendarService,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("end is required");
+    });
+
+    it("should refuse a date without a time for a timed event", async () => {
+      const result = await handleCalendarTool(
+        "create_calendar_event",
+        { summary: "Call", start: "2025-06-20", end: "2025-06-21" },
+        mockCalendarService as CalendarService,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("need a date-time");
+      expect(mockCalendarService.createCalendarEvent).not.toHaveBeenCalled();
     });
 
     it("should return validation error when summary is missing", async () => {

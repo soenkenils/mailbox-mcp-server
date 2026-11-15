@@ -527,7 +527,7 @@ describe("createCalendarEventSchema", () => {
     expect(result.allDay).toBe(true);
   });
 
-  it("should reject an all-day event that ends before its start date", () => {
+  it("should reject an all-day event whose last day is before its first", () => {
     expect(() =>
       validateInput(createCalendarEventSchema, {
         summary: "Holiday",
@@ -535,7 +535,65 @@ describe("createCalendarEventSchema", () => {
         end: "2026-12-23",
         allDay: true,
       }),
-    ).toThrow("Start date must be before end date");
+    ).toThrow("The last day must not be before the first day");
+  });
+
+  it("should accept an all-day event without an end", () => {
+    const result = validateInput(createCalendarEventSchema, {
+      summary: "Holiday",
+      start: "2026-12-24",
+      allDay: true,
+    });
+    expect(result.end).toBeUndefined();
+  });
+
+  it.each([
+    "2025-02-30",
+    "2025-02-29",
+    "2025-13-01",
+    "2025-04-31T10:00:00Z",
+    "2025-06-20T24:00:00Z",
+    "2025-06-20T10:60:00Z",
+    "2025-06-20T10:00:60Z",
+    "2025-06-20T10:00:00+25:00",
+  ])("should reject the impossible date or time %s", value => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        summary: "Event",
+        start: value,
+        end: value.length === 10 ? value : "2025-12-31T23:00:00Z",
+        allDay: value.length === 10,
+      }),
+    ).toThrow(/is not a real date/);
+  });
+
+  it("should accept a leap day", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        summary: "Leap",
+        start: "2028-02-29",
+        allDay: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("should ask for a date-time when a timed event gets a bare date", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        summary: "Call",
+        start: "2025-06-20",
+        end: "2025-06-20T11:00:00Z",
+      }),
+    ).toThrow(/Timed events need a date-time/);
+  });
+
+  it("should require an end for a timed event", () => {
+    expect(() =>
+      validateInput(createCalendarEventSchema, {
+        summary: "Call",
+        start: "2025-06-20T10:00:00Z",
+      }),
+    ).toThrow(/end is required/);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
 import type { CalendarService } from "../services/CalendarService.js";
 import {
   CalendarError,
@@ -15,6 +16,8 @@ import {
   searchCalendarSchema,
   validateInput,
 } from "../validation/schemas.js";
+
+dayjs.extend(utc);
 
 /** Calendar tool names - exported for tool routing */
 export const CALENDAR_TOOLS = [
@@ -158,15 +161,13 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
           },
           start: {
             type: "string",
-            format: "date-time",
             description:
-              "Event start (ISO 8601, required). Include an offset or Z; a time without one is read in the server's local time zone. For all-day events only the date part (YYYY-MM-DD) is used.",
+              "Event start (required). Timed events: an ISO 8601 date-time; pass an explicit offset or Z (e.g. 2025-06-20T14:00+02:00). A date-time without an offset is read in the time zone of the machine running this server. All-day events: the first day, YYYY-MM-DD.",
           },
           end: {
             type: "string",
-            format: "date-time",
             description:
-              "Event end (ISO 8601, required). For all-day events this is the day after the last day (exclusive, as in iCalendar); an end on the start date makes a one-day event.",
+              "Event end. Timed events (required): an ISO 8601 date-time, after start, with an offset or Z as for start. All-day events (optional): the LAST day of the event, inclusive, YYYY-MM-DD; omit it or pass the start date for a one-day event.",
           },
           description: {
             type: "string",
@@ -212,7 +213,7 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
               "Target calendar name (optional, defaults to the first available calendar)",
           },
         },
-        required: ["summary", "start", "end"],
+        required: ["summary", "start"],
         additionalProperties: false,
       },
     },
@@ -221,6 +222,19 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
 
 /** The YYYY-MM-DD part of an ISO 8601 string, as the caller wrote it. */
 const writtenDate = (value: string): string => value.slice(0, 10);
+
+const dayAfter = (date: string): string =>
+  dayjs.utc(date).add(1, "day").format("YYYY-MM-DD");
+
+/** An all-day span from its first date and exclusive end, as last day. */
+const allDayRange = (startDate?: string, endDate?: string): string => {
+  const lastDay = endDate
+    ? dayjs.utc(endDate).subtract(1, "day").format("YYYY-MM-DD")
+    : startDate;
+  return lastDay === startDate
+    ? `Date: ${startDate} (All Day)`
+    : `Dates: ${startDate} to ${lastDay} (All Day)`;
+};
 
 export async function handleCalendarTool(
   name: string,
@@ -357,12 +371,16 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
       case "create_calendar_event": {
         const validatedArgs = validateInput(createCalendarEventSchema, args);
 
+        const end = validatedArgs.end ?? validatedArgs.start;
+        const allDay = validatedArgs.allDay;
+
         const result = await calendarService.createCalendarEvent({
           summary: validatedArgs.summary,
           start: new Date(validatedArgs.start),
-          end: new Date(validatedArgs.end),
-          startDate: writtenDate(validatedArgs.start),
-          endDate: writtenDate(validatedArgs.end),
+          end: new Date(end),
+          // All-day: the caller names the last day; DTEND is the day after.
+          startDate: allDay ? writtenDate(validatedArgs.start) : undefined,
+          endDate: allDay ? dayAfter(writtenDate(end)) : undefined,
           description: validatedArgs.description,
           location: validatedArgs.location,
           allDay: validatedArgs.allDay,
@@ -375,13 +393,10 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
           "Calendar event created successfully:\n",
           `**${result.summary}**`,
           ...(result.allDay
-            ? [
-                `Start: ${result.startDate} (All Day)`,
-                `End: ${result.endDate} (exclusive)`,
-              ]
+            ? [allDayRange(result.startDate, result.endDate)]
             : [
-                `Start: ${dayjs(result.start).format("YYYY-MM-DD HH:mm")}`,
-                `End: ${dayjs(result.end).format("YYYY-MM-DD HH:mm")}`,
+                `Start: ${dayjs(result.start).format("YYYY-MM-DD HH:mm Z")}`,
+                `End: ${dayjs(result.end).format("YYYY-MM-DD HH:mm Z")}`,
               ]),
           `Calendar: ${result.calendar}`,
           `UID: ${result.uid}`,
