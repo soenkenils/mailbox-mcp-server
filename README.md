@@ -92,6 +92,12 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    DEBUG=false
    ```
 
+   > **Note**: The server reads its configuration from environment variables
+   > only; it does not load `.env` itself. Bun loads `.env` from the working
+   > directory when it runs the code (`bun src/main.ts`, `bun dist/main.js`);
+   > `node` needs `node --env-file=.env dist/main.js`. In Claude Desktop, set
+   > the variables in the server's `env` block instead.
+
 4. Add to Claude Desktop configuration:
 
    Add this server to your Claude Desktop `claude_desktop_config.json`:
