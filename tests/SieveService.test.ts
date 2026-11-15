@@ -155,8 +155,13 @@ OK Capability completed.`;
 
     it("should require authentication before operations", async () => {
       // ensureAuthenticated should connect and authenticate if needed
-      // But without a real connection, operations should fail gracefully
+      // Stub connect() so the test never opens a real network connection
+      const connectSpy = vi
+        .spyOn(sieveService, "connect")
+        .mockRejectedValue(new Error("connection refused"));
+
       await expect(sieveService.listScripts()).rejects.toThrow();
+      expect(connectSpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -334,13 +339,10 @@ if header :contains "From" "müller@example.de" {
           { name: "script3", content: "", active: true },
         ],
       ],
-    ])(
-      "should parse %s",
-      (_description: string, input: string, expected: SieveScript[]) => {
-        const result = testableService.testParseScriptList(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: string, expected: SieveScript[]) => {
+      const result = testableService.testParseScriptList(input);
+      expect(result).toEqual(expected);
+    });
 
     it.each([
       [
@@ -361,13 +363,10 @@ if header :contains "From" "müller@example.de" {
           { name: "unquoted", content: "", active: false },
         ],
       ],
-    ])(
-      "should parse %s",
-      (_description: string, input: string, expected: SieveScript[]) => {
-        const result = testableService.testParseScriptList(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: string, expected: SieveScript[]) => {
+      const result = testableService.testParseScriptList(input);
+      expect(result).toEqual(expected);
+    });
 
     it("should handle ACTIVE on separate line as script name", () => {
       // Note: The parser treats "ACTIVE" on its own line as a script name
@@ -388,13 +387,10 @@ if header :contains "From" "müller@example.de" {
       ["only OK line", "OK Listscripts completed\r\n", []],
       ["only NO line", "NO Failed\r\n", []],
       ["whitespace lines", "\r\n\r\n\r\nOK", []],
-    ])(
-      "should handle %s",
-      (_description: string, input: string, expected: SieveScript[]) => {
-        const result = testableService.testParseScriptList(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should handle %s", (_description: string, input: string, expected: SieveScript[]) => {
+      const result = testableService.testParseScriptList(input);
+      expect(result).toEqual(expected);
+    });
 
     it("should skip lines starting with OK or NO", () => {
       // OK and NO lines are status responses, not script names
@@ -466,13 +462,10 @@ if header :contains "From" "müller@example.de" {
           sieveExtensions: ["STARTTLS"],
         },
       ],
-    ])(
-      "should parse %s",
-      (_description: string, input: string, expected: SieveCapabilities) => {
-        const result = testableService.testParseCapabilities(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: string, expected: SieveCapabilities) => {
+      const result = testableService.testParseCapabilities(input);
+      expect(result).toEqual(expected);
+    });
 
     it.each([
       [
@@ -525,13 +518,10 @@ if header :contains "From" "müller@example.de" {
           sieveExtensions: ["STARTTLS"],
         },
       ],
-    ])(
-      "should parse %s",
-      (_description: string, input: string, expected: SieveCapabilities) => {
-        const result = testableService.testParseCapabilities(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: string, expected: SieveCapabilities) => {
+      const result = testableService.testParseCapabilities(input);
+      expect(result).toEqual(expected);
+    });
 
     it.each([
       [
@@ -564,13 +554,10 @@ if header :contains "From" "müller@example.de" {
           sieveExtensions: ["fileinto"],
         },
       ],
-    ])(
-      "should parse %s",
-      (_description: string, input: string, expected: SieveCapabilities) => {
-        const result = testableService.testParseCapabilities(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should parse %s", (_description: string, input: string, expected: SieveCapabilities) => {
+      const result = testableService.testParseCapabilities(input);
+      expect(result).toEqual(expected);
+    });
 
     it.each([
       [
@@ -603,12 +590,9 @@ if header :contains "From" "müller@example.de" {
           sieveExtensions: [],
         },
       ],
-    ])(
-      "should handle %s",
-      (_description: string, input: string, expected: SieveCapabilities) => {
-        const result = testableService.testParseCapabilities(input);
-        expect(result).toEqual(expected);
-      },
-    );
+    ])("should handle %s", (_description: string, input: string, expected: SieveCapabilities) => {
+      const result = testableService.testParseCapabilities(input);
+      expect(result).toEqual(expected);
+    });
   });
 });

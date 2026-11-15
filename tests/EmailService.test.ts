@@ -1,4 +1,5 @@
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { simpleParser } from "mailparser";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
@@ -7,7 +8,6 @@ import type {
   EmailSearchOptions,
   ImapConnection,
 } from "../src/types/email.types.js";
-import { simpleParser } from "mailparser";
 
 // Test helper interface for accessing private methods
 interface TestableEmailService extends EmailService {
