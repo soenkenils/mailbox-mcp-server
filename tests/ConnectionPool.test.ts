@@ -902,6 +902,24 @@ describe("ConnectionPool", () => {
       expect(acquired.connection.isValid).toBe(true);
     });
 
+    it("should not reap idle connections below minConnections in one pass", async () => {
+      const first = await racePool.acquire();
+      const second = await racePool.acquire();
+      await racePool.release(first);
+      await racePool.release(second);
+      first.lastUsed = new Date(0);
+      second.lastUsed = new Date(0);
+      const createSpy = vi.spyOn(racePool, "createConnection");
+
+      await (
+        racePool as TestableConnectionPool<MockConnection>
+      ).performHealthCheck();
+
+      expect(racePool.getConnections().size).toBe(config.minConnections);
+      expect(racePool.getMetrics().totalDestroyed).toBe(1);
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
     it("should leave connections opened by the health check available", async () => {
       await (
         racePool as TestableConnectionPool<MockConnection>
@@ -1063,6 +1081,55 @@ describe("ConnectionPool", () => {
       await destroying;
       expect(held.connection.isValid).toBe(false);
       await waiting;
+    });
+
+    it("should close a connection only once when destroy() runs during a failing validation", async () => {
+      await slotPool.release(await slotPool.acquire());
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return false;
+      };
+      const destroySpy = vi.spyOn(slotPool, "destroyConnection");
+
+      const acquiring = outcome(slotPool.acquire());
+      await flush();
+      await slotPool.destroy();
+      gate.resolve();
+      await acquiring;
+
+      expect(destroySpy).toHaveBeenCalledTimes(1);
+      expect(slotPool.getMetrics().totalDestroyed).toBe(1);
+    });
+
+    it("should ignore a second release of the same connection", async () => {
+      const held = await slotPool.acquire();
+      const first = outcome(slotPool.acquire());
+      const second = track(slotPool.acquire());
+      await flush();
+      const gate = deferred();
+      slotPool.validateConnection = async () => {
+        await gate.promise;
+        return true;
+      };
+
+      const releases = [slotPool.release(held), slotPool.release(held)];
+      gate.resolve();
+      await Promise.all(releases);
+
+      expect((await first).value?.id).toBe(held.id);
+      await flush();
+      expect(second.value).toBeUndefined();
+      expect(slotPool.getWaitingQueue()).toHaveLength(1);
+      expect(slotPool.getMetrics().totalReleased).toBe(1);
+    });
+
+    it("should ignore releasing a connection that is already idle", async () => {
+      const held = await slotPool.acquire();
+      await slotPool.release(held);
+      await slotPool.release(held);
+
+      expect(slotPool.getMetrics().totalReleased).toBe(1);
     });
 
     it("should give a waiter a new connection when the handed-off one fails validation", async () => {

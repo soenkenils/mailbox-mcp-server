@@ -67,6 +67,10 @@ export abstract class ConnectionPool<T> {
    * opened while the old socket is open, and destroy() waits for them.
    */
   private closing = new Map<string, Promise<void>>();
+  /** Every close ever started, so a connection is closed only once. */
+  private closes = new WeakMap<ConnectionWrapper<T>, Promise<void>>();
+  /** Connections whose release is being handed off right now. */
+  private releasing = new Set<string>();
   /** The running serveQueuedWaiters() pass, if any. */
   private serving?: Promise<void>;
   private serveAgain = false;
@@ -162,10 +166,28 @@ export abstract class ConnectionPool<T> {
       return;
     }
 
+    if (!wrapper.inUse || this.releasing.has(wrapper.id)) {
+      // A second release would hand one connection to two waiters.
+      await this.logger.warning(
+        "Ignoring release of a connection that is already released",
+        {
+          operation: "release",
+          service: "ConnectionPool",
+        },
+        { connectionId: wrapper.id },
+      );
+      return;
+    }
+
     wrapper.lastUsed = new Date();
     this.metrics.totalReleased++;
 
-    await this.handOff(wrapper);
+    this.releasing.add(wrapper.id);
+    try {
+      await this.handOff(wrapper);
+    } finally {
+      this.releasing.delete(wrapper.id);
+    }
   }
 
   /**
@@ -593,9 +615,14 @@ export abstract class ConnectionPool<T> {
   protected async destroyConnectionWrapper(
     wrapper: ConnectionWrapper<T>,
   ): Promise<void> {
+    const started = this.closes.get(wrapper);
+    if (started) {
+      return started;
+    }
     // Leaves the pool at once but keeps its slot until the close is done.
     this.connections.delete(wrapper.id);
     const close = this.closeWrapper(wrapper);
+    this.closes.set(wrapper, close);
     this.closing.set(wrapper.id, close);
     try {
       await close;
@@ -671,6 +698,8 @@ export abstract class ConnectionPool<T> {
         wrapper,
         now,
         idleTimeout,
+        // Not yet destroyed, but already counted out of the pool.
+        this.connections.size - connectionsToDestroy.length,
       );
       if (shouldDestroy) {
         connectionsToDestroy.push(wrapper);
@@ -686,14 +715,12 @@ export abstract class ConnectionPool<T> {
     wrapper: ConnectionWrapper<T>,
     now: Date,
     idleTimeout: number,
+    remaining: number,
   ): Promise<boolean> {
     const idleTime = now.getTime() - wrapper.lastUsed.getTime();
 
     // Check if connection has been idle too long
-    if (
-      idleTime > idleTimeout &&
-      this.connections.size > this.config.minConnections
-    ) {
+    if (idleTime > idleTimeout && remaining > this.config.minConnections) {
       return true;
     }
 
