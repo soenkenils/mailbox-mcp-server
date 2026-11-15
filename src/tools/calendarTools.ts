@@ -1,5 +1,6 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
 import type { CalendarService } from "../services/CalendarService.js";
 import {
   CalendarError,
@@ -9,17 +10,21 @@ import {
   ValidationError,
 } from "../types/errors.js";
 import {
+  createCalendarEventSchema,
   getCalendarEventsSchema,
   getFreeBusySchema,
   searchCalendarSchema,
   validateInput,
 } from "../validation/schemas.js";
 
+dayjs.extend(utc);
+
 /** Calendar tool names - exported for tool routing */
 export const CALENDAR_TOOLS = [
   "get_calendar_events",
   "search_calendar",
   "get_free_busy",
+  "create_calendar_event",
 ] as const;
 
 export type CalendarToolName = (typeof CALENDAR_TOOLS)[number];
@@ -143,8 +148,95 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
         additionalProperties: false,
       },
     },
+    {
+      name: "create_calendar_event",
+      description:
+        "Create an event in a mailbox.org calendar and return its UID. Calling twice creates two events. Attendees: by default nobody is notified; attendees are only recorded on the event. Set sendInvitations to true only when the user explicitly asked to invite people: the server may then email an invitation to every attendee.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description: "Event title/summary (required)",
+          },
+          start: {
+            type: "string",
+            description:
+              "Event start (required). Timed events: an ISO 8601 date-time; pass an explicit offset or Z (e.g. 2025-06-20T14:00+02:00). A date-time without an offset is read in the time zone of the machine running this server. All-day events: the first day, YYYY-MM-DD.",
+          },
+          end: {
+            type: "string",
+            description:
+              "Event end. Timed events (required): an ISO 8601 date-time, after start, with an offset or Z as for start. All-day events (optional): the LAST day of the event, inclusive, YYYY-MM-DD; omit it or pass the start date for a one-day event.",
+          },
+          description: {
+            type: "string",
+            description: "Event description (optional, may span several lines)",
+          },
+          location: {
+            type: "string",
+            description: "Event location (optional)",
+          },
+          allDay: {
+            type: "boolean",
+            description: "Whether this is an all-day event (default: false)",
+            default: false,
+          },
+          attendees: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                email: {
+                  type: "string",
+                  description: "Attendee email address",
+                },
+                name: {
+                  type: "string",
+                  description: "Attendee display name (optional)",
+                },
+              },
+              required: ["email"],
+              additionalProperties: false,
+            },
+            maxItems: 50,
+            description:
+              "List of event attendees (optional). Recorded only; nobody is notified unless sendInvitations is true",
+          },
+          sendInvitations: {
+            type: "boolean",
+            description:
+              "Ask the server to email invitations to all attendees, with your account as organizer (default: false). Only set this when the user explicitly asked to invite people",
+            default: false,
+          },
+          calendar: {
+            type: "string",
+            description:
+              "Target calendar: its exact display name, URL or last URL segment (optional). Defaults to the first calendar listed in MAILBOX_CALENDARS when that is set, otherwise the first calendar on the server that can hold events",
+          },
+        },
+        required: ["summary", "start"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
+
+/** The YYYY-MM-DD part of an ISO 8601 string, as the caller wrote it. */
+const writtenDate = (value: string): string => value.slice(0, 10);
+
+const dayAfter = (date: string): string =>
+  dayjs.utc(date).add(1, "day").format("YYYY-MM-DD");
+
+/** An all-day span from its first date and exclusive end, as last day. */
+const allDayRange = (startDate?: string, endDate?: string): string => {
+  const lastDay = endDate
+    ? dayjs.utc(endDate).subtract(1, "day").format("YYYY-MM-DD")
+    : startDate;
+  return lastDay === startDate
+    ? `Date: ${startDate} (All Day)`
+    : `Dates: ${startDate} to ${lastDay} (All Day)`;
+};
 
 export async function handleCalendarTool(
   name: string,
@@ -276,6 +368,58 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
             },
           ],
         };
+      }
+
+      case "create_calendar_event": {
+        const validatedArgs = validateInput(createCalendarEventSchema, args);
+
+        const end = validatedArgs.end ?? validatedArgs.start;
+        const allDay = validatedArgs.allDay;
+
+        const result = await calendarService.createCalendarEvent({
+          summary: validatedArgs.summary,
+          start: new Date(validatedArgs.start),
+          end: new Date(end),
+          // All-day: the caller names the last day; DTEND is the day after.
+          startDate: allDay ? writtenDate(validatedArgs.start) : undefined,
+          endDate: allDay ? dayAfter(writtenDate(end)) : undefined,
+          description: validatedArgs.description,
+          location: validatedArgs.location,
+          allDay: validatedArgs.allDay,
+          attendees: validatedArgs.attendees,
+          sendInvitations: validatedArgs.sendInvitations,
+          calendar: validatedArgs.calendar,
+        });
+
+        const parts = [
+          "Calendar event created successfully:\n",
+          `**${result.summary}**`,
+          ...(result.allDay
+            ? [allDayRange(result.startDate, result.endDate)]
+            : [
+                `Start: ${dayjs(result.start).format("YYYY-MM-DD HH:mm Z")}`,
+                `End: ${dayjs(result.end).format("YYYY-MM-DD HH:mm Z")}`,
+              ]),
+          `Calendar: ${result.calendar}`,
+          `UID: ${result.uid}`,
+        ];
+
+        if (validatedArgs.location) {
+          parts.push(`Location: ${validatedArgs.location}`);
+        }
+
+        if (validatedArgs.attendees?.length) {
+          parts.push(
+            `Attendees: ${validatedArgs.attendees.map(a => a.name || a.email).join(", ")}`,
+          );
+          parts.push(
+            validatedArgs.sendInvitations
+              ? `Invitations requested for ${validatedArgs.attendees.length} attendee(s); the server may email them`
+              : "No invitations were sent (attendees recorded only)",
+          );
+        }
+
+        return { content: [{ type: "text", text: parts.join("\n") }] };
       }
 
       default:

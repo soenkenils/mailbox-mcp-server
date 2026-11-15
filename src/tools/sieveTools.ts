@@ -1,7 +1,6 @@
 import {
   type CallToolRequest,
   type CallToolResult,
-  ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as v from "valibot";

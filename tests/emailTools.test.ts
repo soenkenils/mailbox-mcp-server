@@ -287,7 +287,7 @@ describe("Email Tools", () => {
           message: "Directory created successfully",
         });
 
-        const result = await handleEmailTool(
+        await handleEmailTool(
           "create_directory",
           {
             name: "MyNewFolder",
