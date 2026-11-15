@@ -147,6 +147,7 @@ describe("CalendarService recurring events", () => {
     expect(events[0].start.getFullYear()).toBe(2026);
     expect(events[0].start.getMonth()).toBe(7);
     expect(events[0].start.getDate()).toBe(1);
+    expect(events[0].id).toBe("birthday@example.com:2026-08-01");
   });
 
   it("should expand a daily series that started decades ago", async () => {

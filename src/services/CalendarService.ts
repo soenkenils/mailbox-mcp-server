@@ -55,6 +55,13 @@ const EVENT_CACHE_PREFIXES = [
 /** RFC 5545 section 3.1: content lines SHOULD NOT exceed 75 octets. */
 const MAX_LINE_OCTETS = 75;
 
+/**
+ * Id of one instance of a series: UID plus RECURRENCE-ID. All-day instances
+ * use the date itself, so the id does not depend on the server's time zone.
+ */
+const occurrenceId = (uid: string, recurrenceId: ICAL.Time): string =>
+  `${uid}:${recurrenceId.isDate ? recurrenceId.toString() : recurrenceId.toJSDate().toISOString()}`;
+
 const calendarLabel = (calendar: DAVCalendar): string =>
   (calendar.displayName as string) || calendar.url;
 
@@ -806,7 +813,7 @@ export class CalendarService {
     const event = this.parseVEvent(vevent, calendar);
     const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
     if (event && recurrenceId instanceof ICAL.Time) {
-      event.id = `${event.uid}:${recurrenceId.toJSDate().toISOString()}`;
+      event.id = occurrenceId(event.uid, recurrenceId);
     }
     return event;
   }
@@ -886,8 +893,8 @@ export class CalendarService {
     const durationMs = master.duration.toSeconds() * 1000;
     const rangeStartMs = range.start.getTime();
 
-    const add = (item: ICAL.Event, start: Date, end: Date, rid: Date) => {
-      const id = `${item.uid}:${rid.toISOString()}`;
+    const add = (item: ICAL.Event, start: Date, end: Date, rid: ICAL.Time) => {
+      const id = occurrenceId(item.uid, rid);
       if (seen.has(id)) {
         return;
       }
@@ -948,7 +955,7 @@ export class CalendarService {
           details.item,
           occurrence.start,
           occurrence.end,
-          details.recurrenceId.toJSDate(),
+          details.recurrenceId,
         );
       }
       next = iterator.next();
@@ -961,8 +968,7 @@ export class CalendarService {
       if (!(recurrenceId instanceof ICAL.Time)) {
         continue;
       }
-      const rid = recurrenceId.toJSDate();
-      if (rid < range.end) {
+      if (recurrenceId.toJSDate() < range.end) {
         continue;
       }
       const item = new ICAL.Event(vevent);
@@ -974,7 +980,7 @@ export class CalendarService {
         end: item.endDate.toJSDate(),
       } as CalendarEvent;
       if (this.overlaps(occurrence, range)) {
-        add(item, occurrence.start, occurrence.end, rid);
+        add(item, occurrence.start, occurrence.end, recurrenceId);
       }
     }
 
