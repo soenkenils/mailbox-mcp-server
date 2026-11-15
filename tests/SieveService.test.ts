@@ -30,7 +30,6 @@ vi.mock("../src/services/Logger.js", () => ({
 
 describe("SieveService", () => {
   let sieveService: SieveService;
-  let mockSocket: unknown;
 
   const mockConfig: SieveConnection = {
     host: "imap.mailbox.org",
@@ -41,15 +40,6 @@ describe("SieveService", () => {
   };
 
   beforeEach(() => {
-    // Create mock socket
-    mockSocket = {
-      connect: vi.fn(),
-      write: vi.fn(),
-      destroy: vi.fn(),
-      on: vi.fn(),
-      removeListener: vi.fn(),
-    };
-
     sieveService = new SieveService(mockConfig);
   });
 

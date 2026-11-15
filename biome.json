@@ -23,15 +23,21 @@
 			"recommended": true,
 			"style": {
 				"useConst": "error",
-				"useTemplate": "error"
+				"useTemplate": "error",
+				"useNodejsImportProtocol": "error"
 			},
 			"complexity": {
 				"useLiteralKeys": "error",
 				"noUselessFragments": "error"
 			},
 			"suspicious": {
-				"noExplicitAny": "warn",
+				"noExplicitAny": "error",
 				"noAsyncPromiseExecutor": "error"
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedImports": "error",
+				"noUnusedFunctionParameters": "error"
 			}
 		}
 	},
@@ -53,6 +59,35 @@
 				"rules": {
 					"complexity": {
 						"useArrowFunction": "off"
+					},
+					"suspicious": {
+						"noExplicitAny": "warn"
+					},
+					"style": {
+						"noNonNullAssertion": "warn"
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"src/services/CalendarService.ts",
+				"src/services/ConnectionPool.ts",
+				"src/services/SmtpService.ts",
+				"src/tools/calendarTools.ts",
+				"tests/CalendarService.test.ts",
+				"tests/ImapConnectionPool.test.ts",
+				"tests/SmtpConnectionPool.test.ts",
+				"tests/SmtpService.test.ts",
+				"tests/config.test.ts",
+				"tests/validation.test.ts"
+			],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedVariables": "warn",
+						"noUnusedImports": "warn",
+						"noUnusedFunctionParameters": "warn"
 					}
 				}
 			}

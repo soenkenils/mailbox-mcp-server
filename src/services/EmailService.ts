@@ -796,7 +796,7 @@ export class EmailService {
           await wrapper.connection.messageMove(`${uid}:${uid}`, "Trash", {
             uid: true,
           });
-        } catch (moveError) {
+        } catch (_moveError) {
           // If Trash folder doesn't exist, try other common names
           const trashFolders = ["Deleted Items", "Deleted", "INBOX.Trash"];
           let moved = false;
@@ -812,7 +812,7 @@ export class EmailService {
               );
               moved = true;
               break;
-            } catch (error) {
+            } catch (_error) {
               // Continue to next folder
             }
           }

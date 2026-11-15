@@ -280,7 +280,7 @@ export class Logger {
       }
 
       return String(data);
-    } catch (error) {
+    } catch (_error) {
       return "[serialization error]";
     }
   }

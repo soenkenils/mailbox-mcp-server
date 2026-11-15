@@ -5,7 +5,6 @@ import {
   ConnectionError,
   EmailError,
   ErrorCode,
-  type MCPError,
   toMCPError,
   ValidationError,
 } from "../src/types/errors.js";

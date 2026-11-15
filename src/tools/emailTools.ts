@@ -43,8 +43,8 @@ export function isEmailTool(name: string): name is EmailToolName {
 }
 
 export function createEmailTools(
-  emailService: EmailService,
-  smtpService?: SmtpService,
+  _emailService: EmailService,
+  _smtpService?: SmtpService,
 ): Tool[] {
   return [
     {

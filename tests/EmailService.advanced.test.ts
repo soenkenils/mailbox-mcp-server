@@ -13,8 +13,6 @@ import type { LocalCache } from "../src/types/cache.types.js";
 import type {
   EmailComposition,
   EmailFolder,
-  EmailMessage,
-  EmailSearchOptions,
   ImapConnection,
   ImapConnectionWrapper,
 } from "../src/types/email.types.js";
@@ -968,7 +966,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       try {
         await service.getFolders();
-      } catch (error) {
+      } catch (_error) {
         // Expected
       }
 
