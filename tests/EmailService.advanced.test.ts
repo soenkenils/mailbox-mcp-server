@@ -67,11 +67,16 @@ const createMockConnectionWrapper = (
   connection: {
     mailboxOpen: vi.fn(),
     messageMove: vi.fn().mockResolvedValue({ uidMap: new Map() }),
-    messageFlagsAdd: vi.fn(),
-    messageFlagsRemove: vi.fn(),
+    messageFlagsAdd: vi.fn().mockResolvedValue(true),
+    messageFlagsRemove: vi.fn().mockResolvedValue(true),
     messageDelete: vi.fn().mockResolvedValue(true),
-    append: vi.fn(),
-    mailboxCreate: vi.fn(),
+    append: vi.fn().mockResolvedValue({ destination: "Drafts", uid: 1 }),
+    mailboxCreate: vi
+      .fn()
+      .mockImplementation(async (path: string | string[]) => ({
+        path: Array.isArray(path) ? path.join("/") : path,
+        created: true,
+      })),
     list: vi.fn(),
   } as any,
   folder: "INBOX",
@@ -432,6 +437,22 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
+    it("should report failure when the server refuses the move", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      // imapflow resolves false on a NO (e.g. missing destination folder)
+      mockWrapper.connection.messageMove = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+
+      const result = await service.moveEmail(123, "INBOX", "NoSuchFolder");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("NoSuchFolder");
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(mockWrapper);
+    });
+
     it("should release connection even on error", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.messageMove = vi
@@ -650,6 +671,21 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
+    it.each([
+      ["add", "messageFlagsAdd"],
+      ["remove", "messageFlagsRemove"],
+    ] as const)("should report failure when the server refuses to %s flags", async (action, method) => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection[method] = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.markEmail(123, "INBOX", ["\\Seen"], action);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Failed to mark email");
+    });
+
     it("should handle multiple flags at once", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
@@ -737,6 +773,19 @@ describe("EmailService - Advanced Coverage", () => {
         ["\\Deleted"],
         { uid: true },
       );
+    });
+
+    it("should report failure when no trash exists and flagging is refused", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.messageMove = vi.fn().mockResolvedValue(false);
+      mockWrapper.connection.messageFlagsAdd = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Failed to delete email");
     });
 
     it("should report failure when the move throws", async () => {
@@ -829,6 +878,22 @@ describe("EmailService - Advanced Coverage", () => {
   });
 
   describe("createDraft", () => {
+    it("should report failure when the server refuses the append", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.append = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.createDraft({
+        to: [{ address: "recipient@example.com" }],
+        subject: "Draft",
+        text: "Body",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Failed to create draft");
+    });
+
     it("should create draft with plain text in default Drafts folder", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
@@ -1181,6 +1246,21 @@ describe("EmailService - Advanced Coverage", () => {
       );
     });
 
+    it("should not report success when the folder already exists", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      // imapflow answers ALREADYEXISTS with created: false, not a throw
+      mockWrapper.connection.mailboxCreate = vi
+        .fn()
+        .mockResolvedValue({ path: "Existing", created: false });
+      mockPool.acquire.mockResolvedValue(mockWrapper);
+      mockPool.release.mockResolvedValue(undefined);
+
+      const result = await service.createDirectory("Existing");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("already exists");
+    });
+
     it("should drop the cached folder list so get_folders shows the new folder", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquire.mockResolvedValue(mockWrapper);
@@ -1377,6 +1457,15 @@ describe("EmailService - Advanced Coverage", () => {
 
       await expect(result).resolves.toBe(stale);
       expect(mockCache.getStale).toHaveBeenCalledWith("email:INBOX:7");
+    });
+
+    it("surfaces an unselected folder (undefined) as an error, not as a missing email", async () => {
+      const wrapper = wrapperWithFetchOne(vi.fn().mockResolvedValue(undefined));
+      mockPool.acquireForFolder.mockResolvedValue(wrapper);
+
+      await expect(service.getEmail(7, "INBOX")).rejects.toThrow(
+        /no folder selected/,
+      );
     });
 
     it("returns null only when the server has no such message", async () => {

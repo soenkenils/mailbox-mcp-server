@@ -526,6 +526,21 @@ describe("EmailService", () => {
     });
   });
 
+  describe("searchEmails - failed IMAP search", () => {
+    it.each([
+      ["false (server NO)", false],
+      ["undefined (no folder selected)", undefined],
+    ])("throws instead of returning no results when search resolves %s", async (_label, value) => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue(value);
+
+      await expect(
+        emailService.searchEmails({ query: "test" }),
+      ).rejects.toThrow("IMAP search failed");
+      expect(mockCache.set).not.toHaveBeenCalled();
+    });
+  });
+
   describe("getEmail", () => {
     it("should return cached email when available", async () => {
       const mockEmail = createMockEmailMessage({ uid: 123 });

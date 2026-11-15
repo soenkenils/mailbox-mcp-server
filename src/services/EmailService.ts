@@ -159,7 +159,7 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
     const searchResult = await this.executeSearch(wrapper, options);
-    if (!searchResult || searchResult.length === 0) {
+    if (searchResult.length === 0) {
       return [];
     }
 
@@ -177,13 +177,21 @@ export class EmailService {
   private async executeSearch(
     wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
-  ): Promise<number[] | null> {
+  ): Promise<number[]> {
     const searchCriteria = this.buildSearchCriteria(options);
     // Search by UID (stable across expunges) instead of sequence numbers.
     const result = await wrapper.connection.search(searchCriteria, {
       uid: true,
     });
-    return Array.isArray(result) ? result : null;
+    // imapflow resolves false when the server rejects SEARCH and undefined
+    // when no folder is selected, instead of throwing. Either is a failure;
+    // returning no matches would read as an empty mailbox.
+    if (!Array.isArray(result)) {
+      throw new Error(
+        `IMAP search failed in folder ${options.folder || "INBOX"}`,
+      );
+    }
+    return result;
   }
 
   private applyPagination(
@@ -345,6 +353,11 @@ export class EmailService {
       { uid: true },
     );
 
+    // undefined means no folder was selected, which is a failure; false means
+    // the server returned no such message.
+    if (message === undefined) {
+      throw new Error("IMAP fetch failed: no folder selected");
+    }
     return message ? (message as unknown as ImapMessage) : null;
   }
 
@@ -740,9 +753,16 @@ export class EmailService {
 
     try {
       wrapper = await this.pool.acquireForFolder(fromFolder);
-      await wrapper.connection.messageMove(`${uid}:${uid}`, toFolder, {
-        uid: true,
-      });
+      // imapflow resolves false instead of throwing when the server refuses,
+      // e.g. for a destination folder that does not exist.
+      const moved = await wrapper.connection.messageMove(
+        `${uid}:${uid}`,
+        toFolder,
+        { uid: true },
+      );
+      if (!moved) {
+        throw new Error(`Server refused to move the message to ${toFolder}`);
+      }
 
       // Clear cache for both folders
       this.clearFolderCache(fromFolder);
@@ -792,14 +812,19 @@ export class EmailService {
     try {
       wrapper = await this.pool.acquireForFolder(folder);
 
-      if (action === "add") {
-        await wrapper.connection.messageFlagsAdd(`${uid}:${uid}`, flags, {
-          uid: true,
-        });
-      } else {
-        await wrapper.connection.messageFlagsRemove(`${uid}:${uid}`, flags, {
-          uid: true,
-        });
+      // Like messageMove, these resolve false on failure rather than throwing.
+      const updated =
+        action === "add"
+          ? await wrapper.connection.messageFlagsAdd(`${uid}:${uid}`, flags, {
+              uid: true,
+            })
+          : await wrapper.connection.messageFlagsRemove(
+              `${uid}:${uid}`,
+              flags,
+              { uid: true },
+            );
+      if (!updated) {
+        throw new Error("Server refused to update the message flags");
       }
 
       // Clear cache for the folder
@@ -887,13 +912,18 @@ export class EmailService {
         if (!movedToTrash) {
           // No trash folder anywhere: flag the message and say so, rather
           // than reporting a move that never happened.
-          await wrapper.connection.messageFlagsAdd(
+          const flagged = await wrapper.connection.messageFlagsAdd(
             `${uid}:${uid}`,
             ["\\Deleted"],
             {
               uid: true,
             },
           );
+          if (!flagged) {
+            throw new Error(
+              "No trash folder found and the server refused to flag the message as deleted",
+            );
+          }
         }
       }
 
@@ -949,6 +979,10 @@ export class EmailService {
       const result = await wrapper.connection.append(folder, emailContent, [
         "\\Draft",
       ]);
+      // append resolves false instead of throwing when the server refuses.
+      if (!result) {
+        throw new Error(`Server refused to save the draft to ${folder}`);
+      }
 
       // Clear cache for the drafts folder
       this.clearFolderCache(folder);
@@ -956,10 +990,7 @@ export class EmailService {
       return {
         success: true,
         message: "Draft saved successfully",
-        uid:
-          result && typeof result === "object" && "uid" in result
-            ? result.uid
-            : undefined,
+        uid: result.uid,
       };
     } catch (error) {
       this.logger.error(
@@ -1112,7 +1143,14 @@ export class EmailService {
       const folderPath = parentPath ? `${parentPath}${delimiter}${name}` : name;
 
       // Create the folder using IMAP CREATE command
-      await wrapper.connection.mailboxCreate(folderPath);
+      const created = await wrapper.connection.mailboxCreate(folderPath);
+      // imapflow answers ALREADYEXISTS with created: false instead of throwing.
+      if (created && created.created === false) {
+        return {
+          success: false,
+          message: `Failed to create directory: '${created.path}' already exists`,
+        };
+      }
       // Otherwise get_folders keeps serving the old list for up to 15 minutes.
       this.cache.delete(FOLDERS_CACHE_KEY);
 
