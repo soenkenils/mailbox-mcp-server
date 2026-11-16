@@ -12,6 +12,7 @@ import {
 import { CalendarService } from "../src/services/CalendarService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type { CalDavConnection } from "../src/types/calendar.types.js";
+import { ErrorCode } from "../src/types/errors.js";
 
 // Type for the mock DAV client with only the methods we need for testing
 type MockDAVClient = Pick<
@@ -23,10 +24,6 @@ type MockDAVClient = Pick<
 class TestableCalendarService extends CalendarService {
   public async getClient() {
     return super.getClient();
-  }
-
-  public async discoverCalendars() {
-    return super.discoverCalendars();
   }
 
   // Expose private methods for branch coverage testing
@@ -362,40 +359,170 @@ describe("CalendarService", () => {
     });
   });
 
-  describe("discoverCalendars", () => {
-    it("should return list of calendar names", async () => {
-      // Mock the fetchCalendars response
+  describe("choosing calendars to read", () => {
+    const BASE = "https://caldav.example.com/calendars/test";
+    const range = {
+      start: new Date("2025-06-20T00:00:00Z"),
+      end: new Date("2025-06-21T00:00:00Z"),
+    };
+    const serviceWith = (calendars?: string[]) => {
+      const service = new TestableCalendarService(
+        createMockConnection({ calendars }),
+        mockCache,
+      );
+      vi.spyOn(service, "getClient").mockResolvedValue({
+        fetchCalendars: mockFetchCalendars,
+        fetchCalendarObjects: mockFetchCalendarObjects,
+      } as MockDAVClient);
+      return service;
+    };
+    const readUrls = (): string[] =>
+      mockFetchCalendarObjects.mock.calls.map(
+        ([params]) => params.calendar.url,
+      );
+
+    beforeEach(() => {
       mockFetchCalendars.mockResolvedValue([
-        {
-          displayName: "personal",
-          url: "https://caldav.example.com/calendars/test/personal/",
-        },
-        {
-          displayName: "work",
-          url: "https://caldav.example.com/calendars/test/work/",
-        },
+        { displayName: "Work", url: `${BASE}/work/` },
+        { displayName: "Homework", url: `${BASE}/homework/` },
+        { displayName: "Misc", url: `${BASE}/Y2FsUQ/` },
+        { displayName: "Tasks", url: `${BASE}/tasks/`, components: ["VTODO"] },
       ]);
-
-      const result = await (
-        calendarService as TestableCalendarService
-      ).discoverCalendars();
-
-      expect(Array.isArray(result)).toBe(true);
-      expect(mockFetchCalendars).toHaveBeenCalled();
-      expect(result).toContain("personal");
-      expect(result).toContain("work");
     });
 
-    it("should return default calendar on error", async () => {
-      // Mock fetchCalendars to throw an error
-      mockFetchCalendars.mockRejectedValueOnce(new Error("Failed to fetch"));
+    it("should read every calendar that holds events when nothing restricts them", async () => {
+      await serviceWith(undefined).getCalendarEvents(range);
 
-      const result = await (
-        calendarService as TestableCalendarService
-      ).discoverCalendars();
+      expect(readUrls()).toEqual([
+        `${BASE}/work/`,
+        `${BASE}/homework/`,
+        `${BASE}/Y2FsUQ/`,
+      ]);
+      // The list is fetched once, not once per calendar.
+      expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
+    });
 
-      // Should return the default calendar on error
-      expect(result).toEqual(["personal"]);
+    it("should not let a MAILBOX_CALENDARS entry reach a URL that merely contains it", async () => {
+      await serviceWith(["work"]).getCalendarEvents(range);
+
+      expect(readUrls()).toEqual([`${BASE}/work/`]);
+    });
+
+    it("should match entries by exact display name, URL or last segment", async () => {
+      await serviceWith([
+        "Homework",
+        `${BASE}/work`,
+        "Y2FsUQ",
+      ]).getCalendarEvents(range);
+
+      expect(readUrls()).toEqual([
+        `${BASE}/homework/`,
+        `${BASE}/work/`,
+        `${BASE}/Y2FsUQ/`,
+      ]);
+    });
+
+    it("should not let a short entry match an opaque collection id", async () => {
+      await expect(serviceWith(["Q"]).getCalendarEvents(range)).rejects.toThrow(
+        /No calendar on the server matches MAILBOX_CALENDARS/,
+      );
+      expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
+    });
+
+    it("should refuse an entry that matches several calendars", async () => {
+      mockFetchCalendars.mockResolvedValue([
+        { displayName: "Work", url: `${BASE}/work/` },
+        { displayName: "Old", url: `${BASE}/archive/Work/` },
+      ]);
+
+      await expect(
+        serviceWith(["Work"]).getCalendarEvents(range),
+      ).rejects.toThrow(/MAILBOX_CALENDARS entry "Work" matches several/);
+      expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
+    });
+
+    it("should read only the calendar named in the request, matched exactly", async () => {
+      const events = await serviceWith(undefined).getCalendarEvents({
+        ...range,
+        calendar: "work",
+      });
+
+      expect(readUrls()).toEqual([`${BASE}/work/`]);
+      expect(events[0].calendar).toBe("Work");
+    });
+
+    it("should report an unknown calendar instead of an empty result", async () => {
+      await expect(
+        serviceWith(["work"]).getCalendarEvents({
+          ...range,
+          calendar: "Homework",
+        }),
+      ).rejects.toThrow(
+        'Calendar "Homework" not found among the calendars MAILBOX_CALENDARS allows',
+      );
+      expect(mockCache.set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("unreadable calendars", () => {
+    const range = {
+      start: new Date("2025-06-20T00:00:00Z"),
+      end: new Date("2025-06-21T00:00:00Z"),
+    };
+
+    it("should report a failed calendar list instead of guessing a calendar", async () => {
+      mockFetchCalendars.mockRejectedValue(new Error("HTTP 401"));
+
+      await expect(
+        calendarService.getCalendarEvents(range),
+      ).rejects.toMatchObject({
+        code: ErrorCode.CALENDAR_READ_FAILED,
+        message: "Could not list your calendars: HTTP 401",
+      });
+      expect(mockCache.set).not.toHaveBeenCalled();
+    });
+
+    it("should fail the whole read when one calendar cannot be read", async () => {
+      const service = new TestableCalendarService(
+        createMockConnection({ calendars: undefined }),
+        mockCache,
+      );
+      vi.spyOn(service, "getClient").mockResolvedValue({
+        fetchCalendars: mockFetchCalendars,
+        fetchCalendarObjects: mockFetchCalendarObjects,
+      } as MockDAVClient);
+      mockFetchCalendars.mockResolvedValue([
+        { displayName: "personal", url: "https://x/personal/" },
+        { displayName: "work", url: "https://x/work/" },
+      ]);
+      mockFetchCalendarObjects.mockImplementation(async ({ calendar }) => {
+        if (calendar.url.includes("work")) {
+          throw new Error("HTTP 500");
+        }
+        return [{ data: createTestICalData() }];
+      });
+
+      const error = await service.getFreeBusy(range.start, range.end).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.CALENDAR_READ_FAILED });
+      expect((error as Error).message).toContain(
+        'Could not read calendar "work": HTTP 500',
+      );
+      expect((error as Error).message).toContain('pass "calendar"');
+      expect(mockCache.set).not.toHaveBeenCalled();
+    });
+
+    it("should still serve stale data when the server cannot be reached", async () => {
+      const stale = [createTestCalendarEvent()];
+      (mockCache.getStale as Mock).mockReturnValue(stale);
+      mockFetchCalendarObjects.mockRejectedValue(new Error("read ECONNRESET"));
+
+      await expect(calendarService.getCalendarEvents(range)).resolves.toBe(
+        stale,
+      );
     });
   });
 
@@ -442,36 +569,23 @@ describe("CalendarService", () => {
   });
 
   describe("error handling", () => {
-    it("should handle fetch errors gracefully", async () => {
-      // Mock fetchCalendarObjects to throw an error
-      mockFetchCalendarObjects.mockRejectedValueOnce(
-        new Error("Network error"),
-      );
-
-      const result = await calendarService.getCalendarEvents({
-        start: new Date("2025-06-20T00:00:00Z"),
-        end: new Date("2025-06-21T00:00:00Z"),
-      });
-
-      // Should return an empty array on error
-      expect(Array.isArray(result)).toBe(true);
-      expect(result).toHaveLength(0);
-    });
-
     it.each([
       ["Network timeout", "TIMEOUT"],
       ["Authentication failed", "AUTH_ERROR"],
       ["Server unavailable", "SERVER_ERROR"],
       ["Rate limit exceeded", "RATE_LIMIT"],
-    ])("should handle %s error", async (description, errorType) => {
+    ])("should report a %s error instead of an empty result", async (_description, errorType) => {
       mockFetchCalendarObjects.mockRejectedValueOnce(new Error(errorType));
 
-      const result = await calendarService.getCalendarEvents({
-        start: new Date("2025-06-20T00:00:00Z"),
-        end: new Date("2025-06-21T00:00:00Z"),
+      await expect(
+        calendarService.getCalendarEvents({
+          start: new Date("2025-06-20T00:00:00Z"),
+          end: new Date("2025-06-21T00:00:00Z"),
+        }),
+      ).rejects.toMatchObject({
+        code: ErrorCode.CALENDAR_READ_FAILED,
+        message: `Could not read calendar "personal": ${errorType}`,
       });
-
-      expect(result).toEqual([]);
     });
 
     it("should handle cache errors gracefully", async () => {

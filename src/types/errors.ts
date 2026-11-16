@@ -32,6 +32,7 @@ export enum ErrorCode {
   CALENDAR_CONFLICT = "CALENDAR_CONFLICT",
   EVENT_MODIFIED = "EVENT_MODIFIED",
   EVENT_WRITE_REJECTED = "EVENT_WRITE_REJECTED",
+  CALENDAR_READ_FAILED = "CALENDAR_READ_FAILED",
 
   // Internal errors
   INTERNAL_ERROR = "INTERNAL_ERROR",
@@ -246,6 +247,7 @@ export class CalendarError extends MCPError {
       case ErrorCode.EVENT_MODIFIED:
         return "The event was changed on the server after it was read. Fetch it again and retry.";
       case ErrorCode.EVENT_WRITE_REJECTED:
+      case ErrorCode.CALENDAR_READ_FAILED:
         return this.message;
       default:
         return "A calendar operation failed. Please try again.";

@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoggerLike } from "../src/services/Logger.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import { ConnectionError } from "../src/types/errors.js";
-import {
-  createCacheFetcher,
-  withCacheFallback,
-} from "../src/utils/cacheFallback.js";
+import { createCacheFetcher } from "../src/utils/cacheFallback.js";
 
 const createLogger = (): LoggerLike =>
   ({
@@ -135,36 +132,5 @@ describe("createCacheFetcher", () => {
       { operation: "op", service: "TestService" },
       { error: "Invalid credentials" },
     );
-  });
-
-  describe("withCacheFallback", () => {
-    const failing = () => Promise.reject(new Error("Connection timeout"));
-
-    it("returns the defaultValue when one is given", async () => {
-      await expect(
-        withCacheFallback({
-          cacheKey: "key",
-          cache,
-          fetch: failing,
-          defaultValue: [],
-          logger,
-          operation: "op",
-          service: "TestService",
-        }),
-      ).resolves.toEqual([]);
-    });
-
-    it("rethrows when no defaultValue is given", async () => {
-      await expect(
-        withCacheFallback({
-          cacheKey: "key",
-          cache,
-          fetch: failing,
-          logger,
-          operation: "op",
-          service: "TestService",
-        }),
-      ).rejects.toThrow("Connection timeout");
-    });
   });
 });

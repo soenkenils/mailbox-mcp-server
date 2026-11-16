@@ -14,7 +14,7 @@ import type {
   FreeBusyInfo,
 } from "../types/calendar.types.js";
 import { CalendarError, ErrorCode, ValidationError } from "../types/errors.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
+import { createCacheFetcher } from "../utils/cacheFallback.js";
 import {
   CircuitBreaker,
   type CircuitBreakerConfig,
@@ -75,6 +75,7 @@ export class CalendarService {
   private client: Awaited<ReturnType<typeof createDAVClient>> | null = null;
   private circuitBreaker: CircuitBreaker;
   private logger = createLogger("CalendarService");
+  private cachedFetch: ReturnType<typeof createCacheFetcher>;
 
   constructor(
     connection: CalDavConnection,
@@ -83,6 +84,11 @@ export class CalendarService {
   ) {
     this.connection = connection;
     this.cache = cache;
+    this.cachedFetch = createCacheFetcher(
+      this.cache,
+      this.logger,
+      "CalendarService",
+    );
 
     // Initialize circuit breaker with defaults or provided config
     const cbConfig = circuitBreakerConfig || {
@@ -108,47 +114,32 @@ export class CalendarService {
     return this.client;
   }
 
+  // A failed read is never replaced by a made-up default: an empty event list
+  // or an all-free range would read as a real answer rather than an outage.
   async getCalendarEvents(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    const cacheKey = `calendar_events:${JSON.stringify(options)}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents(options);
-        return events;
-      },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "getCalendarEvents",
-      service: "CalendarService",
-      ttl: 900000, // 15 minutes TTL
-      logContext: { options },
-    });
+    return this.cachedFetch(
+      `calendar_events:${JSON.stringify(options)}`,
+      () => this.fetchCalendarEvents(options),
+      "getCalendarEvents",
+      900000, // 15 minutes
+    );
   }
 
   async searchCalendar(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    const cacheKey = `calendar_search:${JSON.stringify(options)}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents(options);
-        const filteredEvents = this.filterEventsByQuery(events, options.query);
-        return filteredEvents;
-      },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "searchCalendar",
-      service: "CalendarService",
-      ttl: 900000, // 15 minutes TTL
-      logContext: { query: options.query },
-    });
+    return this.cachedFetch(
+      `calendar_search:${JSON.stringify(options)}`,
+      async () =>
+        this.filterEventsByQuery(
+          await this.fetchCalendarEvents(options),
+          options.query,
+        ),
+      "searchCalendar",
+      900000, // 15 minutes
+    );
   }
 
   async getFreeBusy(
@@ -156,37 +147,17 @@ export class CalendarService {
     end: Date,
     calendar?: string,
   ): Promise<FreeBusyInfo> {
-    const cacheKey = `freebusy:${start.toISOString()}:${end.toISOString()}:${calendar || "all"}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents({
+    return this.cachedFetch(
+      `freebusy:${start.toISOString()}:${end.toISOString()}:${calendar || "all"}`,
+      async () =>
+        this.calculateFreeBusy(
+          await this.fetchCalendarEvents({ start, end, calendar }),
           start,
           end,
-          calendar,
-        });
-
-        const freeBusy = this.calculateFreeBusy(events, start, end);
-        return freeBusy;
-      },
-      defaultValue: {
-        start,
-        end,
-        busy: [],
-        free: [{ start, end }],
-      },
-      logger: this.logger,
-      operation: "getFreeBusy",
-      service: "CalendarService",
-      ttl: 300000, // 5 minutes TTL
-      logContext: {
-        start: start.toISOString(),
-        end: end.toISOString(),
-        calendar,
-      },
-    });
+        ),
+      "getFreeBusy",
+      300000, // 5 minutes
+    );
   }
 
   async createCalendarEvent(
@@ -288,21 +259,7 @@ export class CalendarService {
     calendarFilter?: string,
   ): DAVCalendar {
     if (candidates.length === 0) {
-      const scope = this.allowedCalendars()
-        ? " among the calendars MAILBOX_CALENDARS allows"
-        : "";
-      throw calendarFilter
-        ? new ValidationError(
-            `Calendar "${calendarFilter}" not found${scope}`,
-            "calendar",
-            calendarFilter,
-          )
-        : new ValidationError(
-            scope
-              ? "No calendar available to create the event in; check MAILBOX_CALENDARS"
-              : "No calendar that can hold events was found",
-            "calendar",
-          );
+      throw this.noCalendarError(calendarFilter);
     }
 
     if (calendarFilter && candidates.length > 1) {
@@ -579,116 +536,109 @@ export class CalendarService {
   private async fetchCalendarEvents(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    try {
-      const calendars =
-        this.connection.calendars || (await this.discoverCalendars());
-      const allEvents: CalendarEvent[] = [];
+    // Reads choose calendars exactly like writes do, so MAILBOX_CALENDARS and
+    // the calendar argument mean the same thing everywhere.
+    const calendars = this.selectCalendars(
+      await this.listCalendars(),
+      options.calendar,
+    );
+    if (calendars.length === 0) {
+      throw this.noCalendarError(options.calendar);
+    }
 
-      for (const calendar of calendars) {
-        if (options.calendar && calendar !== options.calendar) {
-          continue;
-        }
-
-        const calendarEvents = await this.fetchEventsFromCalendar(
-          calendar,
-          options,
+    // Every calendar in scope is read or the call fails. Some calendars'
+    // events without the others would show the missing ones' appointments
+    // as free time, so a failure is never narrowed to a partial list.
+    const allEvents: CalendarEvent[] = [];
+    const failures: string[] = [];
+    for (const calendar of calendars) {
+      try {
+        allEvents.push(
+          ...(await this.fetchEventsFromCalendar(calendar, options)),
         );
-        allEvents.push(...calendarEvents);
+      } catch (error) {
+        failures.push(
+          `Could not read calendar "${calendarLabel(calendar)}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
+    }
 
-      return this.sortAndLimitEvents(allEvents, options);
-    } catch (error) {
-      this.logger.error(
-        "Error fetching calendar events",
-        {
-          operation: "getEvents",
-          service: "CalendarService",
-        },
-        {
-          options,
-          error: error instanceof Error ? error.message : String(error),
-        },
+    if (failures.length > 0) {
+      const hint =
+        failures.length < calendars.length
+          ? '. Nothing was returned, since the readable calendars alone would show the unread ones as free; pass "calendar" to read one that works'
+          : "";
+      throw new CalendarError(
+        `${failures.join("; ")}${hint}`,
+        ErrorCode.CALENDAR_READ_FAILED,
+        options.calendar,
       );
-      return [];
+    }
+
+    return this.sortAndLimitEvents(allEvents, options);
+  }
+
+  /** The server's calendars; a failure is reported, never guessed around. */
+  private async listCalendars(): Promise<DAVCalendar[]> {
+    try {
+      return await this.circuitBreaker.execute(async () => {
+        const client = await this.getClient();
+        return client.fetchCalendars();
+      });
+    } catch (error) {
+      throw new CalendarError(
+        `Could not list your calendars: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        ErrorCode.CALENDAR_READ_FAILED,
+      );
     }
   }
 
-  protected async discoverCalendars(): Promise<string[]> {
-    try {
-      const calendars = await this.circuitBreaker.execute(async () => {
-        const client = await this.getClient();
-        return await client.fetchCalendars();
-      });
-
-      return calendars.map(
-        (cal: DAVCalendar) => (cal.displayName as string) || cal.url,
+  /** Why no calendar is in scope: an unknown name or MAILBOX_CALENDARS. */
+  private noCalendarError(calendarFilter?: string): ValidationError {
+    const scope = this.allowedCalendars()
+      ? " among the calendars MAILBOX_CALENDARS allows"
+      : "";
+    if (calendarFilter) {
+      return new ValidationError(
+        `Calendar "${calendarFilter}" not found${scope}`,
+        "calendar",
+        calendarFilter,
       );
-    } catch (error) {
-      this.logger.error(
-        "Calendar discovery failed",
-        {
-          operation: "getCalendarList",
-          service: "CalendarService",
-        },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-      return ["personal"];
     }
+    return new ValidationError(
+      scope
+        ? "No calendar on the server matches MAILBOX_CALENDARS; use exact display names, URLs or last URL segments"
+        : "No calendar that can hold events was found",
+      "calendar",
+    );
   }
 
   private async fetchEventsFromCalendar(
-    calendar: string,
+    calendar: DAVCalendar,
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    try {
-      const { calendars, calendarObjects } = await this.circuitBreaker.execute(
-        async () => {
-          const client = await this.getClient();
-          const calendars = await client.fetchCalendars();
-
-          const targetCalendar = calendars.find(
-            (cal: DAVCalendar) =>
-              cal.displayName === calendar || cal.url.includes(calendar),
-          );
-
-          if (!targetCalendar) {
-            throw new Error(`Calendar ${calendar} not found`);
-          }
-
-          const calendarObjects = await client.fetchCalendarObjects({
-            calendar: targetCalendar,
-            timeRange:
-              options.start && options.end
-                ? {
-                    start: options.start.toISOString(),
-                    end: options.end.toISOString(),
-                  }
-                : undefined,
-          });
-
-          return { calendars, calendarObjects };
-        },
-      );
-
-      return await this.parseCalendarObjects(calendarObjects, calendar, {
-        start: options.start,
-        end: options.end,
+    const calendarObjects = await this.circuitBreaker.execute(async () => {
+      const client = await this.getClient();
+      return client.fetchCalendarObjects({
+        calendar,
+        timeRange:
+          options.start && options.end
+            ? {
+                start: options.start.toISOString(),
+                end: options.end.toISOString(),
+              }
+            : undefined,
       });
-    } catch (error) {
-      this.logger.error(
-        `Error fetching events from calendar ${calendar}`,
-        {
-          operation: "fetchCalendarEvents",
-          service: "CalendarService",
-        },
-        {
-          calendar,
-          options,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return [];
-    }
+    });
+
+    return this.parseCalendarObjects(calendarObjects, calendarLabel(calendar), {
+      start: options.start,
+      end: options.end,
+    });
   }
 
   private parseCalendarObjects(
