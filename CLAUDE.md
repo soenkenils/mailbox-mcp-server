@@ -129,10 +129,10 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 
 ### Adding a New MCP Tool
 
-1. Define tool schema in `src/index.ts` (`server.tool()`)
-2. Implement handler logic (usually delegates to service)
-3. Add tests for the tool handler
-4. Update documentation
+1. Add the definition to the module's tool list (`createEmailTools` in `src/tools/emailTools.ts`, `getSieveTools` in `src/tools/sieveTools.ts`) with `annotations` (a human `title` plus `readOnlyHint`, and for writes `destructiveHint`, `idempotentHint`, `openWorldHint`), an `inputSchema` closed with `additionalProperties: false`, and an `outputSchema` only when the result carries data worth parsing
+2. Implement the handler case (usually delegates to a service); return `structuredContent` matching the `outputSchema`, fence third-party mail content, and log arguments only through `summarizeArgs` (`src/utils/toolArgs.ts`)
+3. Add tests; `tests/toolContract.test.ts` checks annotations, closed schemas, undeclared-argument rejection and structured output for every email and Sieve tool automatically
+4. Update the tool table in README.md
 
 ### Adding a New Service Method
 
