@@ -9,13 +9,19 @@ import {
   toMCPError,
   ValidationError,
 } from "../types/errors.js";
-import { summarizeArgs } from "../utils/toolArgs.js";
+import {
+  describeUnknownArgs,
+  findUnknownArgs,
+  summarizeArgs,
+} from "../utils/toolArgs.js";
 import {
   createDirectorySchema,
   createDraftSchema,
+  DEFAULT_SEARCH_LIMIT,
   deleteEmailSchema,
   getEmailSchema,
   getEmailThreadSchema,
+  MAX_SEARCH_LIMIT,
   markEmailSchema,
   moveEmailSchema,
   searchEmailsSchema,
@@ -43,15 +49,44 @@ export function isEmailTool(name: string): name is EmailToolName {
   return EMAIL_TOOLS.includes(name as EmailToolName);
 }
 
+/**
+ * Behavioural hints (MCP tool annotations). Clients use these to decide what
+ * needs confirmation: reads are safe to run freely, while sending mail is
+ * irreversible and reaches parties outside the mailbox.
+ */
+const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+const ADDITIVE = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+/**
+ * IMAP system flags a client is allowed to store. \Recent is excluded on
+ * purpose: RFC 3501 makes it server-owned, so advertising it would invite
+ * calls the server must reject.
+ */
+const SETTABLE_FLAGS = [
+  "\\Seen",
+  "\\Answered",
+  "\\Flagged",
+  "\\Deleted",
+  "\\Draft",
+] as const;
+
+// The services are not needed to describe the tools; the parameters stay for
+// callers that pass them.
 export function createEmailTools(
-  _emailService: EmailService,
+  _emailService?: EmailService,
   _smtpService?: SmtpService,
 ): Tool[] {
   return [
     {
       name: "search_emails",
+      annotations: { ...READ_ONLY, title: "Search emails" },
       description:
-        "Search for emails in mailbox.org account with various filters including text query, date range, and IMAP flags (seen, answered, flagged, draft, deleted)",
+        "Search a mail folder and return message headers, newest first: subject, sender, recipients, date, flags and UID. Filters by text, date range and IMAP flags (seen, answered, flagged, draft, deleted). Returns headers only: use get_email with a returned UID for the body and attachments, or get_email_thread to follow a conversation. Does not search attachment contents.",
       inputSchema: {
         type: "object",
         properties: {
@@ -78,10 +113,10 @@ export function createEmailTools(
           },
           limit: {
             type: "number",
-            description: "Maximum number of emails to return (default: 50)",
-            default: 50,
+            description: `Maximum number of emails to return (default: ${DEFAULT_SEARCH_LIMIT})`,
+            default: DEFAULT_SEARCH_LIMIT,
             minimum: 1,
-            maximum: 200,
+            maximum: MAX_SEARCH_LIMIT,
           },
           offset: {
             type: "number",
@@ -120,7 +155,9 @@ export function createEmailTools(
     },
     {
       name: "get_email",
-      description: "Get full content of a specific email by UID",
+      annotations: { ...READ_ONLY, title: "Read an email" },
+      description:
+        "Fetch one message in full (body text and attachment metadata) by its UID. UIDs are per-folder, so pass the folder the UID came from. Find UIDs with search_emails.",
       inputSchema: {
         type: "object",
         properties: {
@@ -140,7 +177,9 @@ export function createEmailTools(
     },
     {
       name: "get_email_thread",
-      description: "Get all emails in a conversation thread by message ID",
+      annotations: { ...READ_ONLY, title: "Read a conversation" },
+      description:
+        "Fetch every message in one conversation, identified by the Message-ID of any message in it. Bodies are shortened for scanning; get_email returns a single message in full.",
       inputSchema: {
         type: "object",
         properties: {
@@ -160,7 +199,15 @@ export function createEmailTools(
     },
     {
       name: "send_email",
-      description: "Compose and send an email via SMTP",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+        title: "Send an email",
+      },
+      description:
+        "Send a message over SMTP immediately. Delivery is irreversible and reaches people outside this mailbox. To save a message without sending it, use create_draft.",
       inputSchema: {
         type: "object",
         properties: {
@@ -214,12 +261,17 @@ export function createEmailTools(
           },
         },
         required: ["to", "subject"],
+        // The validator rejects a message with neither body, so say so here
+        // too; otherwise this schema permits a call that always fails.
+        anyOf: [{ required: ["text"] }, { required: ["html"] }],
         additionalProperties: false,
       },
     },
     {
       name: "create_draft",
-      description: "Save an email as a draft",
+      annotations: { ...ADDITIVE, title: "Save a draft" },
+      description:
+        "Save a message to the Drafts folder without sending it. Use send_email to deliver a message. Unlike send_email, a draft may be saved with an empty body.",
       inputSchema: {
         type: "object",
         properties: {
@@ -283,7 +335,15 @@ export function createEmailTools(
     },
     {
       name: "move_email",
-      description: "Move an email from one folder to another",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Move an email",
+      },
+      description:
+        "Move one message between folders. The message keeps its content but is assigned a new UID in the destination folder. To remove a message instead, use delete_email.",
       inputSchema: {
         type: "object",
         properties: {
@@ -306,7 +366,15 @@ export function createEmailTools(
     },
     {
       name: "mark_email",
-      description: "Add or remove flags from an email (read, important, etc.)",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Flag an email",
+      },
+      description:
+        "Add or remove IMAP flags on one message, for example \\Seen to mark it read or \\Flagged to star it. Setting \\Deleted marks a message for removal without expunging it; delete_email is the way to actually delete.",
       inputSchema: {
         type: "object",
         properties: {
@@ -321,9 +389,10 @@ export function createEmailTools(
           },
           flags: {
             type: "array",
-            items: { type: "string" },
+            items: { type: "string", enum: [...SETTABLE_FLAGS] },
+            minItems: 1,
             description:
-              "Flags to add or remove (e.g., \\Seen, \\Flagged, \\Important)",
+              "IMAP system flags to add or remove. Backslash prefix is required.",
           },
           action: {
             type: "string",
@@ -337,7 +406,15 @@ export function createEmailTools(
     },
     {
       name: "delete_email",
-      description: "Delete an email (move to trash or permanently delete)",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Delete an email",
+      },
+      description:
+        "Delete one message. By default it moves to the trash folder and stays recoverable; with permanent set it is expunged and cannot be retrieved. When no trash folder exists, a non-permanent delete falls back to flagging the message \\Deleted.",
       inputSchema: {
         type: "object",
         properties: {
@@ -363,7 +440,9 @@ export function createEmailTools(
     },
     {
       name: "get_folders",
-      description: "List all available email folders",
+      annotations: { ...READ_ONLY, title: "List mail folders" },
+      description:
+        "List every folder in the mailbox with its full IMAP path and special-use role (inbox, sent, drafts, trash). Folder names vary by account, so this is how to find the valid values for the folder parameters on the other tools.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -372,7 +451,9 @@ export function createEmailTools(
     },
     {
       name: "create_directory",
-      description: "Create a new email folder/directory",
+      annotations: { ...ADDITIVE, title: "Create a mail folder" },
+      description:
+        "Create a new folder in the mailbox, optionally nested under an existing one. Creates the folder only; use move_email to put messages in it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -394,6 +475,11 @@ export function createEmailTools(
   ];
 }
 
+/** Advertised input schemas by tool name, for rejecting undeclared arguments. */
+const INPUT_SCHEMAS = new Map(
+  createEmailTools().map(tool => [tool.name, tool.inputSchema]),
+);
+
 export async function handleEmailTool(
   name: string,
   args: unknown,
@@ -404,6 +490,14 @@ export async function handleEmailTool(
   isError?: boolean;
 }> {
   try {
+    const inputSchema = INPUT_SCHEMAS.get(name);
+    const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
+    if (inputSchema && unknownArgs.length > 0) {
+      throw new Error(
+        `Validation failed: ${describeUnknownArgs(inputSchema, unknownArgs)}`,
+      );
+    }
+
     switch (name) {
       case "search_emails": {
         const validatedArgs = validateInput(searchEmailsSchema, args);

@@ -158,12 +158,21 @@ const dateSchema = v.pipe(
   }, "Invalid date - unable to parse"),
 );
 
-// Pagination schemas
+/** Page size search_emails uses when the caller names none. */
+export const DEFAULT_SEARCH_LIMIT = 50;
+
+/** Largest page search_emails will return; mirrored in its advertised schema. */
+export const MAX_SEARCH_LIMIT = 200;
+
+// Pagination schemas.
+// The ceiling must match the `maximum` advertised on search_emails: the model
+// builds calls from the advertised schema, so a looser validator just lets it
+// ask for a page far larger than the tool is willing to render.
 const limitSchema = v.pipe(
   v.number("Limit must be a number"),
   v.integer("Limit must be an integer"),
   v.minValue(1, "Limit must be at least 1"),
-  v.maxValue(1000, "Limit cannot exceed 1000"),
+  v.maxValue(MAX_SEARCH_LIMIT, `Limit cannot exceed ${MAX_SEARCH_LIMIT}`),
 );
 
 const offsetSchema = v.pipe(
@@ -191,21 +200,24 @@ const recipientSchema = v.object({
   address: emailSchema,
 });
 
-// Email flag validation
-const emailFlagSchema = v.union([
-  v.pipe(
-    v.string("Flag must be a string"),
-    v.regex(/^\\[A-Za-z]+$/, "Invalid email flag format"),
+// Email flag validation.
+//
+// This was a union of a regex and a picklist of system flags, but the regex
+// branch already matched every entry in the picklist, so the picklist never
+// decided anything, including for \Recent, which it appeared to allow.
+//
+// The regex stays deliberately wider than the enum advertised on mark_email:
+// that enum narrows what the model is offered, while a server may still
+// support flags such as \Junk. \Recent is the one exception, since RFC 3501
+// reserves it to the server and a client STORE of it is always refused.
+const emailFlagSchema = v.pipe(
+  v.string("Flag must be a string"),
+  v.regex(/^\\[A-Za-z]+$/, "Invalid email flag format"),
+  v.check(
+    flag => flag.toLowerCase() !== "\\recent",
+    "\\Recent is set by the server and cannot be changed by a client (RFC 3501)",
   ),
-  v.picklist([
-    "\\Seen",
-    "\\Answered",
-    "\\Flagged",
-    "\\Deleted",
-    "\\Draft",
-    "\\Recent",
-  ]),
-]);
+);
 
 // Calendar query validation
 const calendarQuerySchema = v.pipe(
@@ -347,7 +359,7 @@ export const searchEmailsSchema = v.object({
   folder: v.optional(folderNameSchema, "INBOX"),
   since: v.optional(dateSchema),
   before: v.optional(dateSchema),
-  limit: v.optional(limitSchema, 50),
+  limit: v.optional(limitSchema, DEFAULT_SEARCH_LIMIT),
   offset: v.optional(offsetSchema, 0),
   seen: v.optional(v.boolean("seen must be a boolean")),
   answered: v.optional(v.boolean("answered must be a boolean")),

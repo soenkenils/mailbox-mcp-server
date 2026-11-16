@@ -1,7 +1,7 @@
-import {
-  type CallToolRequest,
-  type CallToolResult,
-  type Tool,
+import type {
+  CallToolRequest,
+  CallToolResult,
+  Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as v from "valibot";
 import type { ServerConfig } from "../config/config.js";
@@ -11,6 +11,11 @@ import {
   SieveService,
 } from "../services/SieveService.js";
 import { SieveError } from "../types/sieve.types.js";
+import {
+  describeUnknownArgs,
+  findUnknownArgs,
+  summarizeArgs,
+} from "../utils/toolArgs.js";
 
 const logger = createLogger("SieveTools");
 
@@ -90,19 +95,31 @@ const CheckSieveScriptSchema = v.object({
   content: v.pipe(v.string(), v.minLength(1)),
 });
 
+/**
+ * Behavioural hints (MCP tool annotations). Reads are safe to run freely.
+ * Writing or deleting a script changes how all future mail is filtered, so
+ * those are marked destructive and clients can ask before running them.
+ */
+const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+
 export function getSieveTools(): Tool[] {
   return [
     {
       name: "list_sieve_scripts",
-      description: "List all Sieve filter scripts on the server",
+      annotations: { ...READ_ONLY, title: "List mail filters" },
+      description:
+        "List the Sieve filter scripts stored on the server and which one is active. Use get_sieve_script to read one.",
       inputSchema: {
         type: "object",
         properties: {},
+        additionalProperties: false,
       },
     },
     {
       name: "get_sieve_script",
-      description: "Retrieve the content of a specific Sieve script",
+      annotations: { ...READ_ONLY, title: "Read a mail filter" },
+      description:
+        "Return the source of one Sieve script by name. Find names with list_sieve_scripts.",
       inputSchema: {
         type: "object",
         properties: {
@@ -114,11 +131,20 @@ export function getSieveTools(): Tool[] {
           },
         },
         required: ["name"],
+        additionalProperties: false,
       },
     },
     {
       name: "create_sieve_filter",
-      description: "Create or update a Sieve filter script",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Save a mail filter",
+      },
+      description:
+        "Save a Sieve script under a name, replacing any script of that name, after the server has checked its syntax. Activates it unless activate is false; only one script is active at a time. To check syntax without saving, use check_sieve_script.",
       inputSchema: {
         type: "object",
         properties: {
@@ -140,11 +166,20 @@ export function getSieveTools(): Tool[] {
           },
         },
         required: ["name", "content"],
+        additionalProperties: false,
       },
     },
     {
       name: "delete_sieve_script",
-      description: "Delete a Sieve script from the server",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Delete a mail filter",
+      },
+      description:
+        "Delete one Sieve script from the server. It cannot be recovered. Servers refuse to delete the active script.",
       inputSchema: {
         type: "object",
         properties: {
@@ -156,11 +191,20 @@ export function getSieveTools(): Tool[] {
           },
         },
         required: ["name"],
+        additionalProperties: false,
       },
     },
     {
       name: "activate_sieve_script",
-      description: "Activate a specific Sieve script (deactivates others)",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        title: "Activate a mail filter",
+      },
+      description:
+        "Make one stored Sieve script the active filter. The previously active script stays stored but stops running.",
       inputSchema: {
         type: "object",
         properties: {
@@ -172,11 +216,14 @@ export function getSieveTools(): Tool[] {
           },
         },
         required: ["name"],
+        additionalProperties: false,
       },
     },
     {
       name: "check_sieve_script",
-      description: "Validate Sieve script syntax without saving",
+      annotations: { ...READ_ONLY, title: "Check a mail filter" },
+      description:
+        "Have the server check a Sieve script's syntax without saving it. Returns the server's error when the script is invalid.",
       inputSchema: {
         type: "object",
         properties: {
@@ -187,24 +234,49 @@ export function getSieveTools(): Tool[] {
           },
         },
         required: ["content"],
+        additionalProperties: false,
       },
     },
     {
       name: "get_sieve_capabilities",
+      annotations: { ...READ_ONLY, title: "Show filter capabilities" },
       description:
-        "Get ManageSieve server capabilities and supported extensions",
+        "Report the ManageSieve server's implementation, limits and supported Sieve extensions, for writing a script the server accepts.",
       inputSchema: {
         type: "object",
         properties: {},
+        additionalProperties: false,
       },
     },
   ];
 }
 
+/** Advertised input schemas by tool name, for rejecting undeclared arguments. */
+const INPUT_SCHEMAS = new Map(
+  getSieveTools().map(tool => [tool.name, tool.inputSchema]),
+);
+
 export async function handleSieveTool(
   request: CallToolRequest,
   config: ServerConfig,
 ): Promise<CallToolResult> {
+  const { name, arguments: args } = request.params;
+  const inputSchema = INPUT_SCHEMAS.get(name);
+  const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
+  if (inputSchema && unknownArgs.length > 0) {
+    // Checked before connecting: a call that cannot be valid should not
+    // cost a ManageSieve login.
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Invalid input for ${name}: ${describeUnknownArgs(inputSchema, unknownArgs)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const sieveService = new SieveService(config.sieve);
 
   try {
@@ -250,6 +322,8 @@ export async function handleSieveTool(
       },
       {
         tool: request.params.name,
+        // Shape only: a script body may hold addresses and mail rules.
+        args: summarizeArgs(request.params.arguments),
         error: error instanceof Error ? error.message : String(error),
       },
     );
