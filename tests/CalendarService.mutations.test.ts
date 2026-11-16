@@ -960,7 +960,10 @@ describe("CalendarService event changes", () => {
     it("should send the PUT with If-Match on the wire", async () => {
       const server = await recordingServer(204);
       try {
-        objectsByCalendar[WORK_URL] = [
+        fetchCalendars.mockResolvedValue([
+          { displayName: "work", url: server.base, components: ["VEVENT"] },
+        ]);
+        objectsByCalendar[server.base] = [
           stored(vcalendar(meeting()), "evt-1", server.base),
         ];
         updateCalendarObject.mockImplementation(tsdavUpdateCalendarObject);
@@ -1725,6 +1728,21 @@ describe("CalendarService event changes", () => {
       });
     });
 
+    it("should not send credentials to a host other than the calendar's", async () => {
+      objectsByCalendar[WORK_URL] = [
+        stored(vcalendar(meeting()), "evt-1", "https://evil.example.com/dav/"),
+      ];
+
+      await expect(
+        makeService().updateCalendarEvent({ uid: "evt-1", summary: "x" }),
+      ).rejects.toThrow(/different host/);
+      await expect(
+        makeService().deleteCalendarEvent({ uid: "evt-1" }),
+      ).rejects.toThrow(/different host/);
+      expect(updateCalendarObject).not.toHaveBeenCalled();
+      expect(deleteCalendarObject).not.toHaveBeenCalled();
+    });
+
     describe("without an ETag", () => {
       // tsdav builds the etag as `${getetag}`: a missing one arrives as the
       // string "undefined" (If-Match: undefined, always 412) or not at all
@@ -1839,7 +1857,10 @@ describe("CalendarService event changes", () => {
     it("should send If-Match, Schedule-Reply: F and the credentials on the wire", async () => {
       const server = await recordingServer(204);
       try {
-        objectsByCalendar[WORK_URL] = [
+        fetchCalendars.mockResolvedValue([
+          { displayName: "work", url: server.base, components: ["VEVENT"] },
+        ]);
+        objectsByCalendar[server.base] = [
           stored(vcalendar(meeting()), "evt-1", server.base),
         ];
         // The real tsdav request, wrapped like the client returned by

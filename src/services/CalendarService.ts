@@ -87,6 +87,7 @@ const OCCURRENCE_ID =
 interface LocatedEvent {
   object: DAVObject;
   calendarName: string;
+  calendarUrl: string;
 }
 
 const calendarLabel = (calendar: DAVCalendar): string =>
@@ -421,7 +422,11 @@ export class CalendarService {
         try {
           const object = await this.queryObjectByUid(client, calendar, uid);
           if (object) {
-            found.push({ object, calendarName: calendarLabel(calendar) });
+            found.push({
+              object,
+              calendarName: calendarLabel(calendar),
+              calendarUrl: calendar.url,
+            });
           }
         } catch (error) {
           failed.push(calendar);
@@ -442,7 +447,11 @@ export class CalendarService {
         const all = await client.fetchCalendarObjects({ calendar });
         const object = all.find(candidate => this.holdsEvent(candidate, uid));
         if (object) {
-          found.push({ object, calendarName: calendarLabel(calendar) });
+          found.push({
+            object,
+            calendarName: calendarLabel(calendar),
+            calendarUrl: calendar.url,
+          });
         }
       }
       return found;
@@ -473,6 +482,24 @@ export class CalendarService {
     }
 
     const [located] = matches;
+    // The write carries the account's credentials: it must not go to a host
+    // other than the calendar's, whatever URL the server listed.
+    let sameOrigin = false;
+    try {
+      sameOrigin =
+        new URL(located.object.url, located.calendarUrl).origin ===
+        new URL(located.calendarUrl).origin;
+    } catch {
+      sameOrigin = false;
+    }
+    if (!sameOrigin) {
+      throw new CalendarError(
+        `The server listed event "${uid}" on a different host than its calendar, so it is not changed (that would send your credentials there)`,
+        ErrorCode.EVENT_WRITE_REJECTED,
+        located.calendarName,
+        uid,
+      );
+    }
     // tsdav turns a missing getetag into the string "undefined": sent as
     // If-Match it always fails (412), and a truly absent one would make the
     // write unconditional and overwrite concurrent changes.
