@@ -237,6 +237,22 @@ describe("LISTSCRIPTS parsing", () => {
   });
 });
 
+describe("script names with quotes and backslashes", () => {
+  it("escapes them on the wire (RFC 5804 quoted string)", async () => {
+    const fake = await startServer(GREETING_NO_TLS, (line, socket) => {
+      socket.write(
+        line.startsWith("GETSCRIPT")
+          ? `${literal("keep;")}\r\nOK\r\n`
+          : "OK\r\n",
+      );
+    });
+    const sieve = await connectedWithoutAuth(fake.port);
+    expect(await sieve.getScript('a"b\\c')).toBe("keep;");
+    expect(fake.received).toContain('GETSCRIPT "a\\"b\\\\c"');
+    await sieve.disconnect();
+  });
+});
+
 describe("framing helpers", () => {
   it("finds the response end only outside literals", () => {
     const buf = Buffer.from(`${literal("OK\r\nBYE\r\n")}\r\nOK\r\n`);
@@ -310,6 +326,22 @@ describe("RFC 5804 response codes", () => {
     await sieve.disconnect();
   });
 
+  it("never leaves the message empty when the server sends only a code", async () => {
+    const fake = await startServer(GREETING_NO_TLS, (line, socket) => {
+      socket.write(
+        line.startsWith("GETSCRIPT") ? "NO (NONEXISTENT)\r\n" : "OK\r\n",
+      );
+    });
+    const sieve = await connectedWithoutAuth(fake.port);
+    const error = await sieve.getScript("x").catch(e => e);
+    expect(error).toBeInstanceOf(SieveError);
+    expect(error.code).toBe("NONEXISTENT");
+    expect(error.message).toBe(
+      "Failed to get script 'x': no reason given by the server",
+    );
+    await sieve.disconnect();
+  });
+
   it("splits the code off and ignores unbalanced parentheses", () => {
     expect(splitResponseCode(Buffer.from(' (TRYLATER) "later"'))).toEqual({
       code: "TRYLATER",
@@ -355,6 +387,34 @@ describe("response size limits", () => {
     });
     const sieve = await connectedWithoutAuth(fake.port);
     await expect(sieve.listScripts()).rejects.toThrow(/too large/);
+    expect(sieve.isConnected()).toBe(false);
+  });
+
+  it.each([
+    "{4294967296}",
+    "{99999999999999999999}",
+  ])("rejects the 10+ digit literal marker %s", marker => {
+    expect(() =>
+      findResponseEnd(Buffer.from(`${marker}\r\nab\r\nOK\r\nxx\r\n`)),
+    ).toThrow(/too large/);
+  });
+
+  it("reads a literal length with leading zeros by value", () => {
+    const buf = Buffer.from("{0000000000004}\r\nOK\r\n\r\nOK\r\n");
+    expect(findResponseEnd(buf)?.end).toBe(buf.length);
+    expect(tokenizeSieveData(buf.subarray(0, 21))).toEqual([
+      [{ kind: "string", value: "OK\r\n" }],
+    ]);
+  });
+
+  it("closes the connection on a 10+ digit literal instead of parsing it as lines", async () => {
+    const fake = await startServer(GREETING_NO_TLS, (line, socket) => {
+      socket.write(
+        line === "LISTSCRIPTS" ? '{4294967296}\r\n"x"\r\nOK\r\n' : "OK\r\n",
+      );
+    });
+    const sieve = await connectedWithoutAuth(fake.port);
+    await expect(sieve.listScripts()).rejects.toThrow(/too large.*literal/);
     expect(sieve.isConnected()).toBe(false);
   });
 

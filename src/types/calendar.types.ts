@@ -57,3 +57,41 @@ export interface CalDavConnection {
   password: string;
   calendars?: string[];
 }
+
+export interface CreateCalendarEventOptions {
+  summary: string;
+  start: Date;
+  end: Date;
+  /**
+   * The calendar date as the caller wrote it (YYYY-MM-DD). An all-day event
+   * uses it instead of the UTC date of the instant, which is the previous
+   * day for a midnight in any zone east of UTC.
+   */
+  startDate?: string;
+  endDate?: string;
+  description?: string;
+  location?: string;
+  allDay?: boolean;
+  attendees?: Array<{ email: string; name?: string }>;
+  /**
+   * When false (the default) attendees are only recorded: no ORGANIZER is
+   * written and every ATTENDEE carries SCHEDULE-AGENT=CLIENT, so the server
+   * sends no invitations (RFC 6638). When true the account becomes the
+   * ORGANIZER and the server may email invitations to every attendee.
+   */
+  sendInvitations?: boolean;
+  calendar?: string;
+}
+
+export interface CreateCalendarEventResult {
+  uid: string;
+  summary: string;
+  start: Date;
+  end: Date;
+  allDay: boolean;
+  /** For all-day events: the DTSTART date written (YYYY-MM-DD). */
+  startDate?: string;
+  /** For all-day events: the exclusive DTEND date written (YYYY-MM-DD). */
+  endDate?: string;
+  calendar: string;
+}

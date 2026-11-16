@@ -38,11 +38,6 @@ interface ImapMessage {
   size?: number;
 }
 
-interface ImapEnvelopeAddress {
-  name?: string;
-  address: string;
-}
-
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   EmailComposition,
@@ -53,28 +48,19 @@ import type {
   EmailThread,
   ImapConnection,
 } from "../types/email.types.js";
-import {
-  CacheError,
-  ConnectionError,
-  EmailError,
-  ErrorCode,
-  type ErrorContext,
-  ErrorUtils,
-} from "../types/errors.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
+import { createCacheFetcher } from "../utils/cacheFallback.js";
 import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
   type ImapPoolConfig,
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
-import { type OfflineCapabilities, OfflineService } from "./OfflineService.js";
 
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
-  private offlineService: OfflineService;
   private logger = createLogger("EmailService");
+  private cachedFetch: ReturnType<typeof createCacheFetcher>;
 
   constructor(
     connection: ImapConnection,
@@ -82,7 +68,11 @@ export class EmailService {
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
   ) {
     this.cache = cache;
-    this.offlineService = new OfflineService(cache);
+    this.cachedFetch = createCacheFetcher(
+      this.cache,
+      this.logger,
+      "EmailService",
+    );
     this.pool = new ImapConnectionPool({
       ...poolConfig,
       connectionConfig: connection,
@@ -96,30 +86,25 @@ export class EmailService {
   async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
     const cacheKey = `email_search:${JSON.stringify(options)}`;
 
-    return withCacheFallback({
+    return this.cachedFetch(
       cacheKey,
-      cache: this.cache,
-      fetch: async () => {
+      async () => {
         const folder = options.folder || "INBOX";
         let wrapper: ImapConnectionWrapper | null = null;
 
         try {
           wrapper = await this.pool.acquireForFolder(folder);
-          const messages = await this.performEmailSearch(wrapper, options);
-          return messages;
+          return await this.performEmailSearch(wrapper, options);
         } finally {
           if (wrapper) {
             await this.pool.releaseFromFolder(wrapper);
           }
         }
       },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "searchEmails",
-      service: "EmailService",
-      ttl: 300000, // 5 minutes TTL
-      logContext: { folder: options.folder, query: options.query },
-    });
+      "searchEmails",
+      300000, // 5 minutes TTL
+      { defaultValue: [] },
+    );
   }
 
   async getEmail(uid: number, folder = "INBOX"): Promise<EmailMessage | null> {
@@ -127,40 +112,20 @@ export class EmailService {
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      return await withCacheFallback({
+      // No fallback: when the connection fails and there is no stale copy,
+      // the error must surface instead of reading as "not found".
+      return await this.cachedFetch(
         cacheKey,
-        cache: this.cache,
-        fetch: async () => {
+        async () => {
           wrapper = await this.pool.acquireForFolder(folder);
-          const message = await this.fetchEmailByUid(wrapper, uid, folder);
-          return message;
+          return await this.fetchEmailByUid(wrapper, uid, folder);
         },
-        defaultValue: null,
-        logger: this.logger,
-        operation: "getEmail",
-        service: "EmailService",
-        ttl: 600000, // 10 minutes TTL
-        logContext: { uid, folder },
-      });
-    } catch (error) {
-      // Mark connection as unhealthy if fetch operation timed out
-      if (
-        wrapper &&
-        error instanceof Error &&
-        error.message.includes("timed out")
-      ) {
-        (wrapper as ImapConnectionWrapper).isHealthy = false;
-        await this.logger.warning(
-          "Marking connection as unhealthy due to timeout",
-          {
-            operation: "getEmail",
-            service: "EmailService",
-          },
-          { uid, folder },
-        );
-      }
-      throw error;
+        "getEmail",
+        600000, // 10 minutes TTL
+      );
     } finally {
+      // A timed-out or failed fetch has already marked the connection
+      // unhealthy (fetchRawMessageByUid), so releasing it retires it.
       if (wrapper) {
         await this.pool.releaseFromFolder(wrapper);
       }
@@ -256,7 +221,7 @@ export class EmailService {
             await iterator.return();
           }
         } catch (error) {
-          await this.logger.warning(
+          this.logger.warning(
             "Failed to close fetch iterator for message headers",
             {
               operation: "fetchMessageHeaders",
@@ -312,8 +277,9 @@ export class EmailService {
     const timeoutMs = 10000; // 10 seconds timeout for fetch operation
     const fetchPromise = this.performFetch(wrapper, uid);
 
-    const timeoutPromise = new Promise<null>((_, reject) => {
-      setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
         reject(
           new Error(`IMAP fetch operation timed out after ${timeoutMs}ms`),
         );
@@ -323,7 +289,7 @@ export class EmailService {
     try {
       return await Promise.race([fetchPromise, timeoutPromise]);
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Failed to fetch email with UID ${uid} from folder ${folder}`,
         {
           operation: "fetchEmailContent",
@@ -340,7 +306,11 @@ export class EmailService {
       // IMAP connection in a corrupted state. Marking it unhealthy ensures
       // it won't be reused and will be destroyed on next validation.
       wrapper.isHealthy = false;
-      return null;
+      // Rethrown rather than returning null, which callers read as "no such
+      // message". Only fetchOne resolving without a message means not found.
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -666,14 +636,13 @@ export class EmailService {
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
-      return await withCacheFallback({
+      return await this.cachedFetch(
         cacheKey,
-        cache: this.cache,
-        fetch: async () => {
+        async (): Promise<EmailFolder[]> => {
           wrapper = await this.pool.acquire();
           const folders = await wrapper.connection.list();
 
-          const result: EmailFolder[] = folders.map(folder => ({
+          return folders.map(folder => ({
             name: folder.name,
             path: folder.path,
             delimiter: folder.delimiter || "/",
@@ -684,15 +653,11 @@ export class EmailService {
                 : [],
             specialUse: folder.specialUse,
           }));
-
-          return result;
         },
-        defaultValue: this.getDefaultFolders(),
-        logger: this.logger,
-        operation: "getFolders",
-        service: "EmailService",
-        ttl: 900000, // Cache for 15 minutes
-      });
+        "getFolders",
+        900000, // Cache for 15 minutes
+        { defaultValue: this.getDefaultFolders() },
+      );
     } finally {
       if (wrapper) {
         await this.pool.release(wrapper);
@@ -726,7 +691,7 @@ export class EmailService {
         message: `Email moved from ${fromFolder} to ${toFolder}`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error moving email UID ${uid}`,
         {
           operation: "moveEmail",
@@ -779,7 +744,7 @@ export class EmailService {
         message: `Email flags ${action === "add" ? "added" : "removed"} successfully`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error marking email UID ${uid}`,
         {
           operation: "markEmail",
@@ -831,7 +796,7 @@ export class EmailService {
           await wrapper.connection.messageMove(`${uid}:${uid}`, "Trash", {
             uid: true,
           });
-        } catch (moveError) {
+        } catch (_moveError) {
           // If Trash folder doesn't exist, try other common names
           const trashFolders = ["Deleted Items", "Deleted", "INBOX.Trash"];
           let moved = false;
@@ -847,7 +812,7 @@ export class EmailService {
               );
               moved = true;
               break;
-            } catch (error) {
+            } catch (_error) {
               // Continue to next folder
             }
           }
@@ -875,7 +840,7 @@ export class EmailService {
           : "Email moved to trash",
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error deleting email UID ${uid}`,
         {
           operation: "deleteEmail",
@@ -928,7 +893,7 @@ export class EmailService {
             : undefined,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         "Error creating draft",
         {
           operation: "createDraft",
@@ -1063,48 +1028,6 @@ export class EmailService {
     return this.pool.getImapMetrics();
   }
 
-  // Offline capabilities
-  getOfflineCapabilities(): OfflineCapabilities {
-    return this.offlineService.getOfflineCapabilities();
-  }
-
-  async searchEmailsOffline(
-    options: EmailSearchOptions,
-  ): Promise<EmailMessage[]> {
-    return this.offlineService.searchEmailsOffline(options);
-  }
-
-  async getEmailOffline(
-    uid: number,
-    folder = "INBOX",
-  ): Promise<EmailMessage | null> {
-    return this.offlineService.getEmailOffline(uid, folder);
-  }
-
-  async getFoldersOffline(): Promise<EmailFolder[]> {
-    return this.offlineService.getFoldersOffline();
-  }
-
-  async validatePoolHealth(): Promise<boolean> {
-    try {
-      const metrics = this.pool.getMetrics();
-      return (
-        metrics.totalConnections > 0 &&
-        metrics.totalErrors < metrics.totalConnections
-      );
-    } catch (error) {
-      await this.logger.error(
-        "Error checking pool health",
-        {
-          operation: "isHealthy",
-          service: "EmailService",
-        },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-      return false;
-    }
-  }
-
   async createDirectory(
     name: string,
     parentPath = "",
@@ -1127,7 +1050,7 @@ export class EmailService {
         message: `Directory '${name}' created successfully`,
       };
     } catch (error) {
-      await this.logger.error(
+      this.logger.error(
         `Error creating directory '${name}'`,
         {
           operation: "createDirectory",

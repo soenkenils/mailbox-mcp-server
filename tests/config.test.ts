@@ -41,6 +41,16 @@ describe("Configuration", () => {
       expect(config.debug).toBe(false);
     });
 
+    it("should connect SMTP on demand instead of keeping a transporter warm", () => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
+
+      const config = loadConfig();
+
+      expect(config.pools.smtp.minConnections).toBe(0);
+      expect(config.pools.imap.minConnections).toBe(1);
+    });
+
     it("should override defaults with environment variables", () => {
       process.env.MAILBOX_EMAIL = "test@mailbox.org";
       process.env.MAILBOX_PASSWORD = "TestPass123!";

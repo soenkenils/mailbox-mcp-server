@@ -16,20 +16,8 @@ export enum ErrorCode {
   AUTH_TOKEN_EXPIRED = "AUTH_TOKEN_EXPIRED",
   AUTH_INSUFFICIENT_PERMISSIONS = "AUTH_INSUFFICIENT_PERMISSIONS",
 
-  // Rate limiting errors
-  RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED",
-  QUOTA_EXCEEDED = "QUOTA_EXCEEDED",
-
   // Validation errors
   VALIDATION_FAILED = "VALIDATION_FAILED",
-  INVALID_INPUT = "INVALID_INPUT",
-  MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD",
-  INVALID_FORMAT = "INVALID_FORMAT",
-
-  // Mailbox.org specific errors
-  MAILBOX_SERVER_ERROR = "MAILBOX_SERVER_ERROR",
-  MAILBOX_MAINTENANCE = "MAILBOX_MAINTENANCE",
-  MAILBOX_FEATURE_UNAVAILABLE = "MAILBOX_FEATURE_UNAVAILABLE",
 
   // Email specific errors
   EMAIL_NOT_FOUND = "EMAIL_NOT_FOUND",
@@ -42,18 +30,11 @@ export enum ErrorCode {
   EVENT_NOT_FOUND = "EVENT_NOT_FOUND",
   INVALID_DATE_RANGE = "INVALID_DATE_RANGE",
   CALENDAR_CONFLICT = "CALENDAR_CONFLICT",
-
-  // Cache errors
-  CACHE_ERROR = "CACHE_ERROR",
-  CACHE_MISS = "CACHE_MISS",
-
-  // Configuration errors
-  CONFIG_INVALID = "CONFIG_INVALID",
-  CONFIG_MISSING = "CONFIG_MISSING",
+  EVENT_MODIFIED = "EVENT_MODIFIED",
+  EVENT_WRITE_REJECTED = "EVENT_WRITE_REJECTED",
 
   // Internal errors
   INTERNAL_ERROR = "INTERNAL_ERROR",
-  NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
   OPERATION_FAILED = "OPERATION_FAILED",
 }
 
@@ -173,29 +154,6 @@ export class AuthenticationError extends MCPError {
 }
 
 /**
- * Rate limiting errors
- */
-export class RateLimitError extends MCPError {
-  public readonly retryAfter?: number;
-
-  constructor(
-    message: string,
-    retryAfter?: number,
-    context: ErrorContext = {},
-  ) {
-    super(message, ErrorCode.RATE_LIMIT_EXCEEDED, context, true);
-    this.retryAfter = retryAfter;
-  }
-
-  getUserMessage(): string {
-    if (this.retryAfter) {
-      return `Rate limit exceeded. Please try again in ${this.retryAfter} seconds.`;
-    }
-    return "Rate limit exceeded. Please try again later.";
-  }
-}
-
-/**
  * Input validation errors
  */
 export class ValidationError extends MCPError {
@@ -218,34 +176,6 @@ export class ValidationError extends MCPError {
       return `Invalid value for field '${this.field}': ${this.message}`;
     }
     return `Validation failed: ${this.message}`;
-  }
-}
-
-/**
- * Mailbox.org specific errors
- */
-export class MailboxError extends MCPError {
-  public readonly serverCode?: string;
-
-  constructor(
-    message: string,
-    code: ErrorCode = ErrorCode.MAILBOX_SERVER_ERROR,
-    serverCode?: string,
-    context: ErrorContext = {},
-  ) {
-    super(message, code, context, true);
-    this.serverCode = serverCode;
-  }
-
-  getUserMessage(): string {
-    switch (this.code) {
-      case ErrorCode.MAILBOX_MAINTENANCE:
-        return "Mailbox.org is currently under maintenance. Please try again later.";
-      case ErrorCode.MAILBOX_FEATURE_UNAVAILABLE:
-        return "This feature is currently unavailable on mailbox.org.";
-      default:
-        return "A server error occurred. Please try again later.";
-    }
   }
 }
 
@@ -313,86 +243,14 @@ export class CalendarError extends MCPError {
         return "The specified date range is invalid.";
       case ErrorCode.CALENDAR_CONFLICT:
         return "There is a scheduling conflict with this calendar event.";
+      case ErrorCode.EVENT_MODIFIED:
+        return "The event was changed on the server after it was read. Fetch it again and retry.";
+      case ErrorCode.EVENT_WRITE_REJECTED:
+        return this.message;
       default:
         return "A calendar operation failed. Please try again.";
     }
   }
-}
-
-/**
- * Cache-related errors
- */
-export class CacheError extends MCPError {
-  constructor(
-    message: string,
-    code: ErrorCode = ErrorCode.CACHE_ERROR,
-    context: ErrorContext = {},
-  ) {
-    super(message, code, context, true);
-  }
-
-  getUserMessage(): string {
-    return "A caching error occurred. The operation may be slower than usual.";
-  }
-}
-
-/**
- * Configuration errors
- */
-export class ConfigurationError extends MCPError {
-  public readonly configKey?: string;
-
-  constructor(message: string, configKey?: string, context: ErrorContext = {}) {
-    super(message, ErrorCode.CONFIG_INVALID, context, false);
-    this.configKey = configKey;
-  }
-
-  getUserMessage(): string {
-    if (this.configKey) {
-      return `Configuration error for '${this.configKey}': ${this.message}`;
-    }
-    return `Configuration error: ${this.message}`;
-  }
-}
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: Error): boolean {
-  if (error instanceof MCPError) {
-    return error.isRetryable;
-  }
-
-  // Consider network errors as retryable
-  if (
-    error.message.includes("ECONNRESET") ||
-    error.message.includes("ENOTFOUND") ||
-    error.message.includes("ETIMEDOUT")
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Extract error code from any error
- */
-export function getErrorCode(error: Error): ErrorCode {
-  if (error instanceof MCPError) {
-    return error.code;
-  }
-  return ErrorCode.INTERNAL_ERROR;
-}
-
-/**
- * Get user-friendly message from any error
- */
-export function getUserMessage(error: Error): string {
-  if (error instanceof MCPError) {
-    return error.getUserMessage();
-  }
-  return "An unexpected error occurred. Please try again.";
 }
 
 /**
@@ -448,11 +306,9 @@ export function toMCPError(error: Error, context: ErrorContext = {}): MCPError {
 }
 
 /**
- * @deprecated Use individual functions instead: isRetryableError, getErrorCode, getUserMessage, toMCPError
+ * @deprecated Import toMCPError directly. Kept until src/main.ts and
+ * SmtpService, which open PRs are changing, stop using it.
  */
 export const ErrorUtils = {
-  isRetryable: isRetryableError,
-  getErrorCode,
-  getUserMessage,
   toMCPError,
 };

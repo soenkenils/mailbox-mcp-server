@@ -29,6 +29,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Retrieve calendar events** within specified date ranges
 - ✅ **Search calendar events** by title, description, location
 - ✅ **Free/busy time checking** for scheduling
+- ✅ **Create calendar events** (timed or all-day, with attendees)
 - ✅ **Multi-calendar support** and aggregation
 - ✅ **Recurring events** and exception handling
 - ✅ **Connection pooling** for CalDAV with automatic retry logic
@@ -63,7 +64,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 2. Copy the example environment file and update it with your credentials:
 
    ```bash
-   cp env.example .env
+   cp .env.example .env
    ```
 
    > **Note**: For security, it's recommended to use an [App Password](https://support.mailbox.org/en/help/app-passwords) instead of your main account password.
@@ -91,6 +92,12 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    # Optional: Enable debug logging
    DEBUG=false
    ```
+
+   > **Note**: The server reads its configuration from environment variables
+   > only; it does not load `.env` itself. Bun loads `.env` from the working
+   > directory when it runs the code (`bun src/main.ts`, `bun dist/main.js`);
+   > `node` needs `node --env-file=.env dist/main.js`. In Claude Desktop, set
+   > the variables in the server's `env` block instead.
 
 4. Add to Claude Desktop configuration:
 
@@ -131,6 +138,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - **`get_calendar_events`** - Retrieve events in date range
 - **`search_calendar`** - Search events by keyword
 - **`get_free_busy`** - Check availability for scheduling
+- **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events need a date-time with an explicit offset or `Z` (a date-time without one is read in the time zone of the machine running the server) and are stored in UTC. For all-day events pass dates (`YYYY-MM-DD`); `end` is the last day, inclusive, and can be omitted for a one-day event. Impossible dates such as `2025-02-30` and local times skipped by a daylight-saving change are refused. By default nobody is notified: attendees are only recorded on the event. Only with `sendInvitations: true` (meant for when you explicitly ask to invite people) does your account become the organizer, and mailbox.org may then email invitations to all attendees. The target calendar and the `MAILBOX_CALENDARS` entries are matched exactly, by display name, full URL or last URL segment; a name that matches several calendars is refused. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
 
 ### **Sieve Filter Tools**
 
@@ -220,7 +228,7 @@ Configuration is automatically validated at startup using comprehensive validati
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
   - Must be a valid URL format
-- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access. Also limits where `create_calendar_event` may write; the first entry is its default calendar
 
 #### **Optional Sieve Configuration**
 
@@ -228,8 +236,16 @@ Configuration is automatically validated at startup using comprehensive validati
   - Must be a non-empty string
 - `MAILBOX_SIEVE_PORT`: Sieve server port (default: `4190`)
   - Must be a valid port number (1-65535)
-- `MAILBOX_SIEVE_SECURE`: Use TLS encryption (default: `false`)
+- `MAILBOX_SIEVE_SECURE`: How the connection is encrypted (default: `false`)
   - Must be `"true"` or `"false"`
+  - `false`: connect in plain text and upgrade with STARTTLS. STARTTLS is
+    mandatory: the client refuses to authenticate if the server does not
+    offer it or the upgrade fails. This is what the standard ManageSieve
+    port `4190` (including mailbox.org) expects.
+  - `true`: implicit TLS from the first byte. Only for servers that offer
+    ManageSieve on a dedicated TLS port; the standard port `4190` does not
+    speak implicit TLS.
+  - In both modes the server certificate is always verified.
 
 #### **Optional Cache Configuration**
 
@@ -256,6 +272,8 @@ All cache TTL values must be non-negative numbers (in milliseconds):
   - Must be at least 1000ms
 - `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `6000`)
   - Must be at least 1000ms
+
+The IMAP pool keeps one connection open while idle. The SMTP pool connects on demand: checking an idle SMTP connection means a full login, so it is opened for a send and closed again once idle for `POOL_IDLE_TIMEOUT_MS`.
 
 #### **Optional Debug Configuration**
 
