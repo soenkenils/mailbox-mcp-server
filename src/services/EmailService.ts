@@ -1104,10 +1104,9 @@ export class EmailService {
     try {
       wrapper = await this.pool.acquire();
 
-      // Construct the full folder path
-      // Use standard IMAP delimiter
-      const delimiter = "/"; // Standard IMAP delimiter
-      const folderPath = parentPath ? `${parentPath}${delimiter}${name}` : name;
+      // Servers differ ("/" or "."), so a nested path is passed as parts for
+      // imapflow to join with the server's own delimiter.
+      const folderPath = parentPath ? [parentPath, name] : name;
 
       // Create the folder using IMAP CREATE command
       const created = await wrapper.connection.mailboxCreate(folderPath);

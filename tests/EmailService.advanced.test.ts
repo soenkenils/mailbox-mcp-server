@@ -1272,21 +1272,24 @@ describe("EmailService - Advanced Coverage", () => {
       const result = await service.createDirectory("SubFolder", "INBOX");
 
       expect(result.success).toBe(true);
-      expect(mockWrapper.connection.mailboxCreate).toHaveBeenCalledWith(
-        "INBOX/SubFolder",
-      );
+      // Passed as parts so imapflow joins them with the server's delimiter.
+      expect(mockWrapper.connection.mailboxCreate).toHaveBeenCalledWith([
+        "INBOX",
+        "SubFolder",
+      ]);
     });
 
-    it("should use standard delimiter", async () => {
+    it("should leave the delimiter to the server", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquire.mockResolvedValue(mockWrapper);
       mockPool.release.mockResolvedValue(undefined);
 
       await service.createDirectory("SubFolder", "Parent/Nested");
 
-      expect(mockWrapper.connection.mailboxCreate).toHaveBeenCalledWith(
-        "Parent/Nested/SubFolder",
-      );
+      expect(mockWrapper.connection.mailboxCreate).toHaveBeenCalledWith([
+        "Parent/Nested",
+        "SubFolder",
+      ]);
     });
 
     it("should handle errors gracefully", async () => {

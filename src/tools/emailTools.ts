@@ -381,7 +381,8 @@ export function createEmailTools(
           },
           parentPath: {
             type: "string",
-            description: "Parent folder path (optional, defaults to root)",
+            description:
+              'Existing parent folder path as returned by get_folders, e.g. "INBOX/2025" (optional, defaults to the top level)',
             default: "",
           },
         },
