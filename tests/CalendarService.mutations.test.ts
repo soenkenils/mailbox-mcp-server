@@ -1546,6 +1546,48 @@ describe("CalendarService event changes", () => {
         expect(updateCalendarObject).not.toHaveBeenCalled();
       });
 
+      it("should not download whole calendars when the UID query finds the event", async () => {
+        await makeService().updateCalendarEvent({
+          uid: "evt-1",
+          summary: "Renamed",
+        });
+
+        const unfiltered = fetchCalendarObjects.mock.calls.filter(
+          ([params]) => params.filters === undefined,
+        );
+        expect(unfiltered).toHaveLength(0);
+      });
+
+      it("should scan only the calendars whose UID query failed when others found the event", async () => {
+        fetchCalendarObjects.mockImplementation(
+          async ({
+            calendar,
+            filters,
+          }: {
+            calendar: { url: string };
+            filters?: unknown;
+          }) => {
+            if (filters && calendar.url === PRIVATE_URL) {
+              throw new Error("Collection query failed: 501");
+            }
+            const objects = objectsByCalendar[calendar.url] ?? [];
+            return filters
+              ? objects.filter(object => object.data.includes("UID:evt-1"))
+              : objects;
+          },
+        );
+
+        await makeService().updateCalendarEvent({
+          uid: "evt-1",
+          summary: "Renamed",
+        });
+
+        const unfiltered = fetchCalendarObjects.mock.calls
+          .filter(([params]) => params.filters === undefined)
+          .map(([params]) => params.calendar.url);
+        expect(unfiltered).toEqual([PRIVATE_URL]);
+      });
+
       it("should confirm a miss against the whole calendar before giving up", async () => {
         await expect(
           makeService().updateCalendarEvent({ uid: "nope", summary: "x" }),

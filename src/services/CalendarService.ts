@@ -416,8 +416,31 @@ export class CalendarService {
     const matches = await this.circuitBreaker.execute(async () => {
       const client = await this.getClient();
       const found: LocatedEvent[] = [];
+      const failed: DAVCalendar[] = [];
       for (const calendar of calendars) {
-        const object = await this.findObjectByUid(client, calendar, uid);
+        try {
+          const object = await this.queryObjectByUid(client, calendar, uid);
+          if (object) {
+            found.push({ object, calendarName: calendarLabel(calendar) });
+          }
+        } catch (error) {
+          failed.push(calendar);
+          this.logger.warning(
+            "UID query failed, scanning the calendar instead",
+            { operation: "locateEvent", service: "CalendarService" },
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
+
+      // Servers differ in how they treat prop-filters: with no hit at all,
+      // the miss is confirmed against every full calendar; otherwise only
+      // calendars whose query failed are downloaded, so the UID cannot hide
+      // in one of them.
+      const scan = found.length === 0 ? calendars : failed;
+      for (const calendar of scan) {
+        const all = await client.fetchCalendarObjects({ calendar });
+        const object = all.find(candidate => this.holdsEvent(candidate, uid));
         if (object) {
           found.push({ object, calendarName: calendarLabel(calendar) });
         }
@@ -466,46 +489,31 @@ export class CalendarService {
     return located;
   }
 
-  private async findObjectByUid(
+  /** The object holding the UID, by a CalDAV UID query (REPORT). */
+  private async queryObjectByUid(
     client: DAVClient,
     calendar: DAVCalendar,
     uid: string,
   ): Promise<DAVObject | undefined> {
-    try {
-      const filtered = await client.fetchCalendarObjects({
-        calendar,
-        filters: {
+    const filtered = await client.fetchCalendarObjects({
+      calendar,
+      filters: {
+        "comp-filter": {
+          _attributes: { name: "VCALENDAR" },
           "comp-filter": {
-            _attributes: { name: "VCALENDAR" },
-            "comp-filter": {
-              _attributes: { name: "VEVENT" },
-              "prop-filter": {
-                _attributes: { name: "UID" },
-                "text-match": {
-                  _attributes: { collation: "i;octet" },
-                  _text: uid,
-                },
+            _attributes: { name: "VEVENT" },
+            "prop-filter": {
+              _attributes: { name: "UID" },
+              "text-match": {
+                _attributes: { collation: "i;octet" },
+                _text: uid,
               },
             },
           },
         },
-      });
-      const hit = filtered.find(object => this.holdsEvent(object, uid));
-      if (hit) {
-        return hit;
-      }
-    } catch (error) {
-      this.logger.warning(
-        "UID query failed, scanning the calendar instead",
-        { operation: "findObjectByUid", service: "CalendarService" },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-    }
-
-    // Servers differ in how they treat prop-filters, so a miss is confirmed
-    // against the full calendar before the event is reported as absent.
-    const all = await client.fetchCalendarObjects({ calendar });
-    return all.find(object => this.holdsEvent(object, uid));
+      },
+    });
+    return filtered.find(object => this.holdsEvent(object, uid));
   }
 
   private holdsEvent(object: DAVObject, uid: string): boolean {
