@@ -45,6 +45,7 @@ import type {
   EmailMessage,
   EmailOperationResult,
   EmailSearchOptions,
+  EmailSearchResult,
   EmailThread,
   ImapConnection,
 } from "../types/email.types.js";
@@ -88,7 +89,7 @@ export class EmailService {
     await this.pool.destroy();
   }
 
-  async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
+  async searchEmails(options: EmailSearchOptions): Promise<EmailSearchResult> {
     const cacheKey = `email_search:${JSON.stringify(options)}`;
 
     return this.cachedFetch(
@@ -161,12 +162,15 @@ export class EmailService {
   private async performEmailSearch(
     wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
-  ): Promise<EmailMessage[]> {
+  ): Promise<EmailSearchResult> {
     const searchResult = await this.executeSearch(wrapper, options);
     if (searchResult.length === 0) {
-      return [];
+      return { messages: [], total: 0 };
     }
 
+    // Captured before pagination: this is how many messages matched, not how
+    // many this page returns.
+    const total = searchResult.length;
     const paginatedResults = this.applyPagination(searchResult, options);
     const messages = await this.fetchMessageHeaders(
       wrapper,
@@ -175,7 +179,7 @@ export class EmailService {
     );
     const filteredMessages = this.applyInMemoryFilters(messages, options);
 
-    return this.sortMessagesByDate(filteredMessages);
+    return { messages: this.sortMessagesByDate(filteredMessages), total };
   }
 
   private async executeSearch(

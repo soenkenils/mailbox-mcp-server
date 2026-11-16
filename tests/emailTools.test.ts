@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EmailService } from "../src/services/EmailService.js";
 import { createEmailTools, handleEmailTool } from "../src/tools/emailTools.js";
 import type { EmailMessage } from "../src/types/email.types.js";
+import { textOf } from "./helpers/toolResult.js";
 
 vi.mock("../src/services/EmailService.js");
 
@@ -94,7 +95,10 @@ describe("Email Tools", () => {
 
     describe("search_emails", () => {
       it("should handle search_emails tool", async () => {
-        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([mockEmail]);
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [mockEmail],
+          total: 1,
+        });
 
         const result = await handleEmailTool(
           "search_emails",
@@ -120,7 +124,10 @@ describe("Email Tools", () => {
       });
 
       it("should pass flag filters through to the service", async () => {
-        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([]);
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [],
+          total: 0,
+        });
 
         await handleEmailTool(
           "search_emails",
@@ -134,9 +141,10 @@ describe("Email Tools", () => {
       });
 
       it("should print real flags in the Flags line", async () => {
-        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([
-          { ...mockEmail, flags: ["\\Seen", "\\Flagged"] },
-        ]);
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [{ ...mockEmail, flags: ["\\Seen", "\\Flagged"] }],
+          total: 1,
+        });
 
         const result = await handleEmailTool(
           "search_emails",
@@ -148,9 +156,10 @@ describe("Email Tools", () => {
       });
 
       it("should print None in the Flags line for an empty flag array", async () => {
-        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([
-          { ...mockEmail, flags: [] },
-        ]);
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [{ ...mockEmail, flags: [] }],
+          total: 1,
+        });
 
         const result = await handleEmailTool(
           "search_emails",
@@ -162,7 +171,10 @@ describe("Email Tools", () => {
       });
 
       it("should handle date parameters", async () => {
-        vi.mocked(mockEmailService.searchEmails).mockResolvedValue([]);
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [],
+          total: 0,
+        });
 
         await handleEmailTool(
           "search_emails",
@@ -181,6 +193,74 @@ describe("Email Tools", () => {
           since: new Date("2024-01-01T00:00"),
           before: new Date("2024-01-31T23:59"),
         });
+      });
+
+      it("should say how many matches remain when a page is partial", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [mockEmail],
+          total: 312,
+        });
+
+        const result = await handleEmailTool(
+          "search_emails",
+          { limit: 1 },
+          mockEmailService,
+        );
+
+        expect(textOf(result)).toContain("Showing 1 of 312 matches (offset 0)");
+        expect(textOf(result)).toContain("Call again with offset 1 for more");
+      });
+
+      it("should not invite paging when the page holds every match", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [mockEmail],
+          total: 1,
+        });
+
+        const result = await handleEmailTool(
+          "search_emails",
+          {},
+          mockEmailService,
+        );
+
+        expect(textOf(result)).toContain("Found 1 emails");
+        expect(textOf(result)).not.toContain("Call again with offset");
+      });
+
+      it("should say the listing has ended on the last page", async () => {
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [mockEmail],
+          total: 10,
+        });
+
+        const result = await handleEmailTool(
+          "search_emails",
+          { limit: 1, offset: 9 },
+          mockEmailService,
+        );
+
+        // Offset 9 plus one result is the tenth of ten: nothing left to page.
+        expect(textOf(result)).toContain(
+          "Showing 1 of 10 matches (offset 9). End of results.",
+        );
+        expect(textOf(result)).not.toContain("Call again with offset");
+      });
+
+      it("should advance the cursor by the span consumed, not by what came back", async () => {
+        // The server matched 10, but one message in the first page of 5 had no
+        // envelope and was skipped. The next page still starts at 5.
+        vi.mocked(mockEmailService.searchEmails).mockResolvedValue({
+          messages: [mockEmail, mockEmail, mockEmail, mockEmail],
+          total: 10,
+        });
+
+        const result = await handleEmailTool(
+          "search_emails",
+          { limit: 5 },
+          mockEmailService,
+        );
+
+        expect(textOf(result)).toContain("Call again with offset 5 for more");
       });
     });
 
@@ -247,6 +327,47 @@ describe("Email Tools", () => {
         );
         expect(result.content[0].text).toContain("Test Subject");
         expect(result.content[0].text).toContain("**Messages:** 1");
+        expect(result.content[0].text).toContain("**UID:** 123");
+      });
+
+      const threadOf = (text: string) => ({
+        threadId: "thread-123",
+        messages: [{ ...mockEmail, text }],
+        subject: "Test Subject",
+        participants: mockEmail.from,
+        lastActivity: mockEmail.date,
+      });
+
+      it("should not mark a short body as truncated", async () => {
+        vi.mocked(mockEmailService.getEmailThread).mockResolvedValue(
+          threadOf("Short body"),
+        );
+
+        const result = await handleEmailTool(
+          "get_email_thread",
+          { messageId: "test@example.com" },
+          mockEmailService,
+        );
+
+        expect(textOf(result)).toContain("Short body");
+        expect(textOf(result)).not.toContain("Short body…");
+        expect(textOf(result)).not.toContain("Short body...");
+      });
+
+      it("should mark a long body as truncated and point at get_email", async () => {
+        vi.mocked(mockEmailService.getEmailThread).mockResolvedValue(
+          threadOf("x".repeat(500)),
+        );
+
+        const result = await handleEmailTool(
+          "get_email_thread",
+          { messageId: "test@example.com" },
+          mockEmailService,
+        );
+
+        expect(textOf(result)).toContain(`${"x".repeat(200)}…`);
+        expect(textOf(result)).not.toContain("x".repeat(201));
+        expect(textOf(result)).toContain("get_email");
       });
     });
 

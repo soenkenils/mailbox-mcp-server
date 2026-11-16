@@ -315,3 +315,55 @@ describe("createProgressReporter", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("progress reporting", () => {
+  it("should report progress through an email search", async () => {
+    const reportProgress = vi.fn();
+    const searchEmails = vi.fn().mockResolvedValue({ messages: [], total: 0 });
+
+    await handleEmailTool(
+      "search_emails",
+      { query: "test" },
+      { searchEmails } as unknown as EmailService,
+      undefined,
+      { reportProgress },
+    );
+
+    expect(reportProgress).toHaveBeenCalled();
+    const final = reportProgress.mock.calls.at(-1)?.[0];
+    expect(final).toMatchObject({ progress: 1, total: 1 });
+  });
+
+  it("should work without a progress reporter", async () => {
+    const searchEmails = vi.fn().mockResolvedValue({ messages: [], total: 0 });
+
+    const result = await handleEmailTool(
+      "search_emails",
+      { query: "test" },
+      { searchEmails } as unknown as EmailService,
+      undefined,
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("should drop a search result the client cancelled while it ran", async () => {
+    const controller = new AbortController();
+    const searchEmails = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return { messages: [], total: 0 };
+    });
+
+    const result = await handleEmailTool(
+      "search_emails",
+      {},
+      { searchEmails } as unknown as EmailService,
+      undefined,
+      { signal: controller.signal },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("Cancelled");
+  });
+});

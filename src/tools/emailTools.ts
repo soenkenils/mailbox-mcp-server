@@ -80,6 +80,16 @@ const SETTABLE_FLAGS = [
   "\\Draft",
 ] as const;
 
+/**
+ * How much of each message a thread listing shows. Threads are for scanning
+ * the shape of a conversation; get_email returns any one message in full.
+ */
+const THREAD_PREVIEW_CHARS = 200;
+
+/** Truncates for preview, marking the cut only when one actually happened. */
+const preview = (body: string, limit: number): string =>
+  body.length > limit ? `${body.slice(0, limit)}…` : body;
+
 // The services are not needed to describe the tools; the parameters stay for
 // callers that pass them.
 export function createEmailTools(
@@ -183,8 +193,7 @@ export function createEmailTools(
     {
       name: "get_email_thread",
       annotations: { ...READ_ONLY, title: "Read a conversation" },
-      description:
-        "Fetch every message in one conversation, identified by the Message-ID of any message in it. Bodies are shortened for scanning; get_email returns a single message in full.",
+      description: `Fetch every message in one conversation, identified by the Message-ID of any message in it. Bodies are truncated to ${THREAD_PREVIEW_CHARS} characters for scanning; get_email returns a single message in full.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -529,13 +538,50 @@ export async function handleEmailTool(
           deleted: validatedArgs.deleted,
         };
 
-        const emails = await emailService.searchEmails(options);
+        await context?.reportProgress?.({
+          progress: 0,
+          total: 1,
+          message: `Searching ${validatedArgs.folder}`,
+        });
+
+        const { messages: emails, total } =
+          await emailService.searchEmails(options);
+
+        await context?.reportProgress?.({
+          progress: 1,
+          total: 1,
+          message: `Found ${total} matches`,
+        });
+
+        if (isCancelled(context)) {
+          return cancelledResult(name);
+        }
+
+        const offset = validatedArgs.offset ?? 0;
+        // The cursor advances by what the page consumed, not by what came
+        // back: a message the server returns without an envelope is skipped,
+        // which leaves the page shorter than the span of matches it covered.
+        // Advancing by emails.length would hand back messages already shown.
+        const consumed = Math.min(
+          validatedArgs.limit ?? DEFAULT_SEARCH_LIMIT,
+          Math.max(0, total - offset),
+        );
+        const nextOffset = offset + consumed;
+        // Without the first branch the model reads a full page as the complete
+        // result set and stops, instead of paging for the rest. A finished
+        // listing reports what it returned.
+        const summary =
+          nextOffset < total
+            ? `Showing ${emails.length} of ${total} matches (offset ${offset}). Call again with offset ${nextOffset} for more.`
+            : offset === 0
+              ? `Found ${emails.length} emails:`
+              : `Showing ${emails.length} of ${total} matches (offset ${offset}). End of results.`;
 
         return {
           content: [
             {
               type: "text",
-              text: `Found ${emails.length} emails:\n\n${emails
+              text: `${summary}\n\n${emails
                 .map(
                   email =>
                     `**${email.subject}**
@@ -652,6 +698,8 @@ ${email.text || email.html || "No content available"}${attachmentInfo}`,
 **Last Activity:** ${thread.lastActivity.toISOString()}
 **Messages:** ${thread.messages.length}
 
+Bodies below are truncated to ${THREAD_PREVIEW_CHARS} characters. Use get_email with a message's UID to read one in full.
+
 **Messages in Thread:**
 ${thread.messages
   .map(
@@ -660,7 +708,8 @@ ${thread.messages
 **Subject:** ${msg.subject}
 **From:** ${msg.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
 **Date:** ${msg.date.toISOString()}
-**Content:** ${(msg.text || msg.html || "No content").substring(0, 200)}...
+**UID:** ${msg.uid}
+**Content:** ${preview(msg.text || msg.html || "No content", THREAD_PREVIEW_CHARS)}
 `,
   )
   .join("\n")}`,

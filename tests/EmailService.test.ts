@@ -454,12 +454,12 @@ describe("EmailService", () => {
 
   describe("searchEmails", () => {
     it("should return cached results when available", async () => {
-      const mockMessages = [createMockEmailMessage()];
-      (mockCache.get as Mock).mockReturnValue(mockMessages);
+      const cached = { messages: [createMockEmailMessage()], total: 1 };
+      (mockCache.get as Mock).mockReturnValue(cached);
 
       const result = await emailService.searchEmails({ query: "test" });
 
-      expect(result).toBe(mockMessages);
+      expect(result).toBe(cached);
       expect(mockCache.get).toHaveBeenCalledWith(
         'email_search:{"query":"test"}',
       );
@@ -472,13 +472,42 @@ describe("EmailService", () => {
         since: new Date("2024-01-01"),
         limit: 10,
       };
-      (mockCache.get as Mock).mockReturnValue([createMockEmailMessage()]);
+      (mockCache.get as Mock).mockReturnValue({
+        messages: [createMockEmailMessage()],
+        total: 1,
+      });
 
       emailService.searchEmails(options);
 
       expect(mockCache.get).toHaveBeenCalledWith(
         `email_search:${JSON.stringify(options)}`,
       );
+    });
+
+    it("should report the full match count, not the size of the page", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      const allMatches = Array.from({ length: 312 }, (_, i) => i + 1);
+      mockSearch.mockResolvedValue(allMatches);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({ uid: 312 });
+      });
+
+      const result = await emailService.searchEmails({
+        query: "test",
+        limit: 1,
+      });
+
+      expect(result.total).toBe(312);
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("should report a total of zero when nothing matches", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([]);
+
+      const result = await emailService.searchEmails({ query: "nope" });
+
+      expect(result).toEqual({ messages: [], total: 0 });
     });
   });
 

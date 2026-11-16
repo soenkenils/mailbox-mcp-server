@@ -17,6 +17,16 @@ export interface EmailSearchOptions {
   deleted?: boolean;
 }
 
+/**
+ * A page of search results plus the size of the full match set, so callers can
+ * tell "these are all of them" from "this is the first 50 of 800".
+ */
+export interface EmailSearchResult {
+  messages: EmailMessage[];
+  /** How many messages matched, before pagination. */
+  total: number;
+}
+
 export interface EmailMessage {
   id: string;
   uid: number;
