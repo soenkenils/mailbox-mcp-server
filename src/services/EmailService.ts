@@ -1061,8 +1061,13 @@ export class EmailService {
           operation: "createDraft",
           service: "EmailService",
         },
+        // Shape only: subject, body and addresses are mail content.
         {
-          composition,
+          folder,
+          recipients:
+            composition.to.length +
+            (composition.cc?.length ?? 0) +
+            (composition.bcc?.length ?? 0),
           error: error instanceof Error ? error.message : String(error),
         },
       );
