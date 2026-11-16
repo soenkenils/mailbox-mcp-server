@@ -200,10 +200,7 @@ export class CalendarService {
         return { client, calendars: await client.fetchCalendars() };
       },
     );
-    const target = this.chooseCreateTarget(
-      this.selectCalendars(calendars, options.calendar),
-      options.calendar,
-    );
+    const target = this.chooseCreateTarget(calendars, options.calendar);
     const calendarName = calendarLabel(target);
 
     await this.writeChecked("create", calendarName, uid, () =>
@@ -410,12 +407,10 @@ export class CalendarService {
   ): Promise<LocatedEvent> {
     // Choosing calendars happens outside the breaker: a name the caller got
     // wrong must not count towards opening the circuit.
-    const calendars = this.selectCalendars(
-      await this.listCalendars(),
-      calendarFilter,
-    );
+    const all = await this.listCalendars();
+    const calendars = this.selectCalendars(all, calendarFilter);
     if (calendars.length === 0) {
-      throw this.noCalendarError(calendarFilter);
+      throw this.noCalendarError(all, calendarFilter);
     }
 
     const matches = await this.circuitBreaker.execute(async () => {
@@ -883,18 +878,19 @@ export class CalendarService {
    * are ValidationErrors so the user sees the reason, not a generic message.
    */
   private chooseCreateTarget(
-    candidates: DAVCalendar[],
+    calendars: DAVCalendar[],
     calendarFilter?: string,
   ): DAVCalendar {
+    const candidates = this.selectCalendars(calendars, calendarFilter);
     if (candidates.length === 0) {
-      throw this.noCalendarError(calendarFilter);
+      throw this.noCalendarError(calendars, calendarFilter);
     }
 
     if (calendarFilter && candidates.length > 1) {
       throw new ValidationError(
-        `Calendar "${calendarFilter}" matches several calendars (${candidates
-          .map(calendarLabel)
-          .join(", ")}); use the exact name`,
+        `Calendar "${calendarFilter}" matches several calendars; use the calendar's URL or last URL segment. ${this.availableCalendars(
+          candidates,
+        )}`,
         "calendar",
         calendarFilter,
       );
@@ -915,16 +911,20 @@ export class CalendarService {
   ): DAVCalendar[] {
     const writable = calendars.filter(calendar => this.holdsEvents(calendar));
     const allowed = this.allowedCalendars();
+    // Every entry must name exactly one calendar: one that names none would
+    // silently leave a calendar out, and free/busy would show it as free.
     const ranked = allowed
       ? allowed.flatMap(name => {
           const matches = writable.filter(calendar =>
             this.calendarMatches(calendar, name),
           );
-          if (matches.length > 1) {
+          if (matches.length !== 1) {
             throw new ValidationError(
-              `MAILBOX_CALENDARS entry "${name}" matches several calendars (${matches
-                .map(calendarLabel)
-                .join(", ")}); use a unique name or the calendar's URL`,
+              `MAILBOX_CALENDARS entry "${name}" ${
+                matches.length === 0
+                  ? "matches no calendar"
+                  : `matches several calendars; use a unique name or the calendar's URL`
+              }. ${this.availableCalendars(writable)}`,
               "calendar",
               name,
             );
@@ -937,6 +937,20 @@ export class CalendarService {
       calendar =>
         !calendarFilter || this.calendarMatches(calendar, calendarFilter),
     );
+  }
+
+  /** "Available calendars: Display Name (last URL segment), ...". */
+  private availableCalendars(calendars: DAVCalendar[]): string {
+    const listed = calendars
+      .filter(calendar => this.holdsEvents(calendar))
+      .map(calendar => {
+        const url = calendar.url.replace(/\/+$/, "");
+        const segment = this.decodeSegment(url.slice(url.lastIndexOf("/") + 1));
+        return `${(calendar.displayName as string) || segment} (${segment})`;
+      });
+    return listed.length
+      ? `Available calendars: ${listed.join(", ")}`
+      : "The server reports no calendar that can hold events";
   }
 
   /** The MAILBOX_CALENDARS names, or undefined when it restricts nothing. */
@@ -1187,12 +1201,10 @@ export class CalendarService {
   ): Promise<CalendarEvent[]> {
     // Reads choose calendars exactly like writes do, so MAILBOX_CALENDARS and
     // the calendar argument mean the same thing everywhere.
-    const calendars = this.selectCalendars(
-      await this.listCalendars(),
-      options.calendar,
-    );
+    const all = await this.listCalendars();
+    const calendars = this.selectCalendars(all, options.calendar);
     if (calendars.length === 0) {
-      throw this.noCalendarError(options.calendar);
+      throw this.noCalendarError(all, options.calendar);
     }
 
     // Every calendar in scope is read or the call fails. Some calendars'
@@ -1246,23 +1258,29 @@ export class CalendarService {
     }
   }
 
-  /** Why no calendar is in scope: an unknown name or MAILBOX_CALENDARS. */
-  private noCalendarError(calendarFilter?: string): ValidationError {
+  /**
+   * Why no calendar is in scope: an unknown name, or no calendar that can
+   * hold events. Lists the calendars that could have been meant.
+   */
+  private noCalendarError(
+    calendars: DAVCalendar[],
+    calendarFilter?: string,
+  ): ValidationError {
+    if (!calendarFilter) {
+      return new ValidationError(
+        "No calendar that can hold events was found",
+        "calendar",
+      );
+    }
     const scope = this.allowedCalendars()
       ? " among the calendars MAILBOX_CALENDARS allows"
       : "";
-    if (calendarFilter) {
-      return new ValidationError(
-        `Calendar "${calendarFilter}" not found${scope}`,
-        "calendar",
-        calendarFilter,
-      );
-    }
     return new ValidationError(
-      scope
-        ? "No calendar on the server matches MAILBOX_CALENDARS; use exact display names, URLs or last URL segments"
-        : "No calendar that can hold events was found",
+      `Calendar "${calendarFilter}" not found${scope}. ${this.availableCalendars(
+        this.selectCalendars(calendars),
+      )}`,
       "calendar",
+      calendarFilter,
     );
   }
 

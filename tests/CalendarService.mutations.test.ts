@@ -691,7 +691,9 @@ describe("CalendarService event changes", () => {
             ...newEvent,
             calendar: "holidays",
           }),
-        ).rejects.toThrow('Calendar "holidays" not found');
+        ).rejects.toThrow(
+          'Calendar "holidays" not found. Available calendars: work (work), private (private)',
+        );
 
         expect(createCalendarObject).not.toHaveBeenCalled();
       });
@@ -852,6 +854,39 @@ describe("CalendarService event changes", () => {
             makeService({ calendars: ["work"] }).createCalendarEvent(newEvent),
           ).rejects.toThrow(/MAILBOX_CALENDARS entry "work" matches several/);
           expect(createCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should refuse an entry that matches nothing even when others match", async () => {
+          await expect(
+            makeService({
+              calendars: ["work", "holidays"],
+            }).createCalendarEvent(newEvent),
+          ).rejects.toThrow(
+            'MAILBOX_CALENDARS entry "holidays" matches no calendar. Available calendars: work (work), private (private)',
+          );
+          await expect(
+            makeService({
+              calendars: ["work", "holidays"],
+            }).deleteCalendarEvent({ uid: "evt-1" }),
+          ).rejects.toThrow(/entry "holidays" matches no calendar/);
+          expect(createCalendarObject).not.toHaveBeenCalled();
+          expect(deleteCalendarObject).not.toHaveBeenCalled();
+        });
+
+        it("should list the available calendars when an entry is ambiguous", async () => {
+          fetchCalendars.mockResolvedValue([
+            ...calendars,
+            {
+              displayName: "Archive",
+              url: "https://dav.mailbox.org/caldav/work/old/work/",
+            },
+          ]);
+
+          await expect(
+            makeService({ calendars: ["work"] }).createCalendarEvent(newEvent),
+          ).rejects.toThrow(
+            "Available calendars: work (work), private (private), Archive (work)",
+          );
         });
 
         it("should not write when MAILBOX_CALENDARS matches no calendar", async () => {

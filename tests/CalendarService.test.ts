@@ -424,9 +424,26 @@ describe("CalendarService", () => {
 
     it("should not let a short entry match an opaque collection id", async () => {
       await expect(serviceWith(["Q"]).getCalendarEvents(range)).rejects.toThrow(
-        /No calendar on the server matches MAILBOX_CALENDARS/,
+        'MAILBOX_CALENDARS entry "Q" matches no calendar. Available calendars: Work (work), Homework (homework), Misc (Y2FsUQ)',
       );
       expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
+    });
+
+    it("should refuse an entry that matches nothing instead of reading the rest", async () => {
+      // personal is really at .../personal-calendar/: reading only Work would
+      // report its appointments as free time.
+      mockFetchCalendars.mockResolvedValue([
+        { displayName: "Work", url: `${BASE}/work/` },
+        { displayName: "Personal", url: `${BASE}/personal-calendar/` },
+      ]);
+
+      await expect(
+        serviceWith(["Work", "personal"]).getFreeBusy(range.start, range.end),
+      ).rejects.toThrow(
+        'MAILBOX_CALENDARS entry "personal" matches no calendar. Available calendars: Work (work), Personal (personal-calendar)',
+      );
+      expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
+      expect(mockCache.set).not.toHaveBeenCalled();
     });
 
     it("should refuse an entry that matches several calendars", async () => {
@@ -458,7 +475,7 @@ describe("CalendarService", () => {
           calendar: "Homework",
         }),
       ).rejects.toThrow(
-        'Calendar "Homework" not found among the calendars MAILBOX_CALENDARS allows',
+        'Calendar "Homework" not found among the calendars MAILBOX_CALENDARS allows. Available calendars: Work (work)',
       );
       expect(mockCache.set).not.toHaveBeenCalled();
     });
