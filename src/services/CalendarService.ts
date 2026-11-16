@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import ICAL from "ical.js";
-import { createDAVClient, type DAVCalendar, type DAVObject } from "tsdav";
+import {
+  createDAVClient,
+  type DAVCalendar,
+  type DAVObject,
+  getBasicAuthHeaders,
+} from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   Attendee,
@@ -11,7 +16,11 @@ import type {
   CalendarSearchOptions,
   CreateCalendarEventOptions,
   CreateCalendarEventResult,
+  DeleteCalendarEventOptions,
+  DeleteCalendarEventResult,
   FreeBusyInfo,
+  UpdateCalendarEventOptions,
+  UpdateCalendarEventResult,
 } from "../types/calendar.types.js";
 import { CalendarError, ErrorCode, ValidationError } from "../types/errors.js";
 import { createCacheFetcher } from "../utils/cacheFallback.js";
@@ -74,6 +83,11 @@ const recurrenceIdText = (recurrenceId: ICAL.Time): string =>
  */
 const OCCURRENCE_ID =
   /^(.+):(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)?)$/;
+
+interface LocatedEvent {
+  object: DAVObject;
+  calendarName: string;
+}
 
 const calendarLabel = (calendar: DAVCalendar): string =>
   (calendar.displayName as string) || calendar.url;
@@ -192,20 +206,13 @@ export class CalendarService {
     );
     const calendarName = calendarLabel(target);
 
-    const response = await this.circuitBreaker.execute(async () => {
-      const response = await client.createCalendarObject({
+    await this.writeChecked("create", calendarName, uid, () =>
+      client.createCalendarObject({
         calendar: target,
         filename: `${uid}.ics`,
         iCalString,
-      });
-      // A server error counts towards opening the circuit; a refusal (4xx)
-      // is about this request and is reported below without counting.
-      if (response.status >= 500) {
-        this.assertWritten(response, "create", calendarName, uid);
-      }
-      return response;
-    });
-    this.assertWritten(response, "create", calendarName, uid);
+      }),
+    );
     this.invalidateEventCaches();
 
     this.logger.info("Calendar event created", {
@@ -225,11 +232,594 @@ export class CalendarService {
   }
 
   /**
+   * Changes the fields passed on the stored event and writes it back with
+   * If-Match, so a concurrent change fails with EVENT_MODIFIED instead of
+   * being overwritten. Recurring events change as a whole series.
+   */
+  async updateCalendarEvent(
+    options: UpdateCalendarEventOptions,
+  ): Promise<UpdateCalendarEventResult> {
+    this.assertSeriesUid(options.uid);
+    const located = await this.locateEvent(options.uid, options.calendar);
+
+    // The edit happens on the stored iCalendar rather than a rebuilt one, so
+    // alarms, recurrence rules, time zones and other properties this server
+    // does not model survive the round trip.
+    const root = new ICAL.Component(ICAL.parse(String(located.object.data)));
+    const withUid = this.eventsWithUid(root, options.uid);
+    const vevent = this.editableEvent(withUid, options.uid);
+    const role = await this.schedulingRole(withUid);
+    const sendInvitations = options.sendInvitations ?? false;
+
+    if (role.kind === "attendee") {
+      throw new ValidationError(
+        `You were invited to this event by ${role.organizer}; only the organizer can change it. To remove it from your calendar, use delete_calendar_event`,
+        "uid",
+        options.uid,
+      );
+    }
+    if (role.kind === "organizer" && !sendInvitations) {
+      throw new ValidationError(
+        `This is a meeting you organize with ${role.attendees} attendee(s): saving any change makes the server email them an update. Pass sendInvitations: true only if the user wants them notified`,
+        "sendInvitations",
+        false,
+      );
+    }
+
+    this.applyEventUpdate(vevent, options);
+    const notified =
+      role.kind === "organizer" ||
+      (sendInvitations && !!options.attendees?.length);
+
+    // Read from the component that was edited: parsing the whole document
+    // again would return whichever VEVENT with this UID comes first, which
+    // may be an override rather than the series.
+    const updated = this.parseVEvent(vevent, located.calendarName);
+    if (!updated) {
+      throw new CalendarError(
+        "The edited event could not be read back, so it was not saved",
+        ErrorCode.OPERATION_FAILED,
+        located.calendarName,
+        options.uid,
+      );
+    }
+
+    const data = this.serializeICal(root);
+    await this.writeChecked("update", located.calendarName, options.uid, () =>
+      this.getClient().then(client =>
+        client.updateCalendarObject({
+          calendarObject: { ...located.object, data },
+        }),
+      ),
+    );
+    this.invalidateEventCaches();
+
+    this.logger.info("Calendar event updated", {
+      operation: "updateCalendarEvent",
+      service: "CalendarService",
+    });
+
+    return { event: updated, notified };
+  }
+
+  /**
+   * Deletes the stored object (a recurring event with all its occurrences)
+   * with If-Match. Unless participants may be notified, a meeting the account
+   * organizes is refused, and the server is asked not to send a decline for
+   * an invitation (RFC 6638 Schedule-Reply: F).
+   */
+  async deleteCalendarEvent(
+    options: DeleteCalendarEventOptions,
+  ): Promise<DeleteCalendarEventResult> {
+    this.assertSeriesUid(options.uid);
+    const located = await this.locateEvent(options.uid, options.calendar);
+    const withUid = this.eventsWithUid(
+      new ICAL.Component(ICAL.parse(String(located.object.data))),
+      options.uid,
+    );
+    const role = await this.schedulingRole(withUid);
+    const notify = options.notifyParticipants ?? false;
+
+    if (role.kind === "organizer" && !notify) {
+      throw new ValidationError(
+        `This is a meeting you organize with ${role.attendees} attendee(s): deleting it makes the server email them a cancellation. Pass notifyParticipants: true only if the user wants them told`,
+        "notifyParticipants",
+        false,
+      );
+    }
+
+    const master = this.findSeriesMaster(withUid) ?? withUid[0];
+    const event = master
+      ? this.parseVEvent(master, located.calendarName)
+      : null;
+
+    // A headers argument replaces tsdav's default ones, so the credentials
+    // are passed along with it.
+    const headers: Record<string, string> = notify
+      ? {}
+      : {
+          ...getBasicAuthHeaders({
+            username: this.connection.username,
+            password: this.connection.password,
+          }),
+          "Schedule-Reply": "F",
+        };
+    await this.writeChecked("delete", located.calendarName, options.uid, () =>
+      this.getClient().then(client =>
+        client.deleteCalendarObject({
+          calendarObject: located.object,
+          ...(notify ? {} : { headers }),
+        }),
+      ),
+    );
+    this.invalidateEventCaches();
+
+    this.logger.info("Calendar event deleted", {
+      operation: "deleteCalendarEvent",
+      service: "CalendarService",
+    });
+
+    return {
+      uid: options.uid,
+      summary: event?.summary ?? "",
+      calendar: located.calendarName,
+      recurring: event?.recurring ?? false,
+      notified: notify && role.kind !== "none",
+    };
+  }
+
+  /**
+   * update and delete act on whole series. An occurrence id from the read
+   * tools is refused with the series UID to use instead, so a model cannot
+   * believe it changed one occurrence when it changed them all.
+   */
+  private assertSeriesUid(uid: string): void {
+    const occurrence = OCCURRENCE_ID.exec(uid);
+    if (occurrence) {
+      throw new ValidationError(
+        `"${uid}" is the id of one occurrence (${occurrence[2]}) of the recurring series "${occurrence[1]}". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "${occurrence[1]}" only if the whole series is meant`,
+        "uid",
+        uid,
+      );
+    }
+  }
+
+  /**
+   * Finds the stored object for a UID among the calendars a write may touch.
+   * Throws when nothing matches, and when several calendars hold the UID and
+   * the caller did not say which one, so a change never lands on a guess.
+   */
+  private async locateEvent(
+    uid: string,
+    calendarFilter?: string,
+  ): Promise<LocatedEvent> {
+    // Choosing calendars happens outside the breaker: a name the caller got
+    // wrong must not count towards opening the circuit.
+    const calendars = this.selectCalendars(
+      await this.listCalendars(),
+      calendarFilter,
+    );
+    if (calendars.length === 0) {
+      throw this.noCalendarError(calendarFilter);
+    }
+
+    const matches = await this.circuitBreaker.execute(async () => {
+      const client = await this.getClient();
+      const found: LocatedEvent[] = [];
+      for (const calendar of calendars) {
+        const object = await this.findObjectByUid(client, calendar, uid);
+        if (object) {
+          found.push({ object, calendarName: calendarLabel(calendar) });
+        }
+      }
+      return found;
+    });
+
+    if (matches.length === 0) {
+      const scope = this.allowedCalendars()
+        ? " in the calendars MAILBOX_CALENDARS allows"
+        : "";
+      throw new CalendarError(
+        `No event with UID "${uid}" found${scope}${
+          calendarFilter ? ` (calendar "${calendarFilter}")` : ""
+        }`,
+        ErrorCode.EVENT_NOT_FOUND,
+        calendarFilter,
+        uid,
+      );
+    }
+
+    if (matches.length > 1) {
+      throw new ValidationError(
+        `UID "${uid}" exists in several calendars (${matches
+          .map(match => match.calendarName)
+          .join(", ")}); pass "calendar" to pick one`,
+        "calendar",
+        calendarFilter,
+      );
+    }
+
+    return matches[0];
+  }
+
+  private async findObjectByUid(
+    client: DAVClient,
+    calendar: DAVCalendar,
+    uid: string,
+  ): Promise<DAVObject | undefined> {
+    try {
+      const filtered = await client.fetchCalendarObjects({
+        calendar,
+        filters: {
+          "comp-filter": {
+            _attributes: { name: "VCALENDAR" },
+            "comp-filter": {
+              _attributes: { name: "VEVENT" },
+              "prop-filter": {
+                _attributes: { name: "UID" },
+                "text-match": {
+                  _attributes: { collation: "i;octet" },
+                  _text: uid,
+                },
+              },
+            },
+          },
+        },
+      });
+      const hit = filtered.find(object => this.holdsEvent(object, uid));
+      if (hit) {
+        return hit;
+      }
+    } catch (error) {
+      this.logger.warning(
+        "UID query failed, scanning the calendar instead",
+        { operation: "findObjectByUid", service: "CalendarService" },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+
+    // Servers differ in how they treat prop-filters, so a miss is confirmed
+    // against the full calendar before the event is reported as absent.
+    const all = await client.fetchCalendarObjects({ calendar });
+    return all.find(object => this.holdsEvent(object, uid));
+  }
+
+  private holdsEvent(object: DAVObject, uid: string): boolean {
+    if (!object.data) {
+      return false;
+    }
+    try {
+      const root = new ICAL.Component(ICAL.parse(String(object.data)));
+      return this.eventsWithUid(root, uid).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private eventsWithUid(root: ICAL.Component, uid: string): ICAL.Component[] {
+    return root
+      .getAllSubcomponents("vevent")
+      .filter(vevent => vevent.getFirstPropertyValue("uid") === uid);
+  }
+
+  /** The VEVENT that is not an override of a single occurrence. */
+  private findSeriesMaster(
+    vevents: ICAL.Component[],
+  ): ICAL.Component | undefined {
+    return vevents.find(vevent => !vevent.hasProperty("recurrence-id"));
+  }
+
+  /**
+   * The VEVENT an update edits: the series master. Overrides of single
+   * occurrences carry RECURRENCE-ID and stay untouched. A lone override (an
+   * invitation to one occurrence) is edited as it is; several without a
+   * series master leave no safe choice.
+   */
+  private editableEvent(
+    withUid: ICAL.Component[],
+    uid: string,
+  ): ICAL.Component {
+    const vevent =
+      this.findSeriesMaster(withUid) ??
+      (withUid.length === 1 ? withUid[0] : undefined);
+    if (vevent) {
+      return vevent;
+    }
+    if (withUid.length > 1) {
+      throw new ValidationError(
+        "The stored event has several single-occurrence overrides but no series to edit; change it in a calendar client",
+        "uid",
+        uid,
+      );
+    }
+    throw new CalendarError(
+      `No event with UID "${uid}" found`,
+      ErrorCode.EVENT_NOT_FOUND,
+      undefined,
+      uid,
+    );
+  }
+
+  /**
+   * Whether the stored event is a scheduling object (RFC 6638): it has an
+   * ORGANIZER and attendees the server would notify, i.e. without
+   * SCHEDULE-AGENT=CLIENT. The account organizes it when the ORGANIZER is
+   * its username or one of the calendar user addresses the server reports.
+   */
+  private async schedulingRole(
+    vevents: ICAL.Component[],
+  ): Promise<
+    | { kind: "none" }
+    | { kind: "organizer"; attendees: number }
+    | { kind: "attendee"; organizer: string }
+  > {
+    const address = (value: unknown): string =>
+      String(value)
+        .replace(/^mailto:/i, "")
+        .trim()
+        .toLowerCase();
+    let organizer: string | undefined;
+    const attendees = new Set<string>();
+
+    for (const vevent of vevents) {
+      const own = vevent.getFirstPropertyValue("organizer");
+      if (!own) {
+        continue;
+      }
+      const ownAddress = address(own);
+      for (const attendee of vevent.getAllProperties("attendee")) {
+        const agent = String(
+          attendee.getParameter("schedule-agent") ?? "SERVER",
+        ).toUpperCase();
+        const attendeeAddress = address(attendee.getFirstValue());
+        if (agent !== "CLIENT" && attendeeAddress !== ownAddress) {
+          organizer ??= ownAddress;
+          attendees.add(attendeeAddress);
+        }
+      }
+    }
+
+    if (!organizer) {
+      return { kind: "none" };
+    }
+    const mine = await this.ownAddresses();
+    return mine.has(organizer)
+      ? { kind: "organizer", attendees: attendees.size }
+      : { kind: "attendee", organizer };
+  }
+
+  /** The account's own calendar user addresses, lower-cased, best effort. */
+  private async ownAddresses(): Promise<Set<string>> {
+    const mine = new Set([this.connection.username.trim().toLowerCase()]);
+    try {
+      const client = await this.getClient();
+      // The client fills in its own account; the typings still demand one.
+      const fetchAddresses =
+        client.fetchCalendarUserAddresses as unknown as () => Promise<
+          string[]
+        >;
+      const addresses = await fetchAddresses();
+      for (const value of addresses) {
+        mine.add(value.replace(/^mailto:/i, "").trim().toLowerCase());
+      }
+    } catch (error) {
+      this.logger.warning(
+        "Could not read the account's calendar user addresses",
+        { operation: "ownAddresses", service: "CalendarService" },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    return mine;
+  }
+
+  /** Applies only the fields the caller passed to the VEVENT. */
+  private applyEventUpdate(
+    vevent: ICAL.Component,
+    options: UpdateCalendarEventOptions,
+  ): void {
+    const event = new ICAL.Event(vevent);
+    const wasAllDay = event.startDate?.isDate ?? false;
+    const allDay = options.allDay ?? wasAllDay;
+    const changesTime =
+      options.allDay !== undefined ||
+      options.start !== undefined ||
+      options.end !== undefined ||
+      options.startDate !== undefined ||
+      options.endDate !== undefined;
+
+    if (changesTime) {
+      this.applyTimeChange(vevent, event, options, allDay, wasAllDay);
+    }
+
+    if (options.summary !== undefined) {
+      vevent.updatePropertyWithValue("summary", options.summary);
+    }
+    this.setOptionalText(vevent, "description", options.description);
+    this.setOptionalText(vevent, "location", options.location);
+
+    if (options.attendees) {
+      this.replaceAttendees(vevent, options);
+    }
+
+    const sequence = Number(vevent.getFirstPropertyValue("sequence"));
+    vevent.updatePropertyWithValue(
+      "sequence",
+      (Number.isFinite(sequence) ? sequence : 0) + 1,
+    );
+    const now = ICAL.Time.fromJSDate(new Date(), true);
+    vevent.updatePropertyWithValue("last-modified", now);
+    vevent.updatePropertyWithValue("dtstamp", now);
+  }
+
+  /**
+   * Writes new times the way createCalendarEvent does: timed events in UTC,
+   * all-day events as dates with an exclusive DTEND.
+   */
+  private applyTimeChange(
+    vevent: ICAL.Component,
+    event: ICAL.Event,
+    options: UpdateCalendarEventOptions,
+    allDay: boolean,
+    wasAllDay: boolean,
+  ): void {
+    if (event.isRecurring()) {
+      // Times are written in UTC: a series kept in local time would move by
+      // an hour across daylight-saving changes, and its overrides and
+      // EXDATEs would no longer match the new slots.
+      throw new ValidationError(
+        "Moving a recurring series is not supported; change its times in a calendar client. Title, description, location and attendees can be changed",
+        "start",
+      );
+    }
+    if (allDay !== wasAllDay && !(options.start || options.startDate)) {
+      throw new ValidationError(
+        "start is required when changing allDay",
+        "allDay",
+        options.allDay,
+      );
+    }
+
+    if (allDay) {
+      if (options.start || options.end) {
+        throw new ValidationError(
+          "All-day events take dates (YYYY-MM-DD) for start and end, not date-times",
+          "start",
+        );
+      }
+      const startDate =
+        options.startDate ?? (wasAllDay ? event.startDate.toString() : "");
+      const endDate =
+        options.endDate ??
+        (allDay === wasAllDay && !options.startDate
+          ? event.endDate.toString()
+          : dayjs.utc(startDate).add(1, "day").format("YYYY-MM-DD"));
+      if (endDate <= startDate) {
+        throw new ValidationError(
+          "The last day must not be before the first day",
+          "end",
+        );
+      }
+      this.setEventTime(vevent, "dtstart", ICAL.Time.fromDateString(startDate));
+      this.setEventTime(vevent, "dtend", ICAL.Time.fromDateString(endDate));
+      return;
+    }
+
+    if (options.startDate || options.endDate) {
+      throw new ValidationError(
+        "Timed events need a date-time for start and end, e.g. 2025-06-20T14:00+02:00; set allDay to true for an all-day event",
+        "start",
+      );
+    }
+    if (allDay !== wasAllDay && !options.end) {
+      throw new ValidationError(
+        "end is required when turning an all-day event into a timed one",
+        "end",
+      );
+    }
+    const start = options.start ?? event.startDate.toJSDate();
+    const end = options.end ?? event.endDate.toJSDate();
+    if (start >= end) {
+      throw new ValidationError(
+        "Start date must be before end date",
+        "start",
+        start.toISOString(),
+      );
+    }
+    this.setEventTime(vevent, "dtstart", ICAL.Time.fromJSDate(start, true));
+    this.setEventTime(vevent, "dtend", ICAL.Time.fromJSDate(end, true));
+  }
+
+  private setEventTime(
+    vevent: ICAL.Component,
+    name: "dtstart" | "dtend",
+    value: ICAL.Time,
+  ): void {
+    // Dropped first so a TZID parameter of the old value cannot outlive it,
+    // and DURATION with it, which would contradict the new DTEND.
+    vevent.removeProperty(name);
+    vevent.removeProperty("duration");
+    vevent.addPropertyWithValue(name, value);
+  }
+
+  private setOptionalText(
+    vevent: ICAL.Component,
+    name: string,
+    value: string | undefined,
+  ): void {
+    if (value === undefined) {
+      return;
+    }
+    if (value === "") {
+      vevent.removeProperty(name);
+    } else {
+      vevent.updatePropertyWithValue(name, value);
+    }
+  }
+
+  /**
+   * Replaces the attendee list. Attendees who stay keep their reply status.
+   * Without sendInvitations every attendee is only recorded
+   * (SCHEDULE-AGENT=CLIENT), as on create; with it the server schedules them
+   * and the account is the ORGANIZER.
+   */
+  private replaceAttendees(
+    vevent: ICAL.Component,
+    options: UpdateCalendarEventOptions,
+  ): void {
+    const attendees = options.attendees ?? [];
+    const organizer = this.invitationOrganizer(options);
+    const emailOf = (property: ICAL.Property): string =>
+      String(property.getFirstValue())
+        .replace(/^mailto:/i, "")
+        .toLowerCase();
+
+    const existing = new Map(
+      vevent
+        .getAllProperties("attendee")
+        .map(property => [emailOf(property), property] as const),
+    );
+    vevent.removeAllProperties("attendee");
+
+    for (const { email, name } of attendees) {
+      const property =
+        existing.get(email.toLowerCase()) ??
+        (() => {
+          const created = new ICAL.Property("attendee");
+          created.setValue(`mailto:${email}`);
+          return created;
+        })();
+      if (name) {
+        property.setParameter("cn", name);
+      }
+      if (organizer) {
+        property.removeParameter("schedule-agent");
+      } else {
+        property.setParameter("schedule-agent", "CLIENT");
+      }
+      vevent.addProperty(property);
+    }
+
+    if (organizer && !vevent.hasProperty("organizer")) {
+      vevent.addPropertyWithValue("organizer", `mailto:${organizer}`);
+    }
+  }
+
+  /** ical.js output, refolded so no line exceeds 75 octets. */
+  private serializeICal(root: ICAL.Component): string {
+    return `${root
+      .toString()
+      .replace(/\r\n[ \t]/g, "")
+      .split("\r\n")
+      .map(line => this.foldICalLine(line))
+      .join("\r\n")}\r\n`;
+  }
+
+  /**
    * The ORGANIZER address when the caller asked the server to invite the
    * attendees, or undefined when attendees are only recorded.
    */
   private invitationOrganizer(
-    options: CreateCalendarEventOptions,
+    options: Pick<CreateCalendarEventOptions, "sendInvitations" | "attendees">,
   ): string | undefined {
     if (!options.sendInvitations || !options.attendees?.length) {
       return undefined;
@@ -362,6 +952,27 @@ export class CalendarService {
     return (
       !calendar.components?.length || calendar.components.includes("VEVENT")
     );
+  }
+
+  /**
+   * Sends a write and checks the answer. A server error (5xx) or network
+   * failure counts towards opening the circuit; a refusal (4xx) is about
+   * this request and is reported without counting.
+   */
+  private async writeChecked(
+    action: "create" | "update" | "delete",
+    calendar: string,
+    uid: string,
+    send: () => Promise<Response>,
+  ): Promise<void> {
+    const response = await this.circuitBreaker.execute(async () => {
+      const response = await send();
+      if (response.status >= 500) {
+        this.assertWritten(response, action, calendar, uid);
+      }
+      return response;
+    });
+    this.assertWritten(response, action, calendar, uid);
   }
 
   private assertWritten(
