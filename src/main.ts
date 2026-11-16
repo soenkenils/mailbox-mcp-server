@@ -5,7 +5,13 @@ import {
   type CallToolRequest,
   CallToolRequestSchema,
   type CallToolResult,
+  ErrorCode,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
   type ServerNotification,
   type ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -22,6 +28,15 @@ import {
   isCalendarTool,
 } from "./tools/calendarTools.js";
 import {
+  createEmailPrompts,
+  handleEmailPrompt,
+  isEmailPrompt,
+} from "./tools/emailPrompts.js";
+import {
+  listEmailResources,
+  readEmailResource,
+} from "./tools/emailResources.js";
+import {
   createEmailTools,
   handleEmailTool,
   isEmailTool,
@@ -37,6 +52,16 @@ import {
   type ToolContext,
 } from "./types/tool.types.js";
 import { summarizeArgs } from "./utils/toolArgs.js";
+
+/**
+ * Lands in the model's system prompt. This is the place for conventions that
+ * span tools; repeating them in every description would be noise.
+ */
+export const SERVER_INSTRUCTIONS = [
+  "Mailbox folder names vary by account: call get_folders to discover the real paths before passing a folder argument.",
+  "Email UIDs are per-folder. A UID from search_emails is only meaningful in the folder it was returned from, and a message that moves folders gets a new one.",
+  "search_emails returns headers only; message bodies come from get_email.",
+].join(" ");
 
 class MailboxMcpServer {
   private server: Server;
@@ -57,7 +82,10 @@ class MailboxMcpServer {
         capabilities: {
           tools: {},
           logging: {},
+          prompts: {},
+          resources: {},
         },
+        instructions: SERVER_INSTRUCTIONS,
       },
     );
   }
@@ -76,6 +104,7 @@ class MailboxMcpServer {
     instance.loadConfiguration();
     instance.initializeServices();
     instance.setupToolHandlers();
+    instance.setupPromptAndResourceHandlers();
 
     return instance;
   }
@@ -338,6 +367,35 @@ class MailboxMcpServer {
     );
   }
 
+  /**
+   * Prompts are user-picked workflows; the folder resource is reference data
+   * the host can browse. Neither has side effects: every mail access still
+   * goes through a tool call the user can see and approve.
+   */
+  private setupPromptAndResourceHandlers(): void {
+    this.server.setRequestHandler(ListPromptsRequestSchema, () => ({
+      prompts: createEmailPrompts(),
+    }));
+
+    this.server.setRequestHandler(GetPromptRequestSchema, request => {
+      const { name, arguments: args } = request.params;
+      // Guarded the same way tools are, so an unknown name fails at dispatch
+      // rather than inside a handler that assumes it owns the namespace.
+      if (!isEmailPrompt(name)) {
+        throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+      }
+      return handleEmailPrompt(name, args);
+    });
+
+    this.server.setRequestHandler(ListResourcesRequestSchema, () => ({
+      resources: listEmailResources(),
+    }));
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, request =>
+      readEmailResource(request.params.uri, this.emailService),
+    );
+  }
+
   async start(): Promise<void> {
     const startTimer = this.logger.startTimer("server_startup");
 
@@ -355,7 +413,7 @@ class MailboxMcpServer {
         },
         {
           version: "0.1.0",
-          capabilities: ["tools", "logging"],
+          capabilities: ["tools", "logging", "prompts", "resources"],
           transport: "stdio",
         },
       );

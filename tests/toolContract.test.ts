@@ -6,6 +6,7 @@ import type {
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
+import { SERVER_INSTRUCTIONS } from "../src/main.js";
 import type { EmailService } from "../src/services/EmailService.js";
 import { SieveService } from "../src/services/SieveService.js";
 import type { SmtpService } from "../src/services/SmtpService.js";
@@ -16,15 +17,6 @@ import {
   type ToolContext,
 } from "../src/types/tool.types.js";
 import { textOf } from "./helpers/toolResult.js";
-
-vi.mock("../src/services/Logger.js", () => ({
-  createLogger: vi.fn(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-    warning: vi.fn(),
-  })),
-}));
 
 // Closed local port: a call that got past argument checking would fail with a
 // connection error instead of the validation error the tests expect.
@@ -586,5 +578,12 @@ describe("structured output", () => {
 
     expect(result.structuredContent).toEqual({ found: false });
     expectMatchesSchema(name, result);
+  });
+});
+
+describe("server instructions", () => {
+  it("should tell the model how folders and UIDs behave", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("get_folders");
+    expect(SERVER_INSTRUCTIONS.toLowerCase()).toContain("uid");
   });
 });
