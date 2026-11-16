@@ -1,3 +1,5 @@
+import { createLogger } from "../services/Logger.js";
+
 /**
  * Describes the shape of tool arguments for logging: key names and types,
  * never values. Arguments carry mail content, recipients and Sieve scripts,
@@ -29,43 +31,39 @@ interface DeclaredInputSchema {
   additionalProperties?: unknown;
 }
 
-/**
- * Names of the arguments a call passes that the tool's advertised input
- * schema does not declare. Only a schema closed with
- * `additionalProperties: false` rejects anything; an open one accepts all.
- *
- * The validators used to strip unknown keys silently, so a misspelt or
- * invented filter (`unread` for `seen`, say) was dropped and the call
- * answered a different question than the one asked.
- */
-export const findUnknownArgs = (
-  inputSchema: DeclaredInputSchema,
-  args: unknown,
-): string[] => {
-  if (
-    inputSchema.additionalProperties !== false ||
-    !args ||
-    typeof args !== "object"
-  ) {
-    return [];
-  }
-  const declared = new Set(Object.keys(inputSchema.properties ?? {}));
-  return Object.keys(args).filter(key => !declared.has(key));
-};
+const logger = createLogger("ToolArgs");
 
 /**
- * The validation message for a call with undeclared arguments, naming the
- * ones that are accepted so the caller can correct the call in one step.
+ * Removes the arguments a call passes that the tool's advertised input schema
+ * does not declare, so they never reach validation or a service. Only a
+ * schema closed with `additionalProperties: false` drops anything.
+ *
+ * Dropped rather than rejected on purpose: clients have been seen adding
+ * arguments of their own (Claude Desktop sent `*uuid*` keys), and failing
+ * every such call would break the client for nothing. The names, never the
+ * values, are logged at debug level so a misspelt argument can be traced.
  */
-export const describeUnknownArgs = (
-  inputSchema: DeclaredInputSchema,
-  unknown: string[],
-): string => {
-  const accepted = Object.keys(inputSchema.properties ?? {});
-  const names = unknown.map(key => `"${key}"`).join(", ");
-  return `Unknown argument${unknown.length > 1 ? "s" : ""} ${names}. ${
-    accepted.length > 0
-      ? `Accepted arguments: ${accepted.join(", ")}.`
-      : "This tool takes no arguments."
-  }`;
+export const dropUndeclaredArgs = (
+  toolName: string,
+  inputSchema: DeclaredInputSchema | undefined,
+  args: unknown,
+): Record<string, unknown> => {
+  if (!args || typeof args !== "object") {
+    return {};
+  }
+  const entries = Object.entries(args as Record<string, unknown>);
+  if (inputSchema?.additionalProperties !== false) {
+    return Object.fromEntries(entries);
+  }
+
+  const declared = new Set(Object.keys(inputSchema.properties ?? {}));
+  const dropped = entries.map(([key]) => key).filter(key => !declared.has(key));
+  if (dropped.length > 0) {
+    logger.debug(
+      `Ignoring undeclared arguments for ${toolName}`,
+      { operation: "dropUndeclaredArgs", service: "toolArgs" },
+      { tool: toolName, dropped },
+    );
+  }
+  return Object.fromEntries(entries.filter(([key]) => declared.has(key)));
 };

@@ -118,7 +118,7 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 Every email and Sieve tool carries [MCP tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-annotations): a human-readable title plus hints that tell the client whether the tool only reads (`readOnlyHint`), can destroy data (`destructiveHint`), is safe to repeat (`idempotentHint`) and reaches outside your mailbox (`openWorldHint`). Clients use them to decide what to run freely and what to confirm with you first. The "Hints" column below summarises them.
 
-Arguments are checked against the advertised input schema: an argument a tool does not declare is rejected with a message listing the accepted ones, instead of being silently ignored.
+Each input schema is closed (`additionalProperties: false`). Undeclared arguments are ignored: they are dropped before validation, never reach the mail or Sieve server, and only their names are logged at debug level. Declared arguments are validated as before.
 
 ### **Email Tools**
 

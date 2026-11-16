@@ -15,11 +15,7 @@ import {
   isCancelled,
   type ToolContext,
 } from "../types/tool.types.js";
-import {
-  describeUnknownArgs,
-  findUnknownArgs,
-  summarizeArgs,
-} from "../utils/toolArgs.js";
+import { dropUndeclaredArgs, summarizeArgs } from "../utils/toolArgs.js";
 import {
   createDirectorySchema,
   createDraftSchema,
@@ -669,7 +665,7 @@ const INPUT_SCHEMAS = new Map(
 
 export async function handleEmailTool(
   name: string,
-  args: unknown,
+  rawArgs: unknown,
   emailService: EmailService,
   smtpService?: SmtpService,
   context?: ToolContext,
@@ -681,15 +677,11 @@ export async function handleEmailTool(
     return cancelledResult(name);
   }
 
-  try {
-    const inputSchema = INPUT_SCHEMAS.get(name);
-    const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
-    if (inputSchema && unknownArgs.length > 0) {
-      throw new Error(
-        `Validation failed: ${describeUnknownArgs(inputSchema, unknownArgs)}`,
-      );
-    }
+  // Undeclared arguments are dropped before validation, so they can never
+  // reach a service; declared ones are validated as before.
+  const args = dropUndeclaredArgs(name, INPUT_SCHEMAS.get(name), rawArgs);
 
+  try {
     switch (name) {
       case "search_emails": {
         const validatedArgs = validateInput(searchEmailsSchema, args);

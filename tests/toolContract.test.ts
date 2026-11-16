@@ -151,29 +151,71 @@ describe("advertised input schemas", () => {
     ).toBe(false);
   });
 
-  it.each(
-    contractCases,
-  )("$label should reject an argument its schema does not declare", async ({
-    module,
-    tool,
-  }) => {
-    const result = await module.call(tool.name, { notAnArgument: 1 });
+  it("should ignore undeclared arguments and run the search", async () => {
+    const searchEmails = vi.fn().mockResolvedValue({ messages: [], total: 0 });
 
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Unknown argument "notAnArgument"');
-    expect(textOf(result)).not.toMatch(/ECONNREFUSED|connect/i);
+    const result = await handleEmailTool(
+      "search_emails",
+      // Claude Desktop has been seen adding uuid-style keys of its own.
+      { seen: false, parent_message_uuid: "null", unread: true },
+      { searchEmails } as unknown as EmailService,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(searchEmails).toHaveBeenCalledTimes(1);
+    const options = searchEmails.mock.calls[0][0];
+    expect(options.seen).toBe(false);
+    expect(options).not.toHaveProperty("parent_message_uuid");
+    expect(options).not.toHaveProperty("unread");
   });
 
-  it("should name the accepted arguments when rejecting one", async () => {
-    const searchEmails = vi.fn();
+  it("should not let an undeclared argument fail a tool without parameters", async () => {
+    const getFolders = vi.fn().mockResolvedValue([]);
 
-    const result = await handleEmailTool("search_emails", { unread: true }, {
-      searchEmails,
-    } as unknown as EmailService);
+    const result = await handleEmailTool(
+      "get_folders",
+      { message_uuid: "none" },
+      { getFolders } as unknown as EmailService,
+    );
 
-    expect(searchEmails).not.toHaveBeenCalled();
-    expect(textOf(result)).toContain('"unread"');
-    expect(textOf(result)).toContain("seen");
+    expect(result.isError).toBeUndefined();
+    expect(getFolders).toHaveBeenCalled();
+  });
+
+  it("should still validate declared arguments next to undeclared ones", async () => {
+    const getEmail = vi.fn();
+
+    const result = await handleEmailTool(
+      "get_email",
+      { uid: "not-a-number", thread_uuid: "undefined" },
+      { getEmail } as unknown as EmailService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("UID must be a number");
+    expect(getEmail).not.toHaveBeenCalled();
+  });
+
+  it("should ignore undeclared arguments on Sieve tools", async () => {
+    vi.spyOn(SieveService.prototype, "connect").mockResolvedValue();
+    vi.spyOn(SieveService.prototype, "authenticate").mockResolvedValue();
+    vi.spyOn(SieveService.prototype, "disconnect").mockResolvedValue();
+    const getScript = vi
+      .spyOn(SieveService.prototype, "getScript")
+      .mockResolvedValue("keep;");
+
+    const result = await handleSieveTool(
+      {
+        params: {
+          name: "get_sieve_script",
+          arguments: { name: "main", conversation_uuid: "null" },
+        },
+      } as CallToolRequest,
+      sieveConfig,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(getScript).toHaveBeenCalledWith("main");
   });
 
   it("should advertise that send_email needs a text or html body", () => {

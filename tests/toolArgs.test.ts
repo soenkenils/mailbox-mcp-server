@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  describeUnknownArgs,
-  findUnknownArgs,
-  summarizeArgs,
-} from "../src/utils/toolArgs.js";
+import { dropUndeclaredArgs, summarizeArgs } from "../src/utils/toolArgs.js";
 
 describe("summarizeArgs", () => {
   it("should describe the shape of tool arguments without their values", () => {
@@ -34,40 +30,40 @@ describe("summarizeArgs", () => {
   });
 });
 
-describe("findUnknownArgs", () => {
+describe("dropUndeclaredArgs", () => {
   const closed = {
     properties: { uid: {}, folder: {} },
     additionalProperties: false,
   };
 
-  it("should list arguments the schema does not declare", () => {
+  it("should drop arguments the schema does not declare", () => {
     expect(
-      findUnknownArgs(closed, { uid: 1, unread: true, is_read: false }),
-    ).toEqual(["unread", "is_read"]);
+      dropUndeclaredArgs("get_email", closed, {
+        uid: 1,
+        parent_message_uuid: "null",
+        unread: true,
+      }),
+    ).toEqual({ uid: 1 });
   });
 
-  it("should accept a call that uses only declared arguments", () => {
-    expect(findUnknownArgs(closed, { uid: 1 })).toEqual([]);
-    expect(findUnknownArgs(closed, undefined)).toEqual([]);
-  });
-
-  it("should accept anything when the schema is left open", () => {
-    expect(findUnknownArgs({ properties: { uid: {} } }, { other: 1 })).toEqual(
-      [],
-    );
-  });
-});
-
-describe("describeUnknownArgs", () => {
-  it("should name the rejected and the accepted arguments", () => {
+  it("should keep declared arguments untouched, invalid ones included", () => {
+    // Validation is the validator's job; dropping only removes what the tool
+    // never declared.
     expect(
-      describeUnknownArgs({ properties: { uid: {}, folder: {} } }, ["x"]),
-    ).toBe('Unknown argument "x". Accepted arguments: uid, folder.');
+      dropUndeclaredArgs("get_email", closed, { uid: "x", folder: "INBOX" }),
+    ).toEqual({ uid: "x", folder: "INBOX" });
   });
 
-  it("should say when a tool takes no arguments at all", () => {
-    expect(describeUnknownArgs({ properties: {} }, ["a", "b"])).toBe(
-      'Unknown arguments "a", "b". This tool takes no arguments.',
-    );
+  it("should treat missing arguments as none", () => {
+    expect(dropUndeclaredArgs("get_email", closed, undefined)).toEqual({});
+  });
+
+  it("should keep everything when the schema is left open or unknown", () => {
+    expect(
+      dropUndeclaredArgs("x", { properties: { uid: {} } }, { other: 1 }),
+    ).toEqual({ other: 1 });
+    expect(dropUndeclaredArgs("x", undefined, { other: 1 })).toEqual({
+      other: 1,
+    });
   });
 });

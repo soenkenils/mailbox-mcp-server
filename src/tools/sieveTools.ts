@@ -16,11 +16,7 @@ import {
   isCancelled,
   type ToolContext,
 } from "../types/tool.types.js";
-import {
-  describeUnknownArgs,
-  findUnknownArgs,
-  summarizeArgs,
-} from "../utils/toolArgs.js";
+import { dropUndeclaredArgs, summarizeArgs } from "../utils/toolArgs.js";
 
 const logger = createLogger("SieveTools");
 
@@ -262,29 +258,27 @@ const INPUT_SCHEMAS = new Map(
 );
 
 export async function handleSieveTool(
-  request: CallToolRequest,
+  rawRequest: CallToolRequest,
   config: ServerConfig,
   context?: ToolContext,
 ): Promise<CallToolResult> {
-  const { name, arguments: args } = request.params;
+  const { name } = rawRequest.params;
   if (isCancelled(context)) {
     return cancelledResult(name);
   }
-  const inputSchema = INPUT_SCHEMAS.get(name);
-  const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
-  if (inputSchema && unknownArgs.length > 0) {
-    // Checked before connecting: a call that cannot be valid should not
-    // cost a ManageSieve login.
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Invalid input for ${name}: ${describeUnknownArgs(inputSchema, unknownArgs)}`,
-        },
-      ],
-      isError: true,
-    };
-  }
+  // Undeclared arguments are dropped before validation, so the handlers only
+  // ever see what the schema declares.
+  const request: CallToolRequest = {
+    ...rawRequest,
+    params: {
+      ...rawRequest.params,
+      arguments: dropUndeclaredArgs(
+        name,
+        INPUT_SCHEMAS.get(name),
+        rawRequest.params.arguments,
+      ),
+    },
+  };
 
   const sieveService = new SieveService(config.sieve);
 
