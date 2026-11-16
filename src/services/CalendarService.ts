@@ -265,10 +265,18 @@ export class CalendarService {
         false,
       );
     }
+    if (role.kind === "unknown" && !sendInvitations) {
+      throw new ValidationError(
+        `Can't tell whether you organize this meeting (organizer ${role.organizer}). Saving a change may email updates to ${role.attendees} attendee(s); pass sendInvitations: true only if that is acceptable`,
+        "sendInvitations",
+        false,
+      );
+    }
 
     this.applyEventUpdate(vevent, options);
     const notified =
       role.kind === "organizer" ||
+      role.kind === "unknown" ||
       (sendInvitations && !!options.attendees?.length);
 
     // Read from the component that was edited: parsing the whole document
@@ -323,6 +331,13 @@ export class CalendarService {
     if (role.kind === "organizer" && !notify) {
       throw new ValidationError(
         `This is a meeting you organize with ${role.attendees} attendee(s): deleting it makes the server email them a cancellation. Pass notifyParticipants: true only if the user wants them told`,
+        "notifyParticipants",
+        false,
+      );
+    }
+    if (role.kind === "unknown" && !notify) {
+      throw new ValidationError(
+        `Can't tell whether you organize this meeting (organizer ${role.organizer}). Deleting may email cancellations to ${role.attendees} attendee(s); pass notifyParticipants: true only if that is acceptable`,
         "notifyParticipants",
         false,
       );
@@ -545,6 +560,10 @@ export class CalendarService {
    * ORGANIZER and attendees the server would notify, i.e. without
    * SCHEDULE-AGENT=CLIENT. The account organizes it when the ORGANIZER is
    * its username or one of the calendar user addresses the server reports.
+   * It was invited only on positive evidence: one of those addresses is an
+   * ATTENDEE. Anything else is unknown, since an alias the server did not
+   * report would make the account the organizer, and a DELETE then mails
+   * cancellations whatever Schedule-Reply says.
    */
   private async schedulingRole(
     vevents: ICAL.Component[],
@@ -552,6 +571,7 @@ export class CalendarService {
     | { kind: "none" }
     | { kind: "organizer"; attendees: number }
     | { kind: "attendee"; organizer: string }
+    | { kind: "unknown"; organizer: string; attendees: number }
   > {
     const address = (value: unknown): string =>
       String(value)
@@ -559,7 +579,8 @@ export class CalendarService {
         .trim()
         .toLowerCase();
     let organizer: string | undefined;
-    const attendees = new Set<string>();
+    const scheduled = new Set<string>();
+    const listed = new Set<string>();
 
     for (const vevent of vevents) {
       const own = vevent.getFirstPropertyValue("organizer");
@@ -572,9 +593,10 @@ export class CalendarService {
           attendee.getParameter("schedule-agent") ?? "SERVER",
         ).toUpperCase();
         const attendeeAddress = address(attendee.getFirstValue());
+        listed.add(attendeeAddress);
         if (agent !== "CLIENT" && attendeeAddress !== ownAddress) {
           organizer ??= ownAddress;
-          attendees.add(attendeeAddress);
+          scheduled.add(attendeeAddress);
         }
       }
     }
@@ -583,9 +605,13 @@ export class CalendarService {
       return { kind: "none" };
     }
     const mine = await this.ownAddresses();
-    return mine.has(organizer)
-      ? { kind: "organizer", attendees: attendees.size }
-      : { kind: "attendee", organizer };
+    if (mine.has(organizer)) {
+      return { kind: "organizer", attendees: scheduled.size };
+    }
+    if ([...listed].some(attendee => mine.has(attendee))) {
+      return { kind: "attendee", organizer };
+    }
+    return { kind: "unknown", organizer, attendees: scheduled.size };
   }
 
   /** The account's own calendar user addresses, lower-cased, best effort. */

@@ -227,7 +227,7 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     {
       name: "update_calendar_event",
       description:
-        "Change an existing calendar event, found by its UID (from get_calendar_events, search_calendar or create_calendar_event). Only the fields you pass change; alarms, recurrence and everything else are kept. Overwritten values cannot be restored. A recurring event changes as a WHOLE SERIES: there is no way to change a single occurrence, and occurrence ids (UID:date) are refused. Moving a recurring series is refused. By default nobody is notified: new attendees are only recorded, and a meeting you organize with attendees is not changed. Set sendInvitations to true only when the user explicitly wants participants emailed: the server then sends invitations or updates. Events you were invited to by someone else cannot be changed.",
+        "Change an existing calendar event, found by its UID (from get_calendar_events, search_calendar or create_calendar_event). Only the fields you pass change; alarms, recurrence and everything else are kept. Overwritten values cannot be restored. A recurring event changes as a WHOLE SERIES: there is no way to change a single occurrence, and occurrence ids (UID:date) are refused. Moving a recurring series is refused. By default nobody is notified: new attendees are only recorded, and a meeting with attendees that you organize, or whose organizer cannot be recognised as someone who invited you, is not changed. Set sendInvitations to true only when the user explicitly wants participants emailed: the server then sends invitations or updates. Events you were invited to by someone else cannot be changed.",
       inputSchema: {
         type: "object",
         properties: {
@@ -300,7 +300,7 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     {
       name: "delete_calendar_event",
       description:
-        "Permanently delete a calendar event, found by its UID (from get_calendar_events or search_calendar). This cannot be undone. A recurring event is deleted as a WHOLE SERIES with all its occurrences; occurrence ids (UID:date) are refused. By default nobody is notified: a meeting you organize with attendees is not deleted, and for an invitation you received the server is asked not to send the organizer a decline. Set notifyParticipants to true only when the user explicitly wants that.",
+        "Permanently delete a calendar event, found by its UID (from get_calendar_events or search_calendar). This cannot be undone. A recurring event is deleted as a WHOLE SERIES with all its occurrences; occurrence ids (UID:date) are refused. By default nobody is notified: a meeting with attendees that you organize, or whose organizer cannot be recognised as someone who invited you, is not deleted, and for an invitation you received the server is asked not to send the organizer a decline. Set notifyParticipants to true only when the user explicitly wants that.",
       inputSchema: {
         type: "object",
         properties: {

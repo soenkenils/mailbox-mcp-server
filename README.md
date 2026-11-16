@@ -147,7 +147,8 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 **No surprise mail (RFC 6638).** mailbox.org sends scheduling mail for events that have an organizer and attendees. These tools avoid that unless you ask for it:
 - `update_calendar_event` records new attendees only (`SCHEDULE-AGENT=CLIENT`, no organizer added). With `sendInvitations: true` your account becomes the organizer and the server may email invitations, updates and cancellations.
 - A meeting you organize (organizer is your address, or one of the calendar user addresses the server reports, with attendees that are not marked `SCHEDULE-AGENT=CLIENT`) is not changed without `sendInvitations: true` and not deleted without `notifyParticipants: true`, since any change makes the server email the attendees.
-- An event someone else organized and invited you to cannot be changed. Deleting it sends `Schedule-Reply: F`, asking the server not to send the organizer a decline; with `notifyParticipants: true` the server may send one.
+- An event is treated as an invitation you received only when your address is among its attendees and the organizer is someone else. Such an event cannot be changed; deleting it sends `Schedule-Reply: F`, asking the server not to send the organizer a decline (with `notifyParticipants: true` the server may send one).
+- Any other meeting (an organizer that is neither recognisably you nor someone who invited you, e.g. an alias the server does not report) is handled like one you organize: it is not changed or deleted without the opt-in flag, because the server may email the attendees.
 
 Calendars for update and delete are chosen like for create: exact display name, URL or last URL segment, and only among `MAILBOX_CALENDARS` when that is set. A UID found in several calendars is refused until you name the calendar.
 

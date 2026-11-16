@@ -1415,13 +1415,40 @@ describe("CalendarService event changes", () => {
         expect(writtenEvent().hasProperty("attendee")).toBe(false);
       });
 
-      const organized = (organizer: string) =>
+      const organized = (organizer: string, ...extra: string[]) =>
         vcalendar(
           meeting("evt-1", [
             `ORGANIZER:mailto:${organizer}`,
             "ATTENDEE;PARTSTAT=ACCEPTED:mailto:alice@example.com",
+            ...extra.map(address => `ATTENDEE:mailto:${address}`),
           ]),
         );
+
+      it.each([
+        ["the server reports only the username", ["mailto:me@mailbox.org"]],
+        ["the address lookup fails", new Error("PROPFIND failed")],
+      ])("should not take a meeting organized by an unknown address for an invitation when %s", async (_label, addresses) => {
+        if (addresses instanceof Error) {
+          fetchCalendarUserAddresses.mockRejectedValue(addresses);
+        } else {
+          fetchCalendarUserAddresses.mockResolvedValue(addresses);
+        }
+        objectsByCalendar[WORK_URL] = [stored(organized("alias@mailbox.org"))];
+
+        await expect(
+          makeService().updateCalendarEvent({ uid: "evt-1", summary: "x" }),
+        ).rejects.toThrow(
+          /Can't tell whether you organize this meeting \(organizer alias@mailbox.org\).*1 attendee.*sendInvitations: true/,
+        );
+        expect(updateCalendarObject).not.toHaveBeenCalled();
+
+        const { notified } = await makeService().updateCalendarEvent({
+          uid: "evt-1",
+          summary: "x",
+          sendInvitations: true,
+        });
+        expect(notified).toBe(true);
+      });
 
       it("should refuse to change a meeting the account organizes unless notifying is allowed", async () => {
         objectsByCalendar[WORK_URL] = [stored(organized("me@mailbox.org"))];
@@ -1456,7 +1483,9 @@ describe("CalendarService event changes", () => {
       });
 
       it("should refuse to change an event someone else organized, whatever the flags", async () => {
-        objectsByCalendar[WORK_URL] = [stored(organized("boss@example.com"))];
+        objectsByCalendar[WORK_URL] = [
+          stored(organized("boss@example.com", "Me@Mailbox.org")),
+        ];
 
         for (const sendInvitations of [false, true]) {
           await expect(
@@ -1755,6 +1784,39 @@ describe("CalendarService event changes", () => {
             "ATTENDEE:mailto:bob@example.com",
           ]),
         );
+      // An invitation names the account among its attendees.
+      const invitation = vcalendar(
+        meeting("evt-1", [
+          "ORGANIZER:mailto:boss@example.com",
+          "ATTENDEE:mailto:alice@example.com",
+          "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@mailbox.org",
+        ]),
+      );
+
+      it.each([
+        ["the server reports only the username", ["mailto:me@mailbox.org"]],
+        ["the address lookup fails", new Error("PROPFIND failed")],
+      ])("should not delete a meeting organized by an unknown address without the opt-in when %s", async (_label, addresses) => {
+        if (addresses instanceof Error) {
+          fetchCalendarUserAddresses.mockRejectedValue(addresses);
+        } else {
+          fetchCalendarUserAddresses.mockResolvedValue(addresses);
+        }
+        objectsByCalendar[WORK_URL] = [stored(organized("alias@mailbox.org"))];
+
+        await expect(
+          makeService().deleteCalendarEvent({ uid: "evt-1" }),
+        ).rejects.toThrow(
+          "Can't tell whether you organize this meeting (organizer alias@mailbox.org). Deleting may email cancellations to 2 attendee(s); pass notifyParticipants: true only if that is acceptable",
+        );
+        expect(deleteCalendarObject).not.toHaveBeenCalled();
+
+        const result = await makeService().deleteCalendarEvent({
+          uid: "evt-1",
+          notifyParticipants: true,
+        });
+        expect(result.notified).toBe(true);
+      });
 
       it("should refuse to delete a meeting the account organizes unless notifying is allowed", async () => {
         objectsByCalendar[WORK_URL] = [stored(organized("me@mailbox.org"))];
@@ -1776,7 +1838,7 @@ describe("CalendarService event changes", () => {
       });
 
       it("should remove an invitation without sending the organizer a decline", async () => {
-        objectsByCalendar[WORK_URL] = [stored(organized("boss@example.com"))];
+        objectsByCalendar[WORK_URL] = [stored(invitation)];
 
         const result = await makeService().deleteCalendarEvent({
           uid: "evt-1",
@@ -1789,7 +1851,7 @@ describe("CalendarService event changes", () => {
       });
 
       it("should let the server send the decline when asked", async () => {
-        objectsByCalendar[WORK_URL] = [stored(organized("boss@example.com"))];
+        objectsByCalendar[WORK_URL] = [stored(invitation)];
 
         const result = await makeService().deleteCalendarEvent({
           uid: "evt-1",
