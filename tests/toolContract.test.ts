@@ -6,9 +6,14 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
 import type { EmailService } from "../src/services/EmailService.js";
+import { SieveService } from "../src/services/SieveService.js";
 import type { SmtpService } from "../src/services/SmtpService.js";
 import { createEmailTools, handleEmailTool } from "../src/tools/emailTools.js";
 import { getSieveTools, handleSieveTool } from "../src/tools/sieveTools.js";
+import {
+  createProgressReporter,
+  type ToolContext,
+} from "../src/types/tool.types.js";
 import { textOf } from "./helpers/toolResult.js";
 
 vi.mock("../src/services/Logger.js", () => ({
@@ -227,5 +232,86 @@ describe("advertised input schemas", () => {
       "\\Deleted",
       "\\Draft",
     ]);
+  });
+});
+
+describe("cancellation", () => {
+  const aborted = (): ToolContext => {
+    const controller = new AbortController();
+    controller.abort();
+    return { signal: controller.signal };
+  };
+
+  it("should not reach the email service once the client has cancelled", async () => {
+    const searchEmails = vi.fn();
+
+    const result = await handleEmailTool(
+      "search_emails",
+      { query: "test" },
+      { searchEmails } as unknown as EmailService,
+      undefined,
+      aborted(),
+    );
+
+    expect(searchEmails).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("Cancelled search_emails");
+  });
+
+  it("should not open a Sieve session once the client has cancelled", async () => {
+    const connect = vi.spyOn(SieveService.prototype, "connect");
+
+    const result = await handleSieveTool(
+      {
+        params: { name: "list_sieve_scripts", arguments: {} },
+      } as CallToolRequest,
+      sieveConfig,
+      aborted(),
+    );
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+  });
+
+  it("should run normally when the signal has not fired", async () => {
+    const getFolders = vi.fn().mockResolvedValue([]);
+
+    const result = await handleEmailTool(
+      "get_folders",
+      {},
+      { getFolders } as unknown as EmailService,
+      undefined,
+      { signal: new AbortController().signal },
+    );
+
+    expect(getFolders).toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+  });
+});
+
+describe("createProgressReporter", () => {
+  it("should not report when the client asked for no progress", () => {
+    expect(createProgressReporter(undefined, vi.fn())).toBeUndefined();
+  });
+
+  it("should address notifications to the client's token", async () => {
+    const send = vi.fn();
+
+    await createProgressReporter("tok-1", send)?.({ progress: 1, total: 2 });
+
+    expect(send).toHaveBeenCalledWith({
+      progressToken: "tok-1",
+      progress: 1,
+      total: 2,
+    });
+  });
+
+  it("should not fail the operation when a notification cannot be sent", async () => {
+    const send = vi.fn().mockRejectedValue(new Error("transport closed"));
+
+    // Progress is advisory: losing it must not surface as a tool failure.
+    await expect(
+      createProgressReporter("tok-1", send)?.({ progress: 1 }),
+    ).resolves.toBeUndefined();
   });
 });

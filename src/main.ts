@@ -1,10 +1,13 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   type CallToolRequest,
   CallToolRequestSchema,
   type CallToolResult,
   ListToolsRequestSchema,
+  type ServerNotification,
+  type ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig, type ServerConfig } from "./config/config.js";
@@ -29,6 +32,10 @@ import {
   isSieveTool,
 } from "./tools/sieveTools.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
+import {
+  createProgressReporter,
+  type ToolContext,
+} from "./types/tool.types.js";
 import { summarizeArgs } from "./utils/toolArgs.js";
 
 class MailboxMcpServer {
@@ -189,6 +196,28 @@ class MailboxMcpServer {
     }
   }
 
+  /**
+   * Narrows the SDK's per-request `extra` to what tools need: the abort
+   * signal, and a progress reporter only when the client sent a
+   * progressToken, since without one there is nothing to address it to.
+   */
+  private toolContext(
+    request: CallToolRequest,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  ): ToolContext {
+    return {
+      signal: extra.signal,
+      reportProgress: createProgressReporter(
+        request.params._meta?.progressToken,
+        params =>
+          extra.sendNotification({
+            method: "notifications/progress",
+            params,
+          }),
+      ),
+    };
+  }
+
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, () => {
       // Tool definitions are synchronous
@@ -201,102 +230,112 @@ class MailboxMcpServer {
       };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async request => {
-      const { name, arguments: args } = request.params;
-      const timer = this.logger.startTimer(`tool:${name}`);
+    this.server.setRequestHandler(
+      CallToolRequestSchema,
+      async (request, extra) => {
+        const { name, arguments: args } = request.params;
+        const timer = this.logger.startTimer(`tool:${name}`);
+        const context = this.toolContext(request, extra);
 
-      this.logger.debug(
-        `Executing tool: ${name}`,
-        {
-          operation: "callTool",
-          service: "toolHandler",
-        },
-        // Shape only: argument values are mail content and recipients.
-        { tool: name, args: summarizeArgs(args) },
-      );
-
-      const toolArgs = args ?? {};
-
-      try {
-        let result: CallToolResult;
-
-        if (isEmailTool(name)) {
-          result = await handleEmailTool(
-            name,
-            toolArgs,
-            this.emailService,
-            this.smtpService,
-          );
-        } else if (isCalendarTool(name)) {
-          result = await handleCalendarTool(
-            name,
-            toolArgs,
-            this.calendarService,
-          );
-        } else if (isSieveTool(name)) {
-          result = await handleSieveTool(
-            { params: { name, arguments: toolArgs } } as CallToolRequest,
-            this.config,
-          );
-        } else {
-          throw new ValidationError(`Unknown tool: ${name}`, "tool_name", name);
-        }
-
-        // Record successful execution
-        const metrics = timer.end(true);
-        this.logger.info(
-          `Tool executed successfully: ${name}`,
+        this.logger.debug(
+          `Executing tool: ${name}`,
           {
             operation: "callTool",
             service: "toolHandler",
-            duration: metrics.duration,
           },
-          { tool: name, success: true },
+          // Shape only: argument values are mail content and recipients.
+          { tool: name, args: summarizeArgs(args) },
         );
 
-        return result;
-      } catch (error) {
-        // Record failed execution
-        const errorType =
-          error instanceof Error ? error.constructor.name : "UnknownError";
-        const metrics = timer.end(false, errorType);
+        const toolArgs = args ?? {};
 
-        // Convert to structured error
-        const mcpError =
-          error instanceof Error
-            ? ErrorUtils.toMCPError(error, {
-                operation: `call_tool:${name}`,
-                service: "MailboxMcpServer",
-                details: { tool: name, args: summarizeArgs(toolArgs) },
-              })
-            : new ValidationError(String(error), "unknown", error);
+        try {
+          let result: CallToolResult;
 
-        this.logger.error(
-          `Tool execution failed: ${name}`,
-          {
-            operation: "callTool",
-            service: "toolHandler",
-            duration: metrics.duration,
-          },
-          {
-            tool: name,
-            error: mcpError.toJSON(),
-            userMessage: mcpError.getUserMessage(),
-            isRetryable: mcpError.isRetryable,
-          },
-        );
+          if (isEmailTool(name)) {
+            result = await handleEmailTool(
+              name,
+              toolArgs,
+              this.emailService,
+              this.smtpService,
+              context,
+            );
+          } else if (isCalendarTool(name)) {
+            result = await handleCalendarTool(
+              name,
+              toolArgs,
+              this.calendarService,
+            );
+          } else if (isSieveTool(name)) {
+            result = await handleSieveTool(
+              { params: { name, arguments: toolArgs } } as CallToolRequest,
+              this.config,
+              context,
+            );
+          } else {
+            throw new ValidationError(
+              `Unknown tool: ${name}`,
+              "tool_name",
+              name,
+            );
+          }
 
-        return {
-          content: [
+          // Record successful execution
+          const metrics = timer.end(true);
+          this.logger.info(
+            `Tool executed successfully: ${name}`,
             {
-              type: "text",
-              text: `Error executing ${name}: ${mcpError.getUserMessage()}${mcpError.isRetryable ? " (This operation can be retried)" : ""}`,
+              operation: "callTool",
+              service: "toolHandler",
+              duration: metrics.duration,
             },
-          ],
-          isError: true,
-        };
-      }
-    });
+            { tool: name, success: true },
+          );
+
+          return result;
+        } catch (error) {
+          // Record failed execution
+          const errorType =
+            error instanceof Error ? error.constructor.name : "UnknownError";
+          const metrics = timer.end(false, errorType);
+
+          // Convert to structured error
+          const mcpError =
+            error instanceof Error
+              ? ErrorUtils.toMCPError(error, {
+                  operation: `call_tool:${name}`,
+                  service: "MailboxMcpServer",
+                  details: { tool: name, args: summarizeArgs(toolArgs) },
+                })
+              : new ValidationError(String(error), "unknown", error);
+
+          this.logger.error(
+            `Tool execution failed: ${name}`,
+            {
+              operation: "callTool",
+              service: "toolHandler",
+              duration: metrics.duration,
+            },
+            {
+              tool: name,
+              error: mcpError.toJSON(),
+              userMessage: mcpError.getUserMessage(),
+              isRetryable: mcpError.isRetryable,
+            },
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error executing ${name}: ${mcpError.getUserMessage()}${mcpError.isRetryable ? " (This operation can be retried)" : ""}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      },
+    );
   }
 
   async start(): Promise<void> {

@@ -12,6 +12,11 @@ import {
 } from "../services/SieveService.js";
 import { SieveError } from "../types/sieve.types.js";
 import {
+  cancelledResult,
+  isCancelled,
+  type ToolContext,
+} from "../types/tool.types.js";
+import {
   describeUnknownArgs,
   findUnknownArgs,
   summarizeArgs,
@@ -259,8 +264,12 @@ const INPUT_SCHEMAS = new Map(
 export async function handleSieveTool(
   request: CallToolRequest,
   config: ServerConfig,
+  context?: ToolContext,
 ): Promise<CallToolResult> {
   const { name, arguments: args } = request.params;
+  if (isCancelled(context)) {
+    return cancelledResult(name);
+  }
   const inputSchema = INPUT_SCHEMAS.get(name);
   const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
   if (inputSchema && unknownArgs.length > 0) {

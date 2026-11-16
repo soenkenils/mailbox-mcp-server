@@ -10,6 +10,11 @@ import {
   ValidationError,
 } from "../types/errors.js";
 import {
+  cancelledResult,
+  isCancelled,
+  type ToolContext,
+} from "../types/tool.types.js";
+import {
   describeUnknownArgs,
   findUnknownArgs,
   summarizeArgs,
@@ -485,10 +490,15 @@ export async function handleEmailTool(
   args: unknown,
   emailService: EmailService,
   smtpService?: SmtpService,
+  context?: ToolContext,
 ): Promise<{
   content: Array<{ type: "text"; text: string; [key: string]: unknown }>;
   isError?: boolean;
 }> {
+  if (isCancelled(context)) {
+    return cancelledResult(name);
+  }
+
   try {
     const inputSchema = INPUT_SCHEMAS.get(name);
     const unknownArgs = inputSchema ? findUnknownArgs(inputSchema, args) : [];
