@@ -20,7 +20,6 @@ import type {
 // Test helper interface for accessing private methods
 interface TestableEmailService extends EmailService {
   isConnectionError(error: unknown): boolean;
-  getDefaultFolders(): EmailFolder[];
   formatAddressesForHeader(
     addresses: Array<{ name?: string; address: string }>,
   ): string;
@@ -174,39 +173,6 @@ describe("EmailService - Advanced Coverage", () => {
       activeConnections: 1,
       idleConnections: 1,
       totalErrors: 0,
-    });
-  });
-
-  describe("getDefaultFolders", () => {
-    it("should return standard IMAP folders", () => {
-      const folders = service.getDefaultFolders();
-      expect(folders).toHaveLength(4);
-      expect(folders.map(f => f.name)).toEqual([
-        "INBOX",
-        "Sent",
-        "Drafts",
-        "Trash",
-      ]);
-    });
-
-    it("should have correct special use flags", () => {
-      const folders = service.getDefaultFolders();
-      const folderMap = Object.fromEntries(
-        folders.map(f => [f.name, f.specialUse]),
-      );
-
-      expect(folderMap.INBOX).toBeUndefined();
-      expect(folderMap.Sent).toBe("\\Sent");
-      expect(folderMap.Drafts).toBe("\\Drafts");
-      expect(folderMap.Trash).toBe("\\Trash");
-    });
-
-    it("should use standard delimiter", () => {
-      const folders = service.getDefaultFolders();
-      for (const folder of folders) {
-        expect(folder.delimiter).toBe("/");
-        expect(folder.flags).toEqual([]);
-      }
     });
   });
 
@@ -606,6 +572,31 @@ describe("EmailService - Advanced Coverage", () => {
         "Search failed",
       );
       expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(mockWrapper);
+    });
+  });
+
+  describe("searchEmails connection failures", () => {
+    it("should surface a connection error instead of an empty result", async () => {
+      mockPool.acquireForFolder.mockRejectedValue(
+        new Error("Connection refused"),
+      );
+      (mockCache.getStale as Mock).mockReturnValue(null);
+
+      await expect(service.searchEmails({ query: "invoice" })).rejects.toThrow(
+        "Connection refused",
+      );
+    });
+
+    it("should serve the stale copy when the connection fails", async () => {
+      const stale = [{ uid: 1, subject: "cached" }];
+      mockPool.acquireForFolder.mockRejectedValue(
+        new Error("Connection refused"),
+      );
+      (mockCache.getStale as Mock).mockReturnValue(stale);
+
+      await expect(service.searchEmails({ query: "invoice" })).resolves.toBe(
+        stale,
+      );
     });
   });
 
@@ -1161,7 +1152,7 @@ describe("EmailService - Advanced Coverage", () => {
       );
     });
 
-    it("should return default folders on connection error without cache", async () => {
+    it("should surface a connection error without cache instead of guessing folders", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
       (service as any).cache.get = mockGet;
 
@@ -1175,19 +1166,9 @@ describe("EmailService - Advanced Coverage", () => {
       const mockGetStale = vi.fn().mockReturnValue(null);
       (service as any).cache.getStale = mockGetStale;
 
-      const result = await service.getFolders();
-
-      expect(result).toHaveLength(4); // INBOX, Sent, Drafts, Trash
-      expect(result.map(f => f.name)).toEqual([
-        "INBOX",
-        "Sent",
-        "Drafts",
-        "Trash",
-      ]);
-      expect(mockLogger.warning).toHaveBeenCalledWith(
-        "No cached data available, returning default value due to connection failure",
-        expect.any(Object),
-      );
+      // A made-up INBOX/Sent/Drafts/Trash list would read as the real one.
+      await expect(service.getFolders()).rejects.toThrow("Connection timeout");
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
     });
 
     it("should throw non-connection errors", async () => {

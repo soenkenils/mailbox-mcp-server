@@ -105,7 +105,8 @@ export class EmailService {
       },
       "searchEmails",
       300000, // 5 minutes TTL
-      { defaultValue: [] },
+      // No default: on a connection failure with nothing cached, an empty
+      // list would read as "no such emails" instead of an outage.
     );
   }
 
@@ -735,7 +736,7 @@ export class EmailService {
         },
         "getFolders",
         900000, // Cache for 15 minutes
-        { defaultValue: this.getDefaultFolders() },
+        // No default: a guessed folder list would read as the real one.
       );
     } finally {
       if (wrapper) {
@@ -1087,40 +1088,6 @@ export class EmailService {
     for (const key of keysToDelete) {
       this.cache.delete(key);
     }
-  }
-
-  private getDefaultFolders(): EmailFolder[] {
-    // Return a basic set of folders when connection is not available
-    return [
-      {
-        name: "INBOX",
-        path: "INBOX",
-        delimiter: "/",
-        flags: [],
-        specialUse: undefined,
-      },
-      {
-        name: "Sent",
-        path: "Sent",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Sent",
-      },
-      {
-        name: "Drafts",
-        path: "Drafts",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Drafts",
-      },
-      {
-        name: "Trash",
-        path: "Trash",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Trash",
-      },
-    ];
   }
 
   // Pool management methods
