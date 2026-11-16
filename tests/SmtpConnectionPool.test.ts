@@ -484,6 +484,20 @@ describe("SmtpConnectionPool", () => {
         await singlePool.destroy();
       }
     });
+
+    it("should destroy an unhealthy connection only once when released twice", async () => {
+      const wrapper = await pool.acquire();
+      const closeSpy = vi.spyOn(wrapper.connection, "close");
+      wrapper.isHealthy = false;
+
+      await Promise.all([pool.release(wrapper), pool.release(wrapper)]);
+      await pool.release(wrapper);
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      const metrics = pool.getMetrics();
+      expect(metrics.totalDestroyed).toBe(1);
+      expect(metrics.totalConnections).toBe(0);
+    });
   });
 
   describe("concurrent verification", () => {
