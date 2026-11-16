@@ -595,12 +595,15 @@ export class CalendarService {
       const client = await this.getClient();
       // The client fills in its own account; the typings still demand one.
       const fetchAddresses =
-        client.fetchCalendarUserAddresses as unknown as () => Promise<
-          string[]
-        >;
+        client.fetchCalendarUserAddresses as unknown as () => Promise<string[]>;
       const addresses = await fetchAddresses();
       for (const value of addresses) {
-        mine.add(value.replace(/^mailto:/i, "").trim().toLowerCase());
+        mine.add(
+          value
+            .replace(/^mailto:/i, "")
+            .trim()
+            .toLowerCase(),
+        );
       }
     } catch (error) {
       this.logger.warning(
