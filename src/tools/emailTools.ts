@@ -125,7 +125,8 @@ export function createEmailTools(
         properties: {
           query: {
             type: "string",
-            description: "Search query to match against email subject and body",
+            description:
+              'Text to match in subject or body. "from:address" or "to:address" matches a sender or recipient instead. Join terms with OR (any case) to match any of them, e.g. "from:alice@example.com OR invoice". All other filters apply to the whole query.',
           },
           folder: {
             type: "string",

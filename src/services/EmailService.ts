@@ -15,7 +15,10 @@ interface ImapSearchCriteria {
   to?: string;
   subject?: string;
   body?: string;
-  or?: Array<{ [key: string]: string | Date }>;
+  // Nested criteria, ORed together, as imapflow's SearchObject defines them.
+  // The looser `Array<{ [key: string]: string | Date }>` this replaces could
+  // not express one criterion built from another.
+  or?: ImapSearchCriteria[];
   seen?: boolean;
   answered?: boolean;
   flagged?: boolean;
@@ -74,6 +77,12 @@ import {
 import { createLogger } from "./Logger.js";
 
 const FOLDERS_CACHE_KEY = "email_folders";
+
+/**
+ * Separates the sides of a disjunctive query. Case-insensitive, matching the
+ * from:/to: prefixes, so a lowercase `or` is not searched as literal text.
+ */
+const OR_SEPARATOR = /\s+or\s+/i;
 
 /** Common trash folder names, tried after the server's \Trash folder. */
 const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
@@ -185,7 +194,8 @@ export class EmailService {
     }
 
     // Captured before pagination: this is how many messages matched, not how
-    // many this page returns.
+    // many this page returns. The server evaluates the whole query, including
+    // OR terms and flag filters, so the count is exact.
     const total = searchResult.length;
     const paginatedResults = this.applyPagination(searchResult, options);
     const messages = await this.fetchMessageHeaders(
@@ -193,9 +203,8 @@ export class EmailService {
       paginatedResults,
       options.folder || "INBOX",
     );
-    const filteredMessages = this.applyInMemoryFilters(messages, options);
 
-    return { messages: this.sortMessagesByDate(filteredMessages), total };
+    return { messages: this.sortMessagesByDate(messages), total };
   }
 
   private async executeSearch(
@@ -438,7 +447,7 @@ export class EmailService {
     const query = options.query.trim();
 
     if (this.isOrQuery(query)) {
-      return this.handleOrQuery(criteria);
+      return this.handleOrQuery(criteria, query);
     }
 
     if (this.isFromQuery(query)) {
@@ -452,16 +461,59 @@ export class EmailService {
     return this.handleTextQuery(criteria, query);
   }
 
+  /** The sides of a disjunctive query; fewer than two means it is not one. */
+  private orTerms(query: string): string[] {
+    return query
+      .split(OR_SEPARATOR)
+      .map(term => term.trim())
+      .filter(Boolean);
+  }
+
   private isOrQuery(query: string): boolean {
-    return query.includes(" OR ");
+    return this.orTerms(query).length > 1;
   }
 
-  private handleOrQuery(criteria: ImapSearchCriteria): ImapSearchCriteria {
-    return Object.keys(criteria).length === 0 ? { all: true } : criteria;
+  /**
+   * Expands `a OR b` into an IMAP OR the server evaluates itself.
+   *
+   * This used to leave the query to a filter applied to each page after it
+   * was fetched, which only ever examined one page of the mailbox: matches
+   * older than the newest `limit` messages were invisible, the match count
+   * was the size of the folder, and with a date filter the query was dropped
+   * altogether.
+   *
+   * Top-level criteria are ANDed by IMAP, so assigning `or` alongside date
+   * and flag filters narrows the disjunction instead of replacing it.
+   */
+  private handleOrQuery(
+    criteria: ImapSearchCriteria,
+    query: string,
+  ): ImapSearchCriteria {
+    criteria.or = this.orTerms(query).flatMap(term => this.termCriteria(term));
+    return criteria;
   }
 
+  /** The criteria one side of an OR contributes, keeping from:/to: addressed. */
+  private termCriteria(term: string): ImapSearchCriteria[] {
+    if (this.isFromQuery(term)) {
+      return [{ from: term.substring(5).trim() }];
+    }
+    if (this.isToQuery(term)) {
+      return [{ to: term.substring(3).trim() }];
+    }
+    return [{ subject: term }, { body: term }];
+  }
+
+  /**
+   * A prefix with nothing after it is not an addressed query: IMAP treats
+   * `FROM ""` as matching every message, so `from:` alone would quietly return
+   * the whole mailbox. Such a term falls through to a text search instead.
+   */
   private isFromQuery(query: string): boolean {
-    return query.toLowerCase().startsWith("from:");
+    return (
+      query.toLowerCase().startsWith("from:") &&
+      query.substring(5).trim() !== ""
+    );
   }
 
   private handleFromQuery(
@@ -473,7 +525,9 @@ export class EmailService {
   }
 
   private isToQuery(query: string): boolean {
-    return query.toLowerCase().startsWith("to:");
+    return (
+      query.toLowerCase().startsWith("to:") && query.substring(3).trim() !== ""
+    );
   }
 
   private handleToQuery(
@@ -490,72 +544,6 @@ export class EmailService {
   ): ImapSearchCriteria {
     criteria.or = [{ subject: query }, { body: query }];
     return criteria;
-  }
-
-  private applyInMemoryFilters(
-    messages: EmailMessage[],
-    options: EmailSearchOptions,
-  ): EmailMessage[] {
-    let filtered = messages;
-
-    // Apply query filter for complex queries that weren't handled by IMAP
-    if (options.query) {
-      const query = options.query;
-      const needsInMemoryQueryFilter = query.includes(" OR ");
-
-      if (needsInMemoryQueryFilter) {
-        filtered = filtered.filter(msg => this.matchesQuery(msg, query));
-      }
-    }
-
-    return filtered;
-  }
-
-  private matchesQuery(message: EmailMessage, query: string): boolean {
-    // Handle complex query matching in memory
-    const lowercaseQuery = query.toLowerCase();
-
-    // Handle OR operations
-    if (lowercaseQuery.includes(" or ")) {
-      const orParts = lowercaseQuery.split(" or ").map(part => part.trim());
-      return orParts.some(part => this.matchesSingleQuery(message, part));
-    }
-
-    return this.matchesSingleQuery(message, lowercaseQuery);
-  }
-
-  private matchesSingleQuery(message: EmailMessage, query: string): boolean {
-    // Handle from: queries
-    if (query.startsWith("from:")) {
-      const emailDomain = query.substring(5).trim();
-      return message.from.some(from =>
-        from.address.toLowerCase().includes(emailDomain),
-      );
-    }
-
-    // Handle to: queries
-    if (query.startsWith("to:")) {
-      const emailDomain = query.substring(3).trim();
-      return message.to.some(to =>
-        to.address.toLowerCase().includes(emailDomain),
-      );
-    }
-
-    // Default text search in subject and from/to addresses
-    const searchText = query.toLowerCase();
-    return (
-      message.subject.toLowerCase().includes(searchText) ||
-      message.from.some(
-        from =>
-          from.address.toLowerCase().includes(searchText) ||
-          from.name?.toLowerCase().includes(searchText),
-      ) ||
-      message.to.some(
-        to =>
-          to.address.toLowerCase().includes(searchText) ||
-          to.name?.toLowerCase().includes(searchText),
-      )
-    );
   }
 
   private parseEmailMessage(
