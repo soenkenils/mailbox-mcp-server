@@ -501,6 +501,58 @@ describe("EmailService", () => {
       expect(result.messages).toHaveLength(1);
     });
 
+    it.each([
+      ["an unparseable header string", "not a real date"],
+      ["an invalid Date", new Date("nonsense")],
+    ])("should coerce %s into a usable Date", async (_label, date) => {
+      // imapflow passes the raw header through when it cannot parse a date
+      // (tools.js parseEnvelope). Callers treat EmailMessage.date as a Date
+      // and call toISOString() on it, so a string here throws at render time.
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          envelope: {
+            messageId: "msg-1",
+            subject: "Malformed date",
+            from: [{ name: "Sender", address: "sender@example.com" }],
+            to: [],
+            cc: [],
+            date,
+          },
+        });
+      });
+
+      const result = await emailService.searchEmails({ query: "test" });
+
+      expect(result.messages[0]?.date).toBeInstanceOf(Date);
+      expect(() => result.messages[0]?.date.toISOString()).not.toThrow();
+    });
+
+    it("should keep a date header that parses as a string", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          envelope: {
+            messageId: "msg-1",
+            subject: "String date",
+            from: [],
+            to: [],
+            date: "Mon, 01 Jan 2024 10:00:00 +0000",
+          },
+        });
+      });
+
+      const result = await emailService.searchEmails({ query: "test" });
+
+      expect(result.messages[0]?.date.toISOString()).toBe(
+        "2024-01-01T10:00:00.000Z",
+      );
+    });
+
     it("should report a total of zero when nothing matches", async () => {
       (mockCache.get as Mock).mockReturnValue(null);
       mockSearch.mockResolvedValue([]);
@@ -579,6 +631,22 @@ describe("EmailService", () => {
 
       expect(result).toBe(mockEmail);
       expect(mockCache.get).toHaveBeenCalledWith("email:INBOX:123");
+    });
+
+    it("should return null when the server returns a message with no source", async () => {
+      // `source` is optional on FetchMessageObject, so a partial fetch can
+      // yield a message with no body to parse. Callers surface this the same
+      // way as a missing UID; the point is that it never reaches simpleParser
+      // with undefined.
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockFetchOne.mockResolvedValue(
+        createMockImapMessage({ uid: 123, source: undefined }),
+      );
+
+      const result = await emailService.getEmail(123);
+
+      expect(result).toBeNull();
+      expect(simpleParser).not.toHaveBeenCalled();
     });
   });
 

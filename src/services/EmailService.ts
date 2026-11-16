@@ -1,3 +1,4 @@
+import type { FetchMessageObject } from "imapflow";
 import {
   type AddressObject,
   type EmailAddress,
@@ -22,21 +23,36 @@ interface ImapSearchCriteria {
   deleted?: boolean;
 }
 
-interface ImapMessage {
-  envelope: {
-    messageId?: string;
-    subject?: string;
-    from?: Array<{ name?: string; address: string }>;
-    to?: Array<{ name?: string; address: string }>;
-    cc?: Array<{ name?: string; address: string }>;
-    date?: Date;
-  };
-  uid: number;
-  /** imapflow returns a Set; arrays are accepted for robustness */
-  flags?: Set<string> | string[];
-  bodystructure?: unknown;
-  size?: number;
-}
+/**
+ * imapflow returns the raw header string when a Date: header will not parse
+ * (see parseEnvelope in its tools.js), which mail from spammers and broken
+ * clients regularly triggers. Callers treat EmailMessage.date as a Date and
+ * call toISOString() on it, so one such message would otherwise throw and
+ * take the whole result listing down with it.
+ */
+const toDate = (value: Date | string | undefined, fallback: Date): Date => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return fallback;
+};
+
+/**
+ * The shape imapflow actually hands back, taken from the library rather than
+ * restated here. The hand-written version this replaces had drifted: it
+ * declared `date?: Date` where the library may return the raw header string,
+ * a required `envelope` the library marks optional, and `bodystructure`
+ * misspelt (the library spells it `bodyStructure`). Because the casts at the
+ * fetch sites were `as unknown as`, none of that could be caught by
+ * type-checking.
+ */
+type ImapMessage = FetchMessageObject;
 
 import type { LocalCache } from "../types/cache.types.js";
 import type {
@@ -235,10 +251,7 @@ export class EmailService {
 
       try {
         for await (const message of iterator) {
-          const emailMessage = this.parseEmailMessage(
-            message as unknown as ImapMessage,
-            folder,
-          );
+          const emailMessage = this.parseEmailMessage(message, folder);
           if (emailMessage) {
             messages.push(emailMessage);
           }
@@ -282,13 +295,13 @@ export class EmailService {
     try {
       const rawMessage = await this.fetchRawMessageByUid(wrapper, uid, folder);
 
-      if (!rawMessage) {
+      // `source` is optional on FetchMessageObject: a partial fetch can yield
+      // a message with no body to parse, which reads as not found.
+      if (!rawMessage?.source) {
         return null;
       }
 
-      const parsed = await simpleParser(
-        (rawMessage as ImapMessage & { source: Buffer }).source,
-      );
+      const parsed = await simpleParser(rawMessage.source);
       return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
       throw new Error(
@@ -366,7 +379,7 @@ export class EmailService {
     if (message === undefined) {
       throw new Error("IMAP fetch failed: no folder selected");
     }
-    return message ? (message as unknown as ImapMessage) : null;
+    return message || null;
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {
@@ -562,7 +575,7 @@ export class EmailService {
       from: this.parseAddressesFromEnvelope(envelope.from),
       to: this.parseAddressesFromEnvelope(envelope.to),
       cc: this.parseAddressesFromEnvelope(envelope.cc),
-      date: envelope.date || new Date(),
+      date: toDate(envelope.date, new Date()),
       flags: Array.from(message.flags ?? []),
       folder,
     };
@@ -581,7 +594,7 @@ export class EmailService {
       to: this.parseAddressesFromParsed(parsed.to),
       cc: this.parseAddressesFromParsed(parsed.cc),
       bcc: this.parseAddressesFromParsed(parsed.bcc),
-      date: parsed.date || new Date(),
+      date: toDate(parsed.date, new Date()),
       text: parsed.text,
       html: parsed.html || undefined,
       attachments: parsed.attachments?.map(att => ({
