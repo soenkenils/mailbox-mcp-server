@@ -352,7 +352,7 @@ export function createEmailTools(
           permanent: {
             type: "boolean",
             description:
-              "Whether to permanently delete (true) or move to trash (false, default)",
+              "Whether to permanently delete (true) or move to trash (false, default). The trash is the folder the server marks as \\Trash, else a common name such as Trash. A message already in the trash can only be removed with true. Permanent deletion needs a server with UIDPLUS, so that no other message is expunged.",
             default: false,
           },
         },

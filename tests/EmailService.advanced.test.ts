@@ -765,6 +765,91 @@ describe("EmailService - Advanced Coverage", () => {
       expect(mockCache.delete).not.toHaveBeenCalled();
     });
 
+    const folder = (path: string, specialUse?: string): EmailFolder => ({
+      name: path.split("/").pop() ?? path,
+      path,
+      delimiter: "/",
+      flags: [],
+      specialUse,
+    });
+
+    const withCachedFolders = (folders: EmailFolder[]) => {
+      (mockCache.get as Mock).mockImplementation((key: string) =>
+        key === "email_folders" ? folders : null,
+      );
+    };
+
+    it("should prefer the folder the server marks as \\Trash", async () => {
+      withCachedFolders([
+        folder("INBOX"),
+        folder("Trash"),
+        folder("Papierkorb", "\\Trash"),
+      ]);
+      const mockWrapper = createMockConnectionWrapper();
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Email moved to trash folder "Papierkorb"');
+      expect(mockWrapper.connection.messageMove).toHaveBeenCalledTimes(1);
+      expect(mockWrapper.connection.messageMove).toHaveBeenCalledWith(
+        "123:123",
+        "Papierkorb",
+        { uid: true },
+      );
+    });
+
+    it("should fall back to the common names when the special-use folder refuses", async () => {
+      withCachedFolders([folder("Bin", "\\Trash")]);
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.messageMove = vi
+        .fn()
+        .mockResolvedValueOnce(false) // "Bin"
+        .mockResolvedValueOnce({ uidMap: new Map() }); // "Trash"
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.message).toBe('Email moved to trash folder "Trash"');
+    });
+
+    it("should fall back to the common names when the folder list is unavailable", async () => {
+      mockPool.acquire.mockRejectedValue(new Error("Connection refused"));
+      const mockWrapper = createMockConnectionWrapper();
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", false);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Email moved to trash folder "Trash"');
+    });
+
+    it.each([
+      [
+        "the special-use trash folder",
+        [folder("Papierkorb", "\\Trash")],
+        "Papierkorb",
+      ],
+      ["a common trash name when none is marked", [folder("INBOX")], "Trash"],
+    ])("should not move a message that is already in %s", async (_label, folders, source) => {
+      withCachedFolders(folders);
+      const mockWrapper = createMockConnectionWrapper();
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, source, false);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("already in the trash");
+      expect(result.message).toContain("permanent: true");
+      expect(mockWrapper.connection.messageMove).not.toHaveBeenCalled();
+      expect(mockWrapper.connection.messageFlagsAdd).not.toHaveBeenCalled();
+    });
+
     it("should move to Trash folder for soft delete", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
@@ -773,7 +858,7 @@ describe("EmailService - Advanced Coverage", () => {
       const result = await service.deleteEmail(123, "INBOX", false);
 
       expect(result.success).toBe(true);
-      expect(result.message).toBe("Email moved to trash");
+      expect(result.message).toBe('Email moved to trash folder "Trash"');
       expect(mockWrapper.connection.messageMove).toHaveBeenCalledWith(
         "123:123",
         "Trash",

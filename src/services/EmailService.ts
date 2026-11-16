@@ -58,6 +58,9 @@ import { createLogger } from "./Logger.js";
 
 const FOLDERS_CACHE_KEY = "email_folders";
 
+/** Common trash folder names, tried after the server's \Trash folder. */
+const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
+
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
@@ -861,15 +864,42 @@ export class EmailService {
     }
   }
 
-  // Servers disagree on what the trash folder is called, so try the common
-  // names in turn. Returns whether the message actually moved.
+  /**
+   * Where a soft delete may move a message, best first: the folder the server
+   * marks with the \Trash special-use flag, then the common names. Read
+   * before a folder connection is taken, so a delete never holds two pool
+   * connections. If the folder list cannot be loaded, the names still apply.
+   */
+  private async trashCandidates(): Promise<{
+    candidates: string[];
+    specialUse?: string;
+  }> {
+    let specialUse: string | undefined;
+    try {
+      const folders = await this.getFolders();
+      specialUse = folders.find(f => f.specialUse === "\\Trash")?.path;
+    } catch (error) {
+      this.logger.warning(
+        "Could not list folders to find the trash folder; trying common names",
+        { operation: "deleteEmail", service: "EmailService" },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    const candidates = [
+      ...(specialUse ? [specialUse] : []),
+      ...TRASH_FOLDER_NAMES.filter(name => name !== specialUse),
+    ];
+    return { candidates, specialUse };
+  }
+
+  // Tries each candidate in turn and returns the folder the message moved
+  // to, or null when none accepted it.
   private async moveToTrash(
     wrapper: ImapConnectionWrapper,
     uid: number,
-  ): Promise<boolean> {
-    const trashFolders = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
-
-    for (const trashFolder of trashFolders) {
+    candidates: string[],
+  ): Promise<string | null> {
+    for (const trashFolder of candidates) {
       // messageMove resolves false for a missing destination rather than
       // throwing, so the return value is the only signal that it worked.
       const moved = await wrapper.connection.messageMove(
@@ -879,11 +909,11 @@ export class EmailService {
       );
 
       if (moved) {
-        return true;
+        return trashFolder;
       }
     }
 
-    return false;
+    return null;
   }
 
   async deleteEmail(
@@ -892,9 +922,26 @@ export class EmailService {
     permanent = false,
   ): Promise<EmailOperationResult> {
     let wrapper: ImapConnectionWrapper | null = null;
-    let movedToTrash = false;
+    let movedTo: string | null = null;
 
     try {
+      let candidates: string[] = [];
+      if (!permanent) {
+        const trash = await this.trashCandidates();
+        // Moving a message from the trash to the trash does nothing, and
+        // falling through to the \Deleted flag would not remove it either.
+        const isTrash = trash.specialUse
+          ? folder === trash.specialUse
+          : TRASH_FOLDER_NAMES.includes(folder);
+        if (isTrash) {
+          return {
+            success: false,
+            message: `Email is already in the trash folder "${folder}"; use permanent: true to remove it`,
+          };
+        }
+        candidates = trash.candidates.filter(name => name !== folder);
+      }
+
       wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
@@ -917,9 +964,9 @@ export class EmailService {
           throw new Error("Server did not expunge the message");
         }
       } else {
-        movedToTrash = await this.moveToTrash(wrapper, uid);
+        movedTo = await this.moveToTrash(wrapper, uid, candidates);
 
-        if (!movedToTrash) {
+        if (!movedTo) {
           // No trash folder anywhere: flag the message and say so, rather
           // than reporting a move that never happened.
           const flagged = await wrapper.connection.messageFlagsAdd(
@@ -944,8 +991,8 @@ export class EmailService {
         success: true,
         message: permanent
           ? "Email permanently deleted"
-          : movedToTrash
-            ? "Email moved to trash"
+          : movedTo
+            ? `Email moved to trash folder "${movedTo}"`
             : "Email marked as deleted: no trash folder found",
       };
     } catch (error) {

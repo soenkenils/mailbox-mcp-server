@@ -369,7 +369,7 @@ describe("Email Tools - Extended Coverage", () => {
     it("should delete email (soft delete)", async () => {
       vi.mocked(mockEmailService.deleteEmail).mockResolvedValue({
         success: true,
-        message: "Email moved to trash",
+        message: 'Email moved to trash folder "Trash"',
       });
 
       const result = await handleEmailTool(
