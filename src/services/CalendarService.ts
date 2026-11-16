@@ -63,8 +63,17 @@ const MAX_LINE_OCTETS = 75;
  * Id of one instance of a series: UID plus RECURRENCE-ID. All-day instances
  * use the date itself, so the id does not depend on the server's time zone.
  */
-const occurrenceId = (uid: string, recurrenceId: ICAL.Time): string =>
-  `${uid}:${recurrenceId.isDate ? recurrenceId.toString() : recurrenceId.toJSDate().toISOString()}`;
+const recurrenceIdText = (recurrenceId: ICAL.Time): string =>
+  recurrenceId.isDate
+    ? recurrenceId.toString()
+    : recurrenceId.toJSDate().toISOString();
+
+/**
+ * An occurrence id as the read tools report it: "UID:2025-06-20" or
+ * "UID:2025-06-20T08:00:00.000Z".
+ */
+const OCCURRENCE_ID =
+  /^(.+):(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)?)$/;
 
 const calendarLabel = (calendar: DAVCalendar): string =>
   (calendar.displayName as string) || calendar.url;
@@ -767,7 +776,9 @@ export class CalendarService {
     const event = this.parseVEvent(vevent, calendar);
     const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
     if (event && recurrenceId instanceof ICAL.Time) {
-      event.id = occurrenceId(event.uid, recurrenceId);
+      event.recurrenceId = recurrenceIdText(recurrenceId);
+      event.id = `${event.uid}:${event.recurrenceId}`;
+      event.recurring = true;
     }
     return event;
   }
@@ -848,7 +859,8 @@ export class CalendarService {
     const rangeStartMs = range.start.getTime();
 
     const add = (item: ICAL.Event, start: Date, end: Date, rid: ICAL.Time) => {
-      const id = occurrenceId(item.uid, rid);
+      const recurrenceId = recurrenceIdText(rid);
+      const id = `${item.uid}:${recurrenceId}`;
       if (seen.has(id)) {
         return;
       }
@@ -868,6 +880,7 @@ export class CalendarService {
         occurrences.push({
           ...base,
           id,
+          recurrenceId,
           start,
           end,
           recurring: true,

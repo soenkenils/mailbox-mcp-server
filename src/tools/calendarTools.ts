@@ -2,6 +2,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import type { CalendarService } from "../services/CalendarService.js";
+import type { CalendarEvent } from "../types/calendar.types.js";
 import {
   CalendarError,
   ErrorCode,
@@ -222,6 +223,21 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
   ];
 }
 
+/**
+ * The UID update_calendar_event and delete_calendar_event take, and whether
+ * this is one occurrence of a series those tools would change as a whole.
+ */
+const identityLines = (event: CalendarEvent): string => {
+  if (event.recurrenceId) {
+    return `UID: ${event.uid}\nOccurrence: ${event.recurrenceId} of a recurring series (update/delete with this UID change the whole series)\n`;
+  }
+  return `UID: ${event.uid}\n${
+    event.recurring
+      ? "Recurring: Yes (update/delete with this UID change the whole series)\n"
+      : ""
+  }`;
+};
+
 /** The YYYY-MM-DD part of an ISO 8601 string, as the caller wrote it. */
 const writtenDate = (value: string): string => value.slice(0, 10);
 
@@ -281,7 +297,7 @@ ${event.location ? `Location: ${event.location}\n` : ""}${
 }Calendar: ${event.calendar}
 ${
   event.attendees?.length ? `Attendees: ${event.attendees.length}\n` : ""
-}${event.recurring ? "Recurring: Yes\n" : ""}`,
+}${identityLines(event)}`,
                 )
                 .join("\n---\n")}`,
             },
@@ -324,7 +340,7 @@ ${event.location ? `Location: ${event.location}\n` : ""}${
     ? `Description: ${event.description.substring(0, 150)}${event.description.length > 150 ? "..." : ""}\n`
     : ""
 }Calendar: ${event.calendar}
-`,
+${identityLines(event)}`,
                 )
                 .join("\n---\n")}`,
             },

@@ -6,8 +6,15 @@ export interface Attendee {
 }
 
 export interface CalendarEvent {
+  /** Unique per occurrence: the UID, or "UID:RECURRENCE-ID" for one instance. */
   id: string;
+  /** The UID of the event or, for an occurrence, of its whole series. */
   uid: string;
+  /**
+   * Set when this is one occurrence of a recurring series: its original
+   * start (YYYY-MM-DD for all-day series, otherwise an ISO 8601 UTC instant).
+   */
+  recurrenceId?: string;
   summary: string;
   description?: string;
   location?: string;

@@ -231,6 +231,78 @@ describe("Calendar Tools", () => {
       expect(result.content[0].text).toContain("Recurring: Yes");
     });
 
+    it("should give each event the UID update and delete take", async () => {
+      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+        mockEvent,
+      ]);
+
+      const result = await handleCalendarTool(
+        "get_calendar_events",
+        {},
+        mockCalendarService as CalendarService,
+      );
+
+      expect(result.content[0].text).toContain("UID: event-1@example.com");
+      expect(result.content[0].text).not.toContain("Occurrence:");
+    });
+
+    it.each([
+      ["get_calendar_events", "getCalendarEvents"],
+      ["search_calendar", "searchCalendar"],
+    ] as const)("should mark an occurrence of a series in %s with the series UID", async (tool, method) => {
+      vi.mocked(mockCalendarService[method]!).mockResolvedValue([
+        {
+          ...mockEvent,
+          id: "weekly@example.com:2025-06-20T10:00:00.000Z",
+          uid: "weekly@example.com",
+          recurrenceId: "2025-06-20T10:00:00.000Z",
+          recurring: true,
+        },
+      ]);
+
+      const result = await handleCalendarTool(
+        tool,
+        { query: "Team" },
+        mockCalendarService as CalendarService,
+      );
+
+      const text = result.content[0].text as string;
+      expect(text).toContain("UID: weekly@example.com\n");
+      expect(text).toContain(
+        "Occurrence: 2025-06-20T10:00:00.000Z of a recurring series (update/delete with this UID change the whole series)",
+      );
+      expect(text).not.toContain("UID: weekly@example.com:2025");
+    });
+
+    it.each([
+      ["get_calendar_events", "getCalendarEvents"],
+      ["search_calendar", "searchCalendar"],
+      ["get_free_busy", "getFreeBusy"],
+    ] as const)("should report an unreadable calendar from %s as an error, not an empty result", async (tool, method) => {
+      vi.mocked(mockCalendarService[method]!).mockRejectedValue(
+        new CalendarError(
+          'Could not read calendar "work": HTTP 500',
+          ErrorCode.CALENDAR_READ_FAILED,
+          "work",
+        ),
+      );
+
+      const result = await handleCalendarTool(
+        tool,
+        {
+          query: "standup",
+          start: "2025-06-20T00:00:00Z",
+          end: "2025-06-21T00:00:00Z",
+        },
+        mockCalendarService as CalendarService,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(
+        'Could not read calendar "work": HTTP 500',
+      );
+    });
+
     it("should display attendee count", async () => {
       vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
         mockEvent,
