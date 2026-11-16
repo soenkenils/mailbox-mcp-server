@@ -31,11 +31,15 @@ interface EventRange {
 /**
  * Upper bound on recurrence instances examined per event and call. The scan
  * starts at DTSTART, so a daily series since 1990 needs ~13,000 steps to
- * reach today; the time budget below is the tighter bound in practice.
+ * reach today. This cap is the deterministic bound (~0.3 s warm).
  */
 const MAX_RECURRENCE_SCAN = 50_000;
-/** Wall-clock budget for expanding one recurring event. */
-const RECURRENCE_TIME_BUDGET_MS = 250;
+/**
+ * Wall-clock safety net for expanding one recurring event. Kept above the
+ * normal cost of a full scan: a tighter budget made results depend on machine
+ * load (a cold or busy process dropped long-running series entirely).
+ */
+const RECURRENCE_TIME_BUDGET_MS = 1_000;
 /** Days per month, February counted with 29 (leap years). */
 const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 /** Upper bound on occurrences returned per recurring event and call. */
