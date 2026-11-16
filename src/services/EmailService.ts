@@ -898,6 +898,15 @@ export class EmailService {
       wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
+        // Without UIDPLUS, imapflow's messageDelete falls back to a plain
+        // EXPUNGE, which removes every message flagged \Deleted in the folder
+        // (including ones our own soft-delete fallback flagged), not just
+        // this one. Refuse rather than risk deleting other mail.
+        if (!wrapper.connection.capabilities?.has("UIDPLUS")) {
+          throw new Error(
+            "server does not support UIDPLUS; cannot permanently delete a single message safely",
+          );
+        }
         // Flags the message \Deleted and expunges it (UID EXPUNGE with
         // UIDPLUS). Resolves false instead of throwing when that fails.
         const expunged = await wrapper.connection.messageDelete(

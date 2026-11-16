@@ -69,6 +69,7 @@ const createMockConnectionWrapper = (
     messageFlagsAdd: vi.fn().mockResolvedValue(true),
     messageFlagsRemove: vi.fn().mockResolvedValue(true),
     messageDelete: vi.fn().mockResolvedValue(true),
+    capabilities: new Map<string, boolean | number>([["UIDPLUS", true]]),
     append: vi.fn().mockResolvedValue({ destination: "Drafts", uid: 1 }),
     mailboxCreate: vi
       .fn()
@@ -709,6 +710,42 @@ describe("EmailService - Advanced Coverage", () => {
       expect(result.message).toBe("Email permanently deleted");
       // messageDelete sets \Deleted and expunges; flagging alone left the
       // message in the folder.
+      expect(mockWrapper.connection.messageDelete).toHaveBeenCalledWith(
+        "123:123",
+        { uid: true },
+      );
+    });
+
+    it("should refuse a permanent delete when the server lacks UIDPLUS", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      // Without UIDPLUS imapflow falls back to a plain EXPUNGE, which removes
+      // every message flagged \\Deleted in the folder, not just this one.
+      mockWrapper.connection.capabilities = new Map([["IMAP4rev1", true]]);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", true);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain(
+        "server does not support UIDPLUS; cannot permanently delete a single message safely",
+      );
+      expect(mockWrapper.connection.messageDelete).not.toHaveBeenCalled();
+      expect(mockPool.releaseFromFolder).toHaveBeenCalledWith(mockWrapper);
+    });
+
+    it("should permanently delete when the server advertises UIDPLUS", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.capabilities = new Map([
+        ["IMAP4rev1", true],
+        ["UIDPLUS", true],
+      ]);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      const result = await service.deleteEmail(123, "INBOX", true);
+
+      expect(result.success).toBe(true);
       expect(mockWrapper.connection.messageDelete).toHaveBeenCalledWith(
         "123:123",
         { uid: true },
