@@ -1258,9 +1258,24 @@ describe("CalendarService event changes", () => {
           makeService().deleteCalendarEvent({ uid: id }),
         ).rejects.toThrow(/acts on the whole series/);
 
-        expect(fetchCalendars).not.toHaveBeenCalled();
         expect(updateCalendarObject).not.toHaveBeenCalled();
         expect(deleteCalendarObject).not.toHaveBeenCalled();
+      });
+
+      it("should accept a stored UID that looks like an occurrence id", async () => {
+        objectsByCalendar[WORK_URL] = [
+          stored(vcalendar(meeting("holiday:2025-12-25")), "holiday"),
+        ];
+
+        await expect(
+          makeService().updateCalendarEvent({
+            uid: "holiday:2025-12-25",
+            summary: "Renamed",
+          }),
+        ).resolves.toMatchObject({ event: { summary: "Renamed" } });
+        await expect(
+          makeService().deleteCalendarEvent({ uid: "holiday:2025-12-25" }),
+        ).resolves.toMatchObject({ uid: "holiday:2025-12-25" });
       });
 
       it("should accept a UID that merely contains a colon", async () => {

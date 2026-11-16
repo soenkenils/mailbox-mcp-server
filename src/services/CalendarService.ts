@@ -237,8 +237,7 @@ export class CalendarService {
   async updateCalendarEvent(
     options: UpdateCalendarEventOptions,
   ): Promise<UpdateCalendarEventResult> {
-    this.assertSeriesUid(options.uid);
-    const located = await this.locateEvent(options.uid, options.calendar);
+    const located = await this.locateSeries(options.uid, options.calendar);
 
     // The edit happens on the stored iCalendar rather than a rebuilt one, so
     // alarms, recurrence rules, time zones and other properties this server
@@ -317,8 +316,7 @@ export class CalendarService {
   async deleteCalendarEvent(
     options: DeleteCalendarEventOptions,
   ): Promise<DeleteCalendarEventResult> {
-    this.assertSeriesUid(options.uid);
-    const located = await this.locateEvent(options.uid, options.calendar);
+    const located = await this.locateSeries(options.uid, options.calendar);
     const withUid = this.eventsWithUid(
       new ICAL.Component(ICAL.parse(String(located.object.data))),
       options.uid,
@@ -382,18 +380,32 @@ export class CalendarService {
   }
 
   /**
-   * update and delete act on whole series. An occurrence id from the read
-   * tools is refused with the series UID to use instead, so a model cannot
-   * believe it changed one occurrence when it changed them all.
+   * update and delete act on whole series. A UID that is not stored but has
+   * the shape of an occurrence id from the read tools is refused with the
+   * series UID to use instead, so a model cannot believe it changed one
+   * occurrence when it changed them all. A stored UID of that shape (such as
+   * "holiday:2025-12-25") is used as it is.
    */
-  private assertSeriesUid(uid: string): void {
-    const occurrence = OCCURRENCE_ID.exec(uid);
-    if (occurrence) {
-      throw new ValidationError(
-        `"${uid}" is the id of one occurrence (${occurrence[2]}) of the recurring series "${occurrence[1]}". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "${occurrence[1]}" only if the whole series is meant`,
-        "uid",
-        uid,
-      );
+  private async locateSeries(
+    uid: string,
+    calendarFilter?: string,
+  ): Promise<LocatedEvent> {
+    try {
+      return await this.locateEvent(uid, calendarFilter);
+    } catch (error) {
+      const occurrence = OCCURRENCE_ID.exec(uid);
+      if (
+        occurrence &&
+        error instanceof CalendarError &&
+        error.code === ErrorCode.EVENT_NOT_FOUND
+      ) {
+        throw new ValidationError(
+          `"${uid}" is the id of one occurrence (${occurrence[2]}) of the recurring series "${occurrence[1]}". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "${occurrence[1]}" only if the whole series is meant`,
+          "uid",
+          uid,
+        );
+      }
+      throw error;
     }
   }
 
