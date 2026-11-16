@@ -239,7 +239,8 @@ export class CalendarError extends MCPError {
       case ErrorCode.CALENDAR_NOT_FOUND:
         return "The specified calendar could not be found.";
       case ErrorCode.EVENT_NOT_FOUND:
-        return "The requested calendar event could not be found.";
+        // The message names the UID searched for, which the caller needs.
+        return this.message;
       case ErrorCode.INVALID_DATE_RANGE:
         return "The specified date range is invalid.";
       case ErrorCode.CALENDAR_CONFLICT:

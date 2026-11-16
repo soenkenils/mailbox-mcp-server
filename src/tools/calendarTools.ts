@@ -12,9 +12,11 @@ import {
 } from "../types/errors.js";
 import {
   createCalendarEventSchema,
+  deleteCalendarEventSchema,
   getCalendarEventsSchema,
   getFreeBusySchema,
   searchCalendarSchema,
+  updateCalendarEventSchema,
   validateInput,
 } from "../validation/schemas.js";
 
@@ -26,6 +28,8 @@ export const CALENDAR_TOOLS = [
   "search_calendar",
   "get_free_busy",
   "create_calendar_event",
+  "update_calendar_event",
+  "delete_calendar_event",
 ] as const;
 
 export type CalendarToolName = (typeof CALENDAR_TOOLS)[number];
@@ -34,12 +38,12 @@ export function isCalendarTool(name: string): name is CalendarToolName {
   return CALENDAR_TOOLS.includes(name as CalendarToolName);
 }
 
-export function createCalendarTools(calendarService: CalendarService): Tool[] {
+export function createCalendarTools(_calendarService: CalendarService): Tool[] {
   return [
     {
       name: "get_calendar_events",
       description:
-        "Get calendar events from mailbox.org calendar within a date range",
+        "Get calendar events from mailbox.org calendar within a date range. Recurring events are listed once per occurrence. Each event shows the UID that update_calendar_event and delete_calendar_event take; an occurrence of a recurring series shows the series UID and an Occurrence line, and those tools change the whole series.",
       inputSchema: {
         type: "object",
         properties: {
@@ -80,7 +84,7 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
     {
       name: "search_calendar",
       description:
-        "Search calendar events by text query in title, description, or location",
+        "Search calendar events by text query in title, description, or location. Each event shows the UID that update_calendar_event and delete_calendar_event take (for an occurrence of a recurring series: the series UID; those tools change the whole series).",
       inputSchema: {
         type: "object",
         properties: {
@@ -220,6 +224,107 @@ export function createCalendarTools(calendarService: CalendarService): Tool[] {
         additionalProperties: false,
       },
     },
+    {
+      name: "update_calendar_event",
+      description:
+        "Change an existing calendar event, found by its UID (from get_calendar_events, search_calendar or create_calendar_event). Only the fields you pass change; alarms, recurrence and everything else are kept. Overwritten values cannot be restored. A recurring event changes as a WHOLE SERIES: there is no way to change a single occurrence, and occurrence ids (UID:date) are refused. Moving a recurring series is refused. By default nobody is notified: new attendees are only recorded, and a meeting you organize with attendees is not changed. Set sendInvitations to true only when the user explicitly wants participants emailed: the server then sends invitations or updates. Events you were invited to by someone else cannot be changed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          uid: {
+            type: "string",
+            description:
+              "UID of the event, or for a recurring event the series UID (required)",
+          },
+          calendar: {
+            type: "string",
+            description:
+              "Calendar: its exact display name, URL or last URL segment (optional; only needed when the UID exists in several calendars)",
+          },
+          summary: { type: "string", description: "New event title" },
+          start: {
+            type: "string",
+            description:
+              "New start. Timed events: an ISO 8601 date-time with an offset or Z. All-day events: YYYY-MM-DD. If only start is passed, a timed event keeps its end and an all-day event becomes one day long.",
+          },
+          end: {
+            type: "string",
+            description:
+              "New end. Timed events: an ISO 8601 date-time with an offset or Z. All-day events: the LAST day, inclusive, YYYY-MM-DD.",
+          },
+          description: {
+            type: "string",
+            description: "New description; an empty string removes it",
+          },
+          location: {
+            type: "string",
+            description: "New location; an empty string removes it",
+          },
+          allDay: {
+            type: "boolean",
+            description:
+              "Turn the event into an all-day event (true, start required) or a timed one (false, start and end required)",
+          },
+          attendees: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                email: {
+                  type: "string",
+                  description: "Attendee email address",
+                },
+                name: {
+                  type: "string",
+                  description: "Attendee display name (optional)",
+                },
+              },
+              required: ["email"],
+              additionalProperties: false,
+            },
+            maxItems: 50,
+            description:
+              "Complete new attendee list, replacing the current one; an empty array removes everyone. Attendees who stay keep their reply status. Recorded only unless sendInvitations is true",
+          },
+          sendInvitations: {
+            type: "boolean",
+            description:
+              "Let the server email participants about this change: invitations to attendees (your account becomes organizer), updates for a meeting you organize, cancellations for removed attendees (default: false). Only set this when the user explicitly asked to notify people",
+            default: false,
+          },
+        },
+        required: ["uid"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "delete_calendar_event",
+      description:
+        "Permanently delete a calendar event, found by its UID (from get_calendar_events or search_calendar). This cannot be undone. A recurring event is deleted as a WHOLE SERIES with all its occurrences; occurrence ids (UID:date) are refused. By default nobody is notified: a meeting you organize with attendees is not deleted, and for an invitation you received the server is asked not to send the organizer a decline. Set notifyParticipants to true only when the user explicitly wants that.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          uid: {
+            type: "string",
+            description:
+              "UID of the event, or for a recurring event the series UID (required)",
+          },
+          calendar: {
+            type: "string",
+            description:
+              "Calendar: its exact display name, URL or last URL segment (optional; only needed when the UID exists in several calendars)",
+          },
+          notifyParticipants: {
+            type: "boolean",
+            description:
+              "Let the server email participants: a cancellation to the attendees of a meeting you organize, or a decline to the organizer of an invitation (default: false). Only set this when the user explicitly asked to notify people",
+            default: false,
+          },
+        },
+        required: ["uid"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -240,6 +345,8 @@ const identityLines = (event: CalendarEvent): string => {
 
 /** The YYYY-MM-DD part of an ISO 8601 string, as the caller wrote it. */
 const writtenDate = (value: string): string => value.slice(0, 10);
+
+const hasTime = (value: string): boolean => value.includes("T");
 
 const dayAfter = (date: string): string =>
   dayjs.utc(date).add(1, "day").format("YYYY-MM-DD");
@@ -434,6 +541,82 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
               : "No invitations were sent (attendees recorded only)",
           );
         }
+
+        return { content: [{ type: "text", text: parts.join("\n") }] };
+      }
+
+      case "update_calendar_event": {
+        const validatedArgs = validateInput(updateCalendarEventSchema, args);
+        const { start, end } = validatedArgs;
+        // Date-only values are all-day dates; the caller names the last day,
+        // DTEND is the day after. Date-times are timed instants.
+        const { event, notified } = await calendarService.updateCalendarEvent({
+          uid: validatedArgs.uid,
+          calendar: validatedArgs.calendar,
+          summary: validatedArgs.summary,
+          start: start && hasTime(start) ? new Date(start) : undefined,
+          end: end && hasTime(end) ? new Date(end) : undefined,
+          startDate: start && !hasTime(start) ? start : undefined,
+          endDate: end && !hasTime(end) ? dayAfter(end) : undefined,
+          description: validatedArgs.description,
+          location: validatedArgs.location,
+          allDay: validatedArgs.allDay,
+          attendees: validatedArgs.attendees,
+          sendInvitations: validatedArgs.sendInvitations,
+        });
+
+        const parts = [
+          "Calendar event updated successfully:\n",
+          `**${event.summary}**`,
+          event.allDay
+            ? `Start: ${dayjs(event.start).format("YYYY-MM-DD")} (All Day)`
+            : `Start: ${dayjs(event.start).format("YYYY-MM-DD HH:mm Z")}`,
+          event.allDay
+            ? `End (exclusive): ${dayjs(event.end).format("YYYY-MM-DD")}`
+            : `End: ${dayjs(event.end).format("YYYY-MM-DD HH:mm Z")}`,
+          `Calendar: ${event.calendar}`,
+          `UID: ${event.uid}`,
+        ];
+        if (event.recurring) {
+          parts.push("Recurring: Yes (the whole series was changed)");
+        }
+        if (event.location) {
+          parts.push(`Location: ${event.location}`);
+        }
+        if (event.attendees?.length) {
+          parts.push(
+            `Attendees: ${event.attendees.map(a => a.name || a.email).join(", ")}`,
+          );
+        }
+        parts.push(
+          notified
+            ? "The server may have emailed the participants about this change"
+            : "Nobody was notified",
+        );
+
+        return { content: [{ type: "text", text: parts.join("\n") }] };
+      }
+
+      case "delete_calendar_event": {
+        const validatedArgs = validateInput(deleteCalendarEventSchema, args);
+
+        const result = await calendarService.deleteCalendarEvent({
+          uid: validatedArgs.uid,
+          calendar: validatedArgs.calendar,
+          notifyParticipants: validatedArgs.notifyParticipants,
+        });
+
+        const parts = [
+          result.recurring
+            ? "Recurring calendar event deleted (the whole series, all occurrences):\n"
+            : "Calendar event deleted:\n",
+          `**${result.summary || "(untitled)"}**`,
+          `Calendar: ${result.calendar}`,
+          `UID: ${result.uid}`,
+          result.notified
+            ? "The server may have emailed the participants about this"
+            : "Nobody was notified",
+        ];
 
         return { content: [{ type: "text", text: parts.join("\n") }] };
       }

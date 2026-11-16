@@ -139,7 +139,7 @@ describe("Integration Tests", () => {
       const calendarTools = createCalendarTools(calendarService);
 
       expect(emailTools).toHaveLength(10);
-      expect(calendarTools).toHaveLength(4);
+      expect(calendarTools).toHaveLength(6);
 
       const allToolNames = [...emailTools, ...calendarTools].map(t => t.name);
       expect(allToolNames).toEqual([
@@ -157,6 +157,8 @@ describe("Integration Tests", () => {
         "search_calendar",
         "get_free_busy",
         "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
       ]);
 
       await emailService.disconnect();

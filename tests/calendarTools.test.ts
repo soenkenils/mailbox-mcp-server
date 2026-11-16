@@ -42,6 +42,8 @@ describe("Calendar Tools", () => {
       searchCalendar: vi.fn(),
       getFreeBusy: vi.fn(),
       createCalendarEvent: vi.fn(),
+      updateCalendarEvent: vi.fn(),
+      deleteCalendarEvent: vi.fn(),
     };
   });
 
@@ -49,12 +51,14 @@ describe("Calendar Tools", () => {
     it("should create all calendar tools", () => {
       const tools = createCalendarTools(mockCalendarService as CalendarService);
 
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(6);
       expect(tools.map(t => t.name)).toEqual([
         "get_calendar_events",
         "search_calendar",
         "get_free_busy",
         "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
       ]);
     });
 
@@ -972,6 +976,225 @@ describe("Calendar Tools", () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Calendar "private" not found');
+    });
+  });
+
+  describe("handleCalendarTool - update_calendar_event", () => {
+    const run = (args: Record<string, unknown>) =>
+      handleCalendarTool(
+        "update_calendar_event",
+        args,
+        mockCalendarService as CalendarService,
+      );
+
+    beforeEach(() => {
+      vi.mocked(mockCalendarService.updateCalendarEvent!).mockResolvedValue({
+        event: { ...mockEvent, summary: "Renamed" },
+        notified: false,
+      });
+    });
+
+    it("should pass only the fields given, with nobody notified by default", async () => {
+      const result = await run({
+        uid: "event-1@example.com",
+        summary: "Renamed",
+      });
+
+      expect(mockCalendarService.updateCalendarEvent).toHaveBeenCalledWith({
+        uid: "event-1@example.com",
+        calendar: undefined,
+        summary: "Renamed",
+        start: undefined,
+        end: undefined,
+        startDate: undefined,
+        endDate: undefined,
+        description: undefined,
+        location: undefined,
+        // Not defaulted to false: that would turn all-day events into timed ones.
+        allDay: undefined,
+        attendees: undefined,
+        sendInvitations: false,
+      });
+      const text = result.content[0].text as string;
+      expect(text).toContain("Calendar event updated successfully");
+      expect(text).toContain("UID: event-1@example.com");
+      expect(text).toContain("Nobody was notified");
+    });
+
+    it("should pass date-times as instants and dates as all-day dates with an exclusive end", async () => {
+      await run({
+        uid: "a",
+        start: "2025-06-21T09:00:00+02:00",
+        end: "2025-06-21T10:00:00+02:00",
+      });
+      await run({
+        uid: "a",
+        allDay: true,
+        start: "2025-07-04",
+        end: "2025-07-05",
+      });
+
+      expect(mockCalendarService.updateCalendarEvent).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          start: new Date("2025-06-21T07:00:00Z"),
+          end: new Date("2025-06-21T08:00:00Z"),
+          startDate: undefined,
+          endDate: undefined,
+        }),
+      );
+      expect(mockCalendarService.updateCalendarEvent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          start: undefined,
+          end: undefined,
+          startDate: "2025-07-04",
+          endDate: "2025-07-06",
+          allDay: true,
+        }),
+      );
+    });
+
+    it("should pass sendInvitations and say the server may notify", async () => {
+      vi.mocked(mockCalendarService.updateCalendarEvent!).mockResolvedValue({
+        event: { ...mockEvent, recurring: true },
+        notified: true,
+      });
+
+      const result = await run({
+        uid: "a",
+        attendees: [{ email: "bob@example.com" }],
+        sendInvitations: true,
+      });
+
+      expect(mockCalendarService.updateCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attendees: [{ email: "bob@example.com" }],
+          sendInvitations: true,
+        }),
+      );
+      const text = result.content[0].text as string;
+      expect(text).toContain("may have emailed the participants");
+      expect(text).toContain("the whole series was changed");
+    });
+
+    it.each([
+      [{ uid: "a" }, "at least one field"],
+      [{ summary: "x" }, "uid"],
+      [
+        {
+          uid: "a",
+          start: "2025-06-21T10:00:00Z",
+          end: "2025-06-21T09:00:00Z",
+        },
+        "Start date must be before end date",
+      ],
+      [{ uid: "a", start: "2025-02-30" }, "not a real date"],
+      [{ uid: "a", summary: "x", recurrence: "daily" }, ""],
+    ])("should reject invalid input %j", async (args, message) => {
+      const result = await run(args);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid input");
+      expect(result.content[0].text).toContain(message);
+      expect(mockCalendarService.updateCalendarEvent).not.toHaveBeenCalled();
+    });
+
+    it("should show a refusal from the service with its reason", async () => {
+      vi.mocked(mockCalendarService.updateCalendarEvent!).mockRejectedValue(
+        new ValidationError(
+          '"w:2025-06-20" is the id of one occurrence (2025-06-20) of the recurring series "w". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "w" only if the whole series is meant',
+          "uid",
+          "w:2025-06-20",
+        ),
+      );
+
+      const result = await run({ uid: "w:2025-06-20", summary: "x" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('pass uid "w"');
+    });
+
+    it("should report a concurrent change", async () => {
+      vi.mocked(mockCalendarService.updateCalendarEvent!).mockRejectedValue(
+        new CalendarError("changed", ErrorCode.EVENT_MODIFIED, "work", "a"),
+      );
+
+      const result = await run({ uid: "a", summary: "x" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Fetch it again and retry");
+    });
+  });
+
+  describe("handleCalendarTool - delete_calendar_event", () => {
+    const run = (args: Record<string, unknown>) =>
+      handleCalendarTool(
+        "delete_calendar_event",
+        args,
+        mockCalendarService as CalendarService,
+      );
+
+    it("should delete without notifying by default", async () => {
+      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockResolvedValue({
+        uid: "a",
+        summary: "Team Meeting",
+        calendar: "work",
+        recurring: false,
+        notified: false,
+      });
+
+      const result = await run({ uid: "a" });
+
+      expect(mockCalendarService.deleteCalendarEvent).toHaveBeenCalledWith({
+        uid: "a",
+        calendar: undefined,
+        notifyParticipants: false,
+      });
+      const text = result.content[0].text as string;
+      expect(text).toContain("Calendar event deleted");
+      expect(text).toContain("**Team Meeting**");
+      expect(text).toContain("Nobody was notified");
+    });
+
+    it("should say when a whole series went and participants may be told", async () => {
+      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockResolvedValue({
+        uid: "w",
+        summary: "",
+        calendar: "work",
+        recurring: true,
+        notified: true,
+      });
+
+      const result = await run({ uid: "w", notifyParticipants: true });
+
+      const text = result.content[0].text as string;
+      expect(text).toContain("the whole series, all occurrences");
+      expect(text).toContain("(untitled)");
+      expect(text).toContain("may have emailed the participants");
+    });
+
+    it("should report a missing event with its UID", async () => {
+      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockRejectedValue(
+        new CalendarError(
+          'No event with UID "nope" found',
+          ErrorCode.EVENT_NOT_FOUND,
+          undefined,
+          "nope",
+        ),
+      );
+
+      const result = await run({ uid: "nope" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('No event with UID "nope"');
+    });
+
+    it("should reject unknown arguments", async () => {
+      const result = await run({ uid: "a", force: true });
+
+      expect(result.isError).toBe(true);
+      expect(mockCalendarService.deleteCalendarEvent).not.toHaveBeenCalled();
     });
   });
 });
