@@ -238,7 +238,9 @@ Configuration is automatically validated at startup using comprehensive validati
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
   - Must be a valid URL format
-- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access, for reading and writing. Entries match a calendar's exact display name, URL or last URL segment, never a substring; an entry matching several calendars is a configuration error. Events outside these calendars cannot be read, created, changed or deleted; the first entry is the default calendar for `create_calendar_event`
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access, for reading and writing. Entries match a calendar's exact display name, URL or last URL segment, never a substring; an entry that matches no calendar or several calendars is a configuration error, and the error lists the available calendars as `Display Name (last URL segment)`. Events outside these calendars cannot be read, created, changed or deleted; the first entry is the default calendar for `create_calendar_event`
+
+> **Breaking:** `MAILBOX_CALENDARS` entries now match exactly (display name, URL, or last path segment); substring matches no longer work. An entry such as `work` that used to match `.../work-calendar/` by substring is now refused with a configuration error listing the available calendars; use the display name or last URL segment shown there. This also applies to the `calendar` argument of the calendar tools.
 
 #### **Optional Sieve Configuration**
 
