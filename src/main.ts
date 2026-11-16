@@ -29,6 +29,7 @@ import {
   isSieveTool,
 } from "./tools/sieveTools.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
+import { summarizeArgs } from "./utils/toolArgs.js";
 
 class MailboxMcpServer {
   private server: Server;
@@ -188,44 +189,6 @@ class MailboxMcpServer {
     }
   }
 
-  private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
-    if (!args || typeof args !== "object") {
-      return args;
-    }
-
-    const sanitized = { ...args };
-
-    // Remove invalid UUID parameters that Claude Desktop might pass
-    for (const key in sanitized) {
-      if (key.includes("uuid") && typeof sanitized[key] === "string") {
-        const value = sanitized[key];
-        // Check if the value is a valid UUID format
-        if (
-          value === "null" ||
-          value === "none" ||
-          value === "undefined" ||
-          value === "" ||
-          (value.length > 0 &&
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-              value,
-            ) &&
-            !value.startsWith("urn:uuid:"))
-        ) {
-          this.logger.debug(
-            `Removing invalid UUID parameter: ${key}=${value}`,
-            {
-              operation: "sanitizeArgs",
-              service: "validation",
-            },
-          );
-          delete sanitized[key];
-        }
-      }
-    }
-
-    return sanitized;
-  }
-
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, () => {
       // Tool definitions are synchronous
@@ -248,11 +211,11 @@ class MailboxMcpServer {
           operation: "callTool",
           service: "toolHandler",
         },
-        { tool: name, args },
+        // Shape only: argument values are mail content and recipients.
+        { tool: name, args: summarizeArgs(args) },
       );
 
-      // Filter out invalid UUID parameters that Claude Desktop might pass
-      const cleanArgs = this.sanitizeArgs(args as Record<string, unknown>);
+      const toolArgs = args ?? {};
 
       try {
         let result: CallToolResult;
@@ -260,19 +223,19 @@ class MailboxMcpServer {
         if (isEmailTool(name)) {
           result = await handleEmailTool(
             name,
-            cleanArgs,
+            toolArgs,
             this.emailService,
             this.smtpService,
           );
         } else if (isCalendarTool(name)) {
           result = await handleCalendarTool(
             name,
-            cleanArgs,
+            toolArgs,
             this.calendarService,
           );
         } else if (isSieveTool(name)) {
           result = await handleSieveTool(
-            { params: { name, arguments: cleanArgs } } as CallToolRequest,
+            { params: { name, arguments: toolArgs } } as CallToolRequest,
             this.config,
           );
         } else {
@@ -304,7 +267,7 @@ class MailboxMcpServer {
             ? ErrorUtils.toMCPError(error, {
                 operation: `call_tool:${name}`,
                 service: "MailboxMcpServer",
-                details: { tool: name, args: cleanArgs },
+                details: { tool: name, args: summarizeArgs(toolArgs) },
               })
             : new ValidationError(String(error), "unknown", error);
 

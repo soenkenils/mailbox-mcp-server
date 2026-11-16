@@ -9,6 +9,7 @@ import {
   toMCPError,
   ValidationError,
 } from "../types/errors.js";
+import { summarizeArgs } from "../utils/toolArgs.js";
 import {
   createDirectorySchema,
   createDraftSchema,
@@ -747,7 +748,7 @@ ${folder.specialUse ? `Special Use: ${folder.specialUse}\n` : ""}`,
     const context: ErrorContext = {
       operation: name,
       service: "emailTools",
-      details: { args },
+      details: { args: summarizeArgs(args) },
     };
 
     // Handle validation errors specifically
