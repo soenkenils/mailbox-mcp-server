@@ -3,6 +3,7 @@ import type {
   CallToolResult,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
 import type { EmailService } from "../src/services/EmailService.js";
@@ -365,5 +366,225 @@ describe("progress reporting", () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("Cancelled");
+  });
+});
+
+describe("structured output", () => {
+  // A declared outputSchema is a promise that structuredContent arrives, and
+  // the SDK client rejects a result that does not match it. So the two are
+  // checked against each other, with the validator the client itself uses.
+  const WITH_OUTPUT = [
+    "search_emails",
+    "get_email",
+    "get_email_thread",
+    "send_email",
+    "create_draft",
+    "get_folders",
+  ];
+
+  const validator = new AjvJsonSchemaValidator();
+
+  const expectMatchesSchema = (name: string, result: CallToolResult) => {
+    const schema = toolNamed(name).outputSchema;
+    expect(schema, name).toBeDefined();
+    expect(result.isError, name).toBeFalsy();
+    const verdict = validator.getValidator(schema as never)(
+      // What the client receives, after JSON serialisation.
+      JSON.parse(JSON.stringify(result.structuredContent)),
+    );
+    expect(verdict.errorMessage, name).toBeUndefined();
+    expect(verdict.valid, name).toBe(true);
+  };
+
+  const message = {
+    id: "<m@example.com>",
+    uid: 7,
+    subject: "Hello",
+    from: [{ name: "A", address: "a@example.com" }],
+    to: [{ address: "b@example.com" }],
+    cc: [{ name: undefined, address: "c@example.com" }],
+    date: new Date("2024-01-01T10:00:00Z"),
+    flags: ["\\Seen"],
+    folder: "INBOX",
+    text: "Body",
+    attachments: [
+      {
+        filename: "a.pdf",
+        contentType: "application/pdf",
+        size: 10,
+        contentId: "x",
+      },
+    ],
+  };
+
+  const services = () => ({
+    email: {
+      searchEmails: vi
+        .fn()
+        .mockResolvedValue({ messages: [message], total: 3 }),
+      getEmail: vi.fn().mockResolvedValue(message),
+      getEmailThread: vi.fn().mockResolvedValue({
+        threadId: "t",
+        messages: [message, { ...message, uid: 8, text: "x".repeat(300) }],
+        subject: "Hello",
+        participants: message.from,
+        lastActivity: message.date,
+      }),
+      createDraft: vi.fn().mockResolvedValue({
+        success: true,
+        message: "saved",
+        uid: 9,
+      }),
+      getFolders: vi.fn().mockResolvedValue([
+        {
+          name: "INBOX",
+          path: "INBOX",
+          delimiter: "/",
+          flags: [],
+          specialUse: undefined,
+        },
+        {
+          name: "Trash",
+          path: "Trash",
+          delimiter: "/",
+          flags: ["\\HasNoChildren"],
+          specialUse: "\\Trash",
+        },
+      ]),
+    } as unknown as EmailService,
+    smtp: {
+      sendEmail: vi.fn().mockResolvedValue({
+        success: true,
+        message: "sent",
+        messageId: "<id@example.com>",
+      }),
+    } as unknown as SmtpService,
+  });
+
+  const calls: Record<string, Record<string, unknown>> = {
+    search_emails: { limit: 1 },
+    get_email: { uid: 7 },
+    get_email_thread: { messageId: "<m@example.com>" },
+    send_email: {
+      to: [{ address: "b@example.com" }],
+      subject: "Hi",
+      text: "Body",
+    },
+    create_draft: { to: [{ address: "b@example.com" }], subject: "Hi" },
+    get_folders: {},
+  };
+
+  it("should declare an output schema on the tools that return data worth parsing", () => {
+    const declared = allTools()
+      .filter(t => t.outputSchema)
+      .map(t => t.name);
+
+    expect(declared.sort()).toEqual([...WITH_OUTPUT].sort());
+  });
+
+  it("should leave acknowledgement-only tools without one, since isError already says", () => {
+    for (const name of [
+      "move_email",
+      "mark_email",
+      "delete_email",
+      "create_directory",
+    ]) {
+      expect(toolNamed(name).outputSchema, name).toBeUndefined();
+    }
+  });
+
+  it.each(
+    WITH_OUTPUT,
+  )("%s should return structuredContent matching its schema", async name => {
+    const { email, smtp } = services();
+
+    const result = await handleEmailTool(name, calls[name], email, smtp);
+
+    expectMatchesSchema(name, result);
+  });
+
+  it("should return the header fields of search_emails, flags and read state included", async () => {
+    const { email } = services();
+
+    const result = await handleEmailTool("search_emails", { limit: 1 }, email);
+
+    expect(result.structuredContent).toStrictEqual({
+      messages: [
+        {
+          uid: 7,
+          subject: "Hello",
+          from: [{ name: "A", address: "a@example.com" }],
+          // `name` is absent, not undefined, matching the serialised form.
+          to: [{ address: "b@example.com" }],
+          date: "2024-01-01T10:00:00.000Z",
+          folder: "INBOX",
+          flags: ["\\Seen"],
+          unread: false,
+        },
+      ],
+      total: 3,
+      nextOffset: 1,
+    });
+  });
+
+  it("should mark a message without \\Seen as unread", async () => {
+    const searchEmails = vi
+      .fn()
+      .mockResolvedValue({ messages: [{ ...message, flags: [] }], total: 1 });
+
+    const result = await handleEmailTool("search_emails", {}, {
+      searchEmails,
+    } as unknown as EmailService);
+
+    expect(result.structuredContent).toMatchObject({
+      messages: [{ flags: [], unread: true }],
+    });
+  });
+
+  it("should carry the next offset only while pages remain", async () => {
+    const page = (total: number) =>
+      vi.fn().mockResolvedValue({ messages: [], total });
+
+    const more = await handleEmailTool("search_emails", { limit: 1 }, {
+      searchEmails: page(10),
+    } as unknown as EmailService);
+    const done = await handleEmailTool("search_emails", { limit: 50 }, {
+      searchEmails: page(1),
+    } as unknown as EmailService);
+
+    expect(more.structuredContent).toMatchObject({ nextOffset: 1 });
+    expect(done.structuredContent).not.toHaveProperty("nextOffset");
+  });
+
+  it("should flag a truncated thread preview", async () => {
+    const { email } = services();
+
+    const result = await handleEmailTool(
+      "get_email_thread",
+      calls.get_email_thread,
+      email,
+    );
+
+    expect(result.structuredContent).toMatchObject({
+      messages: [
+        { uid: 7, preview: "Body", truncated: false },
+        { uid: 8, truncated: true },
+      ],
+    });
+  });
+
+  it.each([
+    "get_email",
+    "get_email_thread",
+  ])("%s should report a miss as found:false rather than omitting the field", async name => {
+    const email = {
+      getEmail: vi.fn().mockResolvedValue(null),
+      getEmailThread: vi.fn().mockResolvedValue(null),
+    } as unknown as EmailService;
+
+    const result = await handleEmailTool(name, calls[name], email);
+
+    expect(result.structuredContent).toEqual({ found: false });
+    expectMatchesSchema(name, result);
   });
 });

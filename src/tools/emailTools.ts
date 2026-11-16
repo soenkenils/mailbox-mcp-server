@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { EmailService } from "../services/EmailService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import type { EmailMessage } from "../types/email.types.js";
@@ -108,6 +108,60 @@ const THREAD_PREVIEW_CHARS = 200;
 const preview = (body: string, limit: number): string =>
   body.length > limit ? `${body.slice(0, limit)}…` : body;
 
+/**
+ * Output schemas accompany the text rendering so a client can read a result
+ * without parsing prose: the UID needed for a follow-up call is a field
+ * rather than something to pull out of a markdown line.
+ *
+ * They are declared only where the result has structure worth validating or
+ * an identifier worth chaining. Tools that just acknowledge an action carry no
+ * output schema: `isError` already says whether it worked, so a schema would
+ * spend tool-list context on nothing. Text content is always sent too, since
+ * not every host reads structuredContent.
+ */
+const ADDRESS_SCHEMA = {
+  type: "object",
+  properties: { name: { type: "string" }, address: { type: "string" } },
+  required: ["address"],
+} as const;
+
+const MESSAGE_HEADER_SCHEMA = {
+  type: "object",
+  properties: {
+    uid: { type: "number" },
+    subject: { type: "string" },
+    from: { type: "array", items: ADDRESS_SCHEMA },
+    to: { type: "array", items: ADDRESS_SCHEMA },
+    date: { type: "string", format: "date-time" },
+    folder: { type: "string" },
+    flags: { type: "array", items: { type: "string" } },
+    unread: { type: "boolean" },
+  },
+  required: ["uid", "subject", "from", "date", "folder", "flags", "unread"],
+} as const;
+
+type Address = { name?: string; address: string };
+
+// `name` is omitted rather than set to undefined, so the object matches what
+// actually goes on the wire once JSON.stringify drops undefined keys.
+const structuredAddresses = (addresses: Address[] | undefined) =>
+  (addresses ?? []).map(({ name, address }) => ({
+    ...(name ? { name } : {}),
+    address,
+  }));
+
+/** The machine-readable form of one message header. */
+const structuredHeader = (email: EmailMessage) => ({
+  uid: email.uid,
+  subject: email.subject,
+  from: structuredAddresses(email.from),
+  to: structuredAddresses(email.to),
+  date: email.date.toISOString(),
+  folder: email.folder,
+  flags: email.flags,
+  unread: !email.flags.includes("\\Seen"),
+});
+
 // The services are not needed to describe the tools; the parameters stay for
 // callers that pass them.
 export function createEmailTools(
@@ -186,6 +240,18 @@ export function createEmailTools(
         },
         additionalProperties: false,
       },
+      outputSchema: {
+        type: "object",
+        properties: {
+          messages: { type: "array", items: MESSAGE_HEADER_SCHEMA },
+          total: { type: "number" },
+          nextOffset: {
+            type: "number",
+            description: "Offset for the next page; absent when none remains.",
+          },
+        },
+        required: ["messages", "total"],
+      },
     },
     {
       name: "get_email",
@@ -208,6 +274,33 @@ export function createEmailTools(
         required: ["uid"],
         additionalProperties: false,
       },
+      outputSchema: {
+        type: "object",
+        properties: {
+          found: { type: "boolean" },
+          message: {
+            ...MESSAGE_HEADER_SCHEMA,
+            properties: {
+              ...MESSAGE_HEADER_SCHEMA.properties,
+              cc: { type: "array", items: ADDRESS_SCHEMA },
+              body: { type: "string" },
+              attachments: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    filename: { type: "string" },
+                    contentType: { type: "string" },
+                    size: { type: "number" },
+                  },
+                  required: ["filename", "contentType", "size"],
+                },
+              },
+            },
+          },
+        },
+        required: ["found"],
+      },
     },
     {
       name: "get_email_thread",
@@ -228,6 +321,31 @@ export function createEmailTools(
         },
         required: ["messageId"],
         additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          found: { type: "boolean" },
+          subject: { type: "string" },
+          participants: { type: "array", items: ADDRESS_SCHEMA },
+          lastActivity: { type: "string", format: "date-time" },
+          messages: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                uid: { type: "number" },
+                subject: { type: "string" },
+                from: { type: "array", items: ADDRESS_SCHEMA },
+                date: { type: "string", format: "date-time" },
+                preview: { type: "string" },
+                truncated: { type: "boolean" },
+              },
+              required: ["uid", "date", "preview", "truncated"],
+            },
+          },
+        },
+        required: ["found"],
       },
     },
     {
@@ -299,6 +417,14 @@ export function createEmailTools(
         anyOf: [{ required: ["text"] }, { required: ["html"] }],
         additionalProperties: false,
       },
+      outputSchema: {
+        type: "object",
+        properties: {
+          success: { type: "boolean" },
+          messageId: { type: "string" },
+        },
+        required: ["success"],
+      },
     },
     {
       name: "create_draft",
@@ -364,6 +490,15 @@ export function createEmailTools(
         },
         required: ["to", "subject"],
         additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          success: { type: "boolean" },
+          uid: { type: "number" },
+          folder: { type: "string" },
+        },
+        required: ["success"],
       },
     },
     {
@@ -481,6 +616,25 @@ export function createEmailTools(
         properties: {},
         additionalProperties: false,
       },
+      outputSchema: {
+        type: "object",
+        properties: {
+          folders: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                path: { type: "string" },
+                flags: { type: "array", items: { type: "string" } },
+                specialUse: { type: "string" },
+              },
+              required: ["name", "path", "flags"],
+            },
+          },
+        },
+        required: ["folders"],
+      },
     },
     {
       name: "create_directory",
@@ -519,10 +673,10 @@ export async function handleEmailTool(
   emailService: EmailService,
   smtpService?: SmtpService,
   context?: ToolContext,
-): Promise<{
-  content: Array<{ type: "text"; text: string; [key: string]: unknown }>;
-  isError?: boolean;
-}> {
+  // The SDK's own result type, as handleCalendarTool already uses: the
+  // hand-written shape this replaces had no structuredContent, so it silently
+  // forbade typed output.
+): Promise<CallToolResult> {
   if (isCancelled(context)) {
     return cancelledResult(name);
   }
@@ -597,6 +751,11 @@ export async function handleEmailTool(
               : `Showing ${emails.length} of ${total} matches (offset ${offset}). End of results.`;
 
         return {
+          structuredContent: {
+            messages: emails.map(structuredHeader),
+            total,
+            ...(nextOffset < total ? { nextOffset } : {}),
+          },
           content: [
             {
               type: "text",
@@ -648,6 +807,7 @@ Flags: ${email.flags.length > 0 ? email.flags.join(", ") : "None"}
 
         if (!email) {
           return {
+            structuredContent: { found: false },
             content: [
               {
                 type: "text",
@@ -668,6 +828,21 @@ Flags: ${email.flags.length > 0 ? email.flags.join(", ") : "None"}
             : "";
 
         return {
+          structuredContent: {
+            found: true,
+            message: {
+              ...structuredHeader(email),
+              cc: structuredAddresses(email.cc),
+              body: email.text || email.html || "",
+              attachments: (email.attachments ?? []).map(
+                ({ filename, contentType, size }) => ({
+                  filename,
+                  contentType,
+                  size,
+                }),
+              ),
+            },
+          },
           content: [
             {
               type: "text",
@@ -701,6 +876,7 @@ ${fenceBody(email.text || email.html || "No content available")}${attachmentInfo
 
         if (!thread) {
           return {
+            structuredContent: { found: false },
             content: [
               {
                 type: "text",
@@ -711,6 +887,23 @@ ${fenceBody(email.text || email.html || "No content available")}${attachmentInfo
         }
 
         return {
+          structuredContent: {
+            found: true,
+            subject: thread.subject,
+            participants: structuredAddresses(thread.participants),
+            lastActivity: thread.lastActivity.toISOString(),
+            messages: thread.messages.map(msg => {
+              const body = msg.text || msg.html || "";
+              return {
+                uid: msg.uid,
+                subject: msg.subject,
+                from: structuredAddresses(msg.from),
+                date: msg.date.toISOString(),
+                preview: preview(body, THREAD_PREVIEW_CHARS),
+                truncated: body.length > THREAD_PREVIEW_CHARS,
+              };
+            }),
+          },
           content: [
             {
               type: "text",
@@ -768,6 +961,10 @@ ${fenceBody(preview(msg.text || msg.html || "No content", THREAD_PREVIEW_CHARS))
         const result = await smtpService.sendEmail(composition);
 
         return {
+          structuredContent: {
+            success: result.success,
+            ...(result.messageId ? { messageId: result.messageId } : {}),
+          },
           content: [
             {
               type: "text",
@@ -797,6 +994,11 @@ ${fenceBody(preview(msg.text || msg.html || "No content", THREAD_PREVIEW_CHARS))
         );
 
         return {
+          structuredContent: {
+            success: result.success,
+            ...(result.uid === undefined ? {} : { uid: result.uid }),
+            folder: validatedArgs.folder,
+          },
           content: [
             {
               type: "text",
@@ -877,6 +1079,14 @@ ${fenceBody(preview(msg.text || msg.html || "No content", THREAD_PREVIEW_CHARS))
         const folders = await emailService.getFolders();
 
         return {
+          structuredContent: {
+            folders: folders.map(({ name, path, flags, specialUse }) => ({
+              name,
+              path,
+              flags,
+              ...(specialUse ? { specialUse } : {}),
+            })),
+          },
           content: [
             {
               type: "text",
