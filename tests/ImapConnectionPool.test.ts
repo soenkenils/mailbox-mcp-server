@@ -40,6 +40,10 @@ class MockImapFlow {
     this.usable = false;
   }
 
+  close(): void {
+    this.usable = false;
+  }
+
   async noop(): Promise<void> {
     if (this.shouldFailNoop) {
       throw new Error("IMAP noop failed");
@@ -480,6 +484,57 @@ describe("ImapConnectionPool", () => {
       expect(wrapper2.selectedFolder).toBe("Sent");
 
       await pool.releaseFromFolder(wrapper2);
+    });
+  });
+
+  describe("timeout timers", () => {
+    let timerPool: ImapConnectionPool;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      timerPool = new ImapConnectionPool({
+        ...config,
+        healthCheckIntervalMs: 60_000,
+      });
+    });
+
+    afterEach(async () => {
+      await timerPool.destroy();
+      vi.useRealTimers();
+    });
+
+    it("should force-close a connection whose logout hangs", async () => {
+      const connection = new MockImapFlow();
+      connection.logout = () => new Promise<void>(() => {});
+      const close = vi.spyOn(connection, "close");
+
+      const destroying = timerPool.destroyConnection(connection as never);
+      await vi.advanceTimersByTimeAsync(5000);
+      await destroying;
+
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it("should clear the validation timeout once noop answers", async () => {
+      const before = vi.getTimerCount();
+
+      const isValid = await timerPool.validateConnection(
+        new MockImapFlow() as never,
+      );
+
+      expect(isValid).toBe(true);
+      expect(vi.getTimerCount()).toBe(before);
+    });
+
+    it("should clear the folder selection timeout once the folder is open", async () => {
+      await timerPool.release(await timerPool.acquire());
+      const before = vi.getTimerCount();
+
+      const wrapper = await timerPool.acquireForFolder("INBOX");
+
+      expect(wrapper.selectedFolder).toBe("INBOX");
+      expect(vi.getTimerCount()).toBe(before);
+      await timerPool.releaseFromFolder(wrapper);
     });
   });
 });
