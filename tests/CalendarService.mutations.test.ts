@@ -1683,6 +1683,32 @@ describe("CalendarService event changes", () => {
       });
     });
 
+    describe("without an ETag", () => {
+      // tsdav builds the etag as `${getetag}`: a missing one arrives as the
+      // string "undefined" (If-Match: undefined, always 412) or not at all
+      // (no If-Match, an unconditional overwrite).
+      it.each([
+        ["missing", undefined],
+        ['the string "undefined"', "undefined"],
+        ["empty", ""],
+      ])("should refuse to update or delete when the ETag is %s", async (_label, etag) => {
+        objectsByCalendar[WORK_URL] = [
+          { ...stored(vcalendar(meeting())), etag } as ReturnType<
+            typeof stored
+          >,
+        ];
+
+        await expect(
+          makeService().updateCalendarEvent({ uid: "evt-1", summary: "x" }),
+        ).rejects.toThrow(/returned no ETag/);
+        await expect(
+          makeService().deleteCalendarEvent({ uid: "evt-1" }),
+        ).rejects.toThrow(/returned no ETag/);
+        expect(updateCalendarObject).not.toHaveBeenCalled();
+        expect(deleteCalendarObject).not.toHaveBeenCalled();
+      });
+    });
+
     describe("when the server refuses the write", () => {
       it("should report a changed etag as a modification conflict", async () => {
         updateCalendarObject.mockResolvedValue(

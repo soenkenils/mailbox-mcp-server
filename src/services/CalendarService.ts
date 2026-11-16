@@ -449,7 +449,21 @@ export class CalendarService {
       );
     }
 
-    return matches[0];
+    const [located] = matches;
+    // tsdav turns a missing getetag into the string "undefined": sent as
+    // If-Match it always fails (412), and a truly absent one would make the
+    // write unconditional and overwrite concurrent changes.
+    const etag = located.object.etag;
+    if (!etag || etag === "undefined") {
+      throw new CalendarError(
+        `The server returned no ETag for event "${uid}", so it cannot be changed safely (a concurrent change could be overwritten); change it in a calendar client`,
+        ErrorCode.EVENT_WRITE_REJECTED,
+        located.calendarName,
+        uid,
+      );
+    }
+
+    return located;
   }
 
   private async findObjectByUid(
