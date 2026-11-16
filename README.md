@@ -135,10 +135,23 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ### **Calendar Tools**
 
-- **`get_calendar_events`** - Retrieve events in date range
-- **`search_calendar`** - Search events by keyword
+- **`get_calendar_events`** - Retrieve events in date range. Recurring events are listed once per occurrence; each event shows its `UID`, and an occurrence of a series shows the series UID plus an `Occurrence:` line with its recurrence id
+- **`search_calendar`** - Search events by keyword (same event format)
 - **`get_free_busy`** - Check availability for scheduling
 - **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events need a date-time with an explicit offset or `Z` (a date-time without one is read in the time zone of the machine running the server) and are stored in UTC. For all-day events pass dates (`YYYY-MM-DD`); `end` is the last day, inclusive, and can be omitted for a one-day event. Impossible dates such as `2025-02-30` and local times skipped by a daylight-saving change are refused. By default nobody is notified: attendees are only recorded on the event. Only with `sendInvitations: true` (meant for when you explicitly ask to invite people) does your account become the organizer, and mailbox.org may then email invitations to all attendees. The target calendar and the `MAILBOX_CALENDARS` entries are matched exactly, by display name, full URL or last URL segment; a name that matches several calendars is refused. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
+- **`update_calendar_event`** - Change an event found by its UID: only the fields passed change (an empty `description` or `location` removes it, `attendees` replaces the list and keeps the reply status of those who stay); alarms, recurrence rules and time zones are kept. Times follow the `create_calendar_event` contract. The write carries the event's ETag (`If-Match`), so a change made elsewhere in the meantime fails with "changed on the server" instead of being overwritten
+- **`delete_calendar_event`** - Permanently delete an event found by its UID, also with `If-Match`
+
+**Recurring events.** Update and delete act on the whole series and take the series UID. Changing or deleting a single occurrence is not supported: an occurrence id from the read tools (`UID:2025-06-20` or `UID:2025-06-20T08:00:00.000Z`) is refused with a message naming the series UID. Moving a recurring series (start, end, all-day) is refused as well, because times are written in UTC and the series would shift across daylight-saving changes; title, description, location and attendees can be changed.
+
+**No surprise mail (RFC 6638).** mailbox.org sends scheduling mail for events that have an organizer and attendees. These tools avoid that unless you ask for it:
+- `update_calendar_event` records new attendees only (`SCHEDULE-AGENT=CLIENT`, no organizer added). With `sendInvitations: true` your account becomes the organizer and the server may email invitations, updates and cancellations.
+- A meeting you organize (organizer is your address, or one of the calendar user addresses the server reports, with attendees that are not marked `SCHEDULE-AGENT=CLIENT`) is not changed without `sendInvitations: true` and not deleted without `notifyParticipants: true`, since any change makes the server email the attendees.
+- An event someone else organized and invited you to cannot be changed. Deleting it sends `Schedule-Reply: F`, asking the server not to send the organizer a decline; with `notifyParticipants: true` the server may send one.
+
+Calendars for update and delete are chosen like for create: exact display name, URL or last URL segment, and only among `MAILBOX_CALENDARS` when that is set. A UID found in several calendars is refused until you name the calendar.
+
+**Read errors.** When a calendar cannot be read, the read tools return an error naming it instead of an empty list or an all-free range (a partial list would show the unreadable calendar's meetings as free time). When the server cannot be reached, recently cached results are still served.
 
 ### **Sieve Filter Tools**
 
@@ -224,7 +237,7 @@ Configuration is automatically validated at startup using comprehensive validati
 
 - `MAILBOX_CALDAV_URL`: CalDAV server URL (default: `https://dav.mailbox.org/`)
   - Must be a valid URL format
-- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access. Also limits where `create_calendar_event` may write; the first entry is its default calendar
+- `MAILBOX_CALENDARS`: Comma-separated list of calendars to access, for reading and writing. Entries match a calendar's exact display name, URL or last URL segment, never a substring; an entry matching several calendars is a configuration error. Events outside these calendars cannot be read, created, changed or deleted; the first entry is the default calendar for `create_calendar_event`
 
 #### **Optional Sieve Configuration**
 
