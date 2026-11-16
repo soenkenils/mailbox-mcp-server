@@ -2,6 +2,7 @@ import * as v from "valibot";
 import { describe, expect, it } from "vitest";
 import {
   createCalendarEventSchema,
+  createDirectorySchema,
   createDraftSchema,
   deleteEmailSchema,
   getCalendarEventsSchema,
@@ -257,6 +258,36 @@ describe("Email validation schemas", () => {
 });
 
 describe("Calendar validation schemas", () => {
+  describe("createDirectorySchema", () => {
+    const parse = (input: unknown) =>
+      safeValidateInput(createDirectorySchema, input);
+
+    it("accepts a name without a parent, or with an empty one", () => {
+      expect(parse({ name: "Projects" }).success).toBe(true);
+      expect(parse({ name: "Projects", parentPath: "" }).success).toBe(true);
+    });
+
+    it("accepts a nested parent path", () => {
+      const result = parse({ name: "x", parentPath: "INBOX/2025" });
+      expect(result.success).toBe(true);
+    });
+
+    it("keeps accepting '/' in the name for nested creation", () => {
+      expect(parse({ name: "Archive/2025" }).success).toBe(true);
+    });
+
+    it.each([
+      ["a trailing delimiter", "INBOX/"],
+      ["a leading delimiter", "/INBOX"],
+      ["an empty segment", "INBOX//x"],
+      ["a '..' segment", "../.."],
+      ["a '.' segment", "INBOX/."],
+      ["forbidden characters", "INBOX*"],
+    ])("rejects a parent path with %s", (_label, parentPath) => {
+      expect(parse({ name: "x", parentPath }).success).toBe(false);
+    });
+  });
+
   describe("getCalendarEventsSchema", () => {
     it("should validate valid calendar events params", () => {
       const result = validateInput(getCalendarEventsSchema, {

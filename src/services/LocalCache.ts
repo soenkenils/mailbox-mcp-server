@@ -28,8 +28,10 @@ export class MemoryCache implements LocalCache {
       return null;
     }
 
+    // An expired entry is a miss, but it stays in the map: getStale() serves
+    // it when the refetch fails on a connection error. The cleanup timer
+    // (cleanupWithStaleRetention) removes it once it is a day past its TTL.
     if (this.isExpired(entry)) {
-      this.cache.delete(key);
       this.stats.misses++;
       return null;
     }
@@ -94,8 +96,8 @@ export class MemoryCache implements LocalCache {
       return false;
     }
 
+    // Kept for the stale fallback, as in get().
     if (this.isExpired(entry)) {
-      this.cache.delete(key);
       return false;
     }
 

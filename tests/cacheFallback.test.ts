@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryCache } from "../src/services/LocalCache.js";
 import type { LoggerLike } from "../src/services/Logger.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import { ConnectionError } from "../src/types/errors.js";
@@ -132,5 +133,54 @@ describe("createCacheFetcher", () => {
       { operation: "op", service: "TestService" },
       { error: "Invalid credentials" },
     );
+  });
+});
+
+describe("createCacheFetcher with the real MemoryCache", () => {
+  let cache: MemoryCache;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    cache = new MemoryCache({
+      email: { searchTtl: 1000, messageTtl: 1000, threadTtl: 1000 },
+      calendar: { eventsTtl: 1000, freeBusyTtl: 1000 },
+      maxSize: 100,
+      cleanupInterval: 60000,
+    });
+  });
+
+  afterEach(() => {
+    cache.destroy();
+    vi.useRealTimers();
+  });
+
+  it("serves the expired copy when the refetch hits a connection error", async () => {
+    const cachedFetch = createCacheFetcher(cache, createLogger(), "Test");
+    await cachedFetch("key", async () => ["fresh"], "op", 1000);
+
+    // Past the TTL: the fresh lookup misses and the refetch fails.
+    vi.setSystemTime(Date.now() + 5000);
+    const result = await cachedFetch(
+      "key",
+      async () => {
+        throw new Error("Connection refused");
+      },
+      "op",
+      1000,
+    );
+
+    // get() used to delete the expired entry before the fallback ran, so
+    // there was never a stale copy to serve.
+    expect(result).toEqual(["fresh"]);
+  });
+
+  it("refetches once the entry has expired when the server is reachable", async () => {
+    const cachedFetch = createCacheFetcher(cache, createLogger(), "Test");
+    await cachedFetch("key", async () => "old", "op", 1000);
+    vi.setSystemTime(Date.now() + 5000);
+
+    await expect(
+      cachedFetch("key", async () => "new", "op", 1000),
+    ).resolves.toBe("new");
   });
 });

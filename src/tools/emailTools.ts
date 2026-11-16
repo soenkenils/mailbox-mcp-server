@@ -352,7 +352,7 @@ export function createEmailTools(
           permanent: {
             type: "boolean",
             description:
-              "Whether to permanently delete (true) or move to trash (false, default)",
+              "Whether to permanently delete (true) or move to trash (false, default). The trash is the folder the server marks as \\Trash, else a common name such as Trash. A message already in the trash can only be removed with true. Permanent deletion needs a server with UIDPLUS, so that no other message is expunged.",
             default: false,
           },
         },
@@ -381,7 +381,8 @@ export function createEmailTools(
           },
           parentPath: {
             type: "string",
-            description: "Parent folder path (optional, defaults to root)",
+            description:
+              'Existing parent folder path as returned by get_folders, e.g. "INBOX/2025" (optional, defaults to the top level)',
             default: "",
           },
         },
@@ -686,7 +687,7 @@ ${thread.messages
             {
               type: "text",
               text: result.success
-                ? `✅ Email deleted successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Type:** ${validatedArgs.permanent ? "Permanent deletion" : "Moved to trash"}`
+                ? `✅ Email deleted successfully!\n\n**UID:** ${validatedArgs.uid}\n**Folder:** ${validatedArgs.folder}\n**Result:** ${result.message}`
                 : `❌ Failed to delete email: ${result.message}`,
             },
           ],

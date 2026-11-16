@@ -258,12 +258,10 @@ Configuration is automatically validated at startup using comprehensive validati
 
 #### **Optional Cache Configuration**
 
-All cache TTL values must be non-negative numbers (in milliseconds):
-- `CACHE_EMAIL_SEARCH_TTL`: Email search cache TTL in ms (default: `300000`)
-- `CACHE_EMAIL_MESSAGE_TTL`: Email message cache TTL in ms (default: `600000`)
-- `CACHE_EMAIL_THREAD_TTL`: Email thread cache TTL in ms (default: `300000`)
-- `CACHE_CALENDAR_EVENTS_TTL`: Calendar events cache TTL in ms (default: `900000`)
-- `CACHE_CALENDAR_FREEBUSY_TTL`: Calendar free/busy cache TTL in ms (default: `300000`)
+Cache lifetimes are fixed (searches 5 min, messages 10 min, folder list 15
+min). When the server is unreachable, an expired cached copy is served for up
+to a day past its lifetime; with no cached copy the tool returns an error.
+
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
   - Must be a positive integer
 - `CACHE_CLEANUP_INTERVAL`: Cache cleanup frequency in ms (default: `300000`)

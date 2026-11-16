@@ -450,14 +450,9 @@ export const deleteEmailSchema = v.object({
 
 export const createDirectorySchema = v.object({
   name: folderNameSchema,
-  parentPath: v.optional(
-    v.pipe(
-      v.string("Parent path must be a string"),
-      v.maxLength(500, "Parent path too long"),
-      v.transform(sanitizeString),
-    ),
-    "",
-  ),
+  // The same path rules as every other folder argument; it used to be only
+  // sanitised, so "INBOX/" or "../.." passed. "" means the top level.
+  parentPath: v.optional(v.union([v.literal(""), folderNameSchema]), ""),
 });
 
 // =============================================================================
