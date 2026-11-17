@@ -1007,6 +1007,24 @@ describe("EmailService - Advanced Coverage", () => {
       expect(result.message).toContain("Failed to create draft");
     });
 
+    it("should log the shape of a failed draft, not its content", async () => {
+      const mockWrapper = createMockConnectionWrapper();
+      mockWrapper.connection.append = vi.fn().mockResolvedValue(false);
+      mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
+      mockPool.releaseFromFolder.mockResolvedValue(undefined);
+
+      await service.createDraft({
+        to: [{ address: "secret-recipient@example.com" }],
+        subject: "Secret subject",
+        text: "Secret body",
+      });
+
+      const logged = JSON.stringify(mockLogger.error.mock.calls);
+      expect(logged).not.toContain("Secret");
+      expect(logged).not.toContain("secret-recipient");
+      expect(logged).toContain('"recipients":1');
+    });
+
     it("should create draft with plain text in default Drafts folder", async () => {
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });

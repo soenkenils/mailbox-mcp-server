@@ -92,6 +92,13 @@ describe("Email validation schemas", () => {
       }).toThrow("Validation failed");
     });
 
+    it("should cap the page size at the advertised maximum", () => {
+      expect(validateInput(searchEmailsSchema, { limit: 200 }).limit).toBe(200);
+      expect(() => {
+        validateInput(searchEmailsSchema, { limit: 201 });
+      }).toThrow("Limit cannot exceed 200");
+    });
+
     it("should reject query that's too long", () => {
       expect(() => {
         validateInput(searchEmailsSchema, { query: "a".repeat(501) });
@@ -253,6 +260,40 @@ describe("Email validation schemas", () => {
           action: "add",
         });
       }).toThrow("Validation failed");
+    });
+
+    it.each([
+      "\\Recent",
+      "\\recent",
+      "\\RECENT",
+    ])("should reject %s, which only the server may set", flag => {
+      expect(() =>
+        validateInput(markEmailSchema, {
+          uid: 1,
+          flags: [flag],
+          action: "add",
+        }),
+      ).toThrow(/RFC 3501/);
+    });
+
+    it("should still accept a server keyword outside the advertised enum", () => {
+      const result = validateInput(markEmailSchema, {
+        uid: 1,
+        flags: ["\\Junk"],
+        action: "add",
+      });
+
+      expect(result.flags).toEqual(["\\Junk"]);
+    });
+
+    it("should reject a flag without the backslash prefix", () => {
+      expect(() =>
+        validateInput(markEmailSchema, {
+          uid: 1,
+          flags: ["Seen"],
+          action: "add",
+        }),
+      ).toThrow("Invalid email flag format");
     });
   });
 });

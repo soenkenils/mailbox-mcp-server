@@ -11,10 +11,6 @@ import type {
 
 // Test helper interface for accessing private methods
 interface TestableEmailService extends EmailService {
-  applyInMemoryFilters(
-    messages: EmailMessage[],
-    options: unknown,
-  ): EmailMessage[];
   parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
   parseFullEmailMessage(
     parsed: unknown,
@@ -182,8 +178,7 @@ describe("EmailService", () => {
     emailService = new EmailService(mockConnection, mockCache, mockPoolConfig);
   });
 
-  // Note: buildSearchCriteria tests removed - testing implementation details rather than behavior
-  describe("buildSearchCriteria - REMOVE", () => {
+  describe("buildSearchCriteria", () => {
     // Access the private method for testing
     const buildSearchCriteria = (options: EmailSearchOptions) => {
       return (emailService as TestableEmailService).buildSearchCriteria(
@@ -247,7 +242,49 @@ describe("EmailService", () => {
       expect(result).toEqual({ to: "test@example.com" });
     });
 
-    it("should handle complex OR query with dates using date filters only", () => {
+    it("should send an OR query to the server rather than matching everything", () => {
+      // Returning { all: true } made the server hand back the whole folder and
+      // left the query to a per-page filter, so matches outside the first page
+      // were invisible.
+      expect(buildSearchCriteria({ query: "alpha OR beta" })).toEqual({
+        or: [
+          { subject: "alpha" },
+          { body: "alpha" },
+          { subject: "beta" },
+          { body: "beta" },
+        ],
+      });
+    });
+
+    it("should treat a lowercase or the same as an uppercase OR", () => {
+      expect(buildSearchCriteria({ query: "alpha or beta" })).toEqual(
+        buildSearchCriteria({ query: "alpha OR beta" }),
+      );
+    });
+
+    it("should keep from: and to: terms addressed within an OR", () => {
+      expect(
+        buildSearchCriteria({
+          query: "from:correctiv.org OR to:me@example.com",
+        }),
+      ).toEqual({
+        or: [{ from: "correctiv.org" }, { to: "me@example.com" }],
+      });
+    });
+
+    it("should mix addressed and free-text terms in one OR", () => {
+      expect(
+        buildSearchCriteria({ query: "from:correctiv.org OR newsletter" }),
+      ).toEqual({
+        or: [
+          { from: "correctiv.org" },
+          { subject: "newsletter" },
+          { body: "newsletter" },
+        ],
+      });
+    });
+
+    it("should narrow an OR query by dates rather than dropping one of them", () => {
       const since = new Date("2024-01-01");
       const before = new Date("2024-01-31");
       const result = buildSearchCriteria({
@@ -255,29 +292,103 @@ describe("EmailService", () => {
         since,
         before,
       });
+      // IMAP ANDs top-level criteria, so this reads as
+      // (since AND before AND (from:correctiv OR from:krautreporter)).
       expect(result).toEqual({
-        since: since,
-        before: before,
+        since,
+        before,
+        or: [{ from: "correctiv.org" }, { from: "krautreporter.de" }],
       });
     });
 
-    it("should handle complex OR query without dates", () => {
-      const result = buildSearchCriteria({
-        query: "from:correctiv.org OR from:krautreporter.de",
+    it("should not turn an empty from: into a match-everything criterion", () => {
+      // IMAP FROM "" matches every message, so a prefix with nothing after it
+      // would quietly return the whole mailbox.
+      expect(buildSearchCriteria({ query: "from:" })).toEqual({
+        or: [{ subject: "from:" }, { body: "from:" }],
       });
-      expect(result).toEqual({ all: true });
+      expect(buildSearchCriteria({ query: "to:  " })).toEqual({
+        or: [{ subject: "to:" }, { body: "to:" }],
+      });
     });
 
-    it("should handle complex query with date by using date filter and in-memory query", () => {
-      // This test replicates the exact scenario from the log that causes the error
-      const result = buildSearchCriteria({
-        query: "from:correctiv.org OR from:krautreporter.de",
-        since: new Date("2025-05-31T00:00:00Z"),
+    it("should not let an empty addressed term widen an OR to everything", () => {
+      expect(buildSearchCriteria({ query: "from: OR banana" })).toEqual({
+        or: [
+          { subject: "from:" },
+          { body: "from:" },
+          { subject: "banana" },
+          { body: "banana" },
+        ],
       });
+    });
 
-      // Should return date filter and let query be handled in memory
-      expect(result).toBeDefined();
-      expect(result).toEqual({ since: new Date("2025-05-31T00:00:00Z") });
+    it("should not split a quoted phrase on OR, and search it literally", () => {
+      // The quotes mark a phrase; they are not part of the text searched.
+      expect(buildSearchCriteria({ query: '"foo OR bar"' })).toEqual({
+        or: [{ subject: "foo OR bar" }, { body: "foo OR bar" }],
+      });
+    });
+
+    it("should keep a quoted phrase whole as one side of an OR", () => {
+      expect(
+        buildSearchCriteria({ query: '"rock or roll" OR from:band.example' }),
+      ).toEqual({
+        or: [
+          { subject: "rock or roll" },
+          { body: "rock or roll" },
+          { from: "band.example" },
+        ],
+      });
+    });
+
+    it("should search a quoted from: literally instead of addressing it", () => {
+      expect(buildSearchCriteria({ query: '"from:me"' })).toEqual({
+        or: [{ subject: "from:me" }, { body: "from:me" }],
+      });
+    });
+
+    it("should split on an uppercase OR", () => {
+      expect(buildSearchCriteria({ query: "rock OR roll" })).toEqual({
+        or: [
+          { subject: "rock" },
+          { body: "rock" },
+          { subject: "roll" },
+          { body: "roll" },
+        ],
+      });
+    });
+
+    it("should build a three-way OR ANDed with dates and flags", () => {
+      const since = new Date("2024-01-01");
+      const before = new Date("2024-06-01");
+      expect(
+        buildSearchCriteria({
+          query: 'from:a.example OR "x OR y" OR invoice',
+          since,
+          before,
+          seen: false,
+          answered: true,
+        }),
+      ).toEqual({
+        since,
+        before,
+        seen: false,
+        answered: true,
+        or: [
+          { from: "a.example" },
+          { subject: "x OR y" },
+          { body: "x OR y" },
+          { subject: "invoice" },
+          { body: "invoice" },
+        ],
+      });
+    });
+
+    it("should treat a dangling OR as ordinary text, having only one side", () => {
+      expect(buildSearchCriteria({ query: "alpha OR " })).toEqual({
+        or: [{ subject: "alpha OR" }, { body: "alpha OR" }],
+      });
     });
   });
 
@@ -356,15 +467,27 @@ describe("EmailService", () => {
       });
     });
 
-    it("keeps flags at the top level for 'a OR b' queries filtered in memory", async () => {
+    it("ANDs flags and dates with every side of an 'a OR b' query", async () => {
       const since = new Date("2024-01-01");
+      const before = new Date("2024-02-01");
       await emailService.searchEmails({
-        query: "from:a.org OR from:b.org",
+        query: "from:a.org OR invoice",
         since,
+        before,
         seen: false,
+        flagged: true,
       });
 
-      expect(lastSearchCriteria()).toEqual({ since, seen: false });
+      // One SEARCH the server evaluates in full:
+      // SINCE AND BEFORE AND UNSEEN AND FLAGGED AND (FROM a.org OR SUBJECT
+      // invoice OR BODY invoice). The flags must not land inside a branch.
+      expect(lastSearchCriteria()).toEqual({
+        since,
+        before,
+        seen: false,
+        flagged: true,
+        or: [{ from: "a.org" }, { subject: "invoice" }, { body: "invoice" }],
+      });
     });
 
     it("uses a different cache key when only a flag differs", async () => {
@@ -379,87 +502,14 @@ describe("EmailService", () => {
     });
   });
 
-  describe("applyInMemoryFilters", () => {
-    const applyInMemoryFilters = (
-      messages: EmailMessage[],
-      options: unknown,
-    ) => {
-      return (emailService as TestableEmailService).applyInMemoryFilters(
-        messages,
-        options,
-      );
-    };
-
-    const mockMessages = [
-      createMockEmailMessage({
-        id: "1",
-        uid: 1,
-        subject: "Newsletter from Correctiv",
-        from: [{ address: "newsletter@correctiv.org", name: "Correctiv" }],
-        date: new Date("2024-01-01T10:00:00Z"),
-      }),
-      createMockEmailMessage({
-        id: "2",
-        uid: 2,
-        subject: "Article from Krautreporter",
-        from: [{ address: "info@krautreporter.de", name: "Krautreporter" }],
-        date: new Date("2024-06-01T10:00:00Z"),
-      }),
-      createMockEmailMessage({
-        id: "3",
-        uid: 3,
-        subject: "Random Email",
-        from: [{ address: "random@example.com", name: "Random" }],
-        date: new Date("2024-12-01T10:00:00Z"),
-      }),
-    ];
-
-    it("should filter by complex OR query", () => {
-      const result = applyInMemoryFilters(mockMessages, {
-        query: "from:correctiv.org OR from:krautreporter.de",
-      });
-      expect(result).toHaveLength(2);
-      expect(result.map(m => m.subject)).toEqual([
-        "Newsletter from Correctiv",
-        "Article from Krautreporter",
-      ]);
-    });
-
-    it("should not filter simple from: queries in memory", () => {
-      const result = applyInMemoryFilters(mockMessages, {
-        query: "from:correctiv.org",
-      });
-      expect(result).toHaveLength(3); // Simple from: query doesn't trigger in-memory filtering
-    });
-
-    it("should not filter simple text queries in memory", () => {
-      const result = applyInMemoryFilters(mockMessages, {
-        query: "Newsletter",
-      });
-      expect(result).toHaveLength(3); // Simple query doesn't trigger in-memory filtering
-    });
-
-    it("should return all messages when no complex query", () => {
-      const result = applyInMemoryFilters(mockMessages, {
-        query: "simple",
-      });
-      expect(result).toHaveLength(3); // Simple query doesn't trigger in-memory filtering
-    });
-
-    it("should return all messages when no filters apply", () => {
-      const result = applyInMemoryFilters(mockMessages, {});
-      expect(result).toHaveLength(3);
-    });
-  });
-
   describe("searchEmails", () => {
     it("should return cached results when available", async () => {
-      const mockMessages = [createMockEmailMessage()];
-      (mockCache.get as Mock).mockReturnValue(mockMessages);
+      const cached = { messages: [createMockEmailMessage()], total: 1 };
+      (mockCache.get as Mock).mockReturnValue(cached);
 
       const result = await emailService.searchEmails({ query: "test" });
 
-      expect(result).toBe(mockMessages);
+      expect(result).toBe(cached);
       expect(mockCache.get).toHaveBeenCalledWith(
         'email_search:{"query":"test"}',
       );
@@ -472,13 +522,153 @@ describe("EmailService", () => {
         since: new Date("2024-01-01"),
         limit: 10,
       };
-      (mockCache.get as Mock).mockReturnValue([createMockEmailMessage()]);
+      (mockCache.get as Mock).mockReturnValue({
+        messages: [createMockEmailMessage()],
+        total: 1,
+      });
 
       emailService.searchEmails(options);
 
       expect(mockCache.get).toHaveBeenCalledWith(
         `email_search:${JSON.stringify(options)}`,
       );
+    });
+
+    it("should report the full match count, not the size of the page", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      const allMatches = Array.from({ length: 312 }, (_, i) => i + 1);
+      mockSearch.mockResolvedValue(allMatches);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({ uid: 312 });
+      });
+
+      const result = await emailService.searchEmails({
+        query: "test",
+        limit: 1,
+      });
+
+      expect(result.total).toBe(312);
+      expect(result.messages).toHaveLength(1);
+    });
+
+    const searchWithDates = async (
+      date: unknown,
+      internalDate: unknown,
+    ): Promise<EmailMessage | undefined> => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          internalDate,
+          envelope: {
+            messageId: "msg-1",
+            subject: "Malformed date",
+            from: [{ name: "Sender", address: "sender@example.com" }],
+            to: [],
+            cc: [],
+            date,
+          },
+        });
+      });
+      const result = await emailService.searchEmails({ query: "test" });
+      return result.messages[0];
+    };
+
+    it.each([
+      ["an unparseable header string", "not a real date"],
+      ["an invalid Date", new Date("nonsense")],
+      ["a missing header", undefined],
+    ])("should fall back to the server's arrival date for %s", async (_label, date) => {
+      // imapflow passes the raw header through when it cannot parse a date
+      // (tools.js parseEnvelope). The arrival date the server recorded is the
+      // honest substitute; "now" would be a made-up date.
+      const internalDate = new Date("2024-03-04T05:06:07Z");
+
+      const message = await searchWithDates(date, internalDate);
+
+      expect(message?.date?.toISOString()).toBe("2024-03-04T05:06:07.000Z");
+    });
+
+    it("should leave the date unknown when neither date is usable", async () => {
+      const message = await searchWithDates("not a real date", undefined);
+
+      expect(message?.date).toBeNull();
+    });
+
+    it("should list messages without a date after dated ones", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1, 2]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          envelope: { messageId: "a", subject: "undated", date: "bad" },
+        });
+        yield createMockImapMessage({
+          uid: 2,
+          envelope: { messageId: "b", subject: "dated", date: new Date() },
+        });
+      });
+
+      const result = await emailService.searchEmails({ query: "test" });
+
+      expect(result.messages.map(m => m.subject)).toEqual(["dated", "undated"]);
+    });
+
+    it("should keep a date header that parses as a string", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          envelope: {
+            messageId: "msg-1",
+            subject: "String date",
+            from: [],
+            to: [],
+            date: "Mon, 01 Jan 2024 10:00:00 +0000",
+          },
+        });
+      });
+
+      const result = await emailService.searchEmails({ query: "test" });
+
+      expect(result.messages[0]?.date.toISOString()).toBe(
+        "2024-01-01T10:00:00.000Z",
+      );
+    });
+
+    it("should keep every match the server returned for an OR query", async () => {
+      // The server evaluates the disjunction, so nothing is discarded
+      // afterwards. The per-page filter this replaces looked at subjects and
+      // addresses but never the body, so it dropped body-only matches.
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1, 2, 3]);
+      mockFetch.mockImplementation(async function* () {
+        for (const uid of [1, 2, 3]) {
+          yield createMockImapMessage({
+            uid,
+            envelope: { messageId: `m${uid}`, subject: "nope" },
+          });
+        }
+      });
+
+      const result = await emailService.searchEmails({
+        query: "alpha OR beta",
+        seen: false,
+      });
+
+      expect(result.messages).toHaveLength(3);
+      expect(result.total).toBe(3);
+    });
+
+    it("should report a total of zero when nothing matches", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([]);
+
+      const result = await emailService.searchEmails({ query: "nope" });
+
+      expect(result).toEqual({ messages: [], total: 0 });
     });
   });
 
@@ -550,6 +740,22 @@ describe("EmailService", () => {
 
       expect(result).toBe(mockEmail);
       expect(mockCache.get).toHaveBeenCalledWith("email:INBOX:123");
+    });
+
+    it("should return null when the server returns a message with no source", async () => {
+      // `source` is optional on FetchMessageObject, so a partial fetch can
+      // yield a message with no body to parse. Callers surface this the same
+      // way as a missing UID; the point is that it never reaches simpleParser
+      // with undefined.
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockFetchOne.mockResolvedValue(
+        createMockImapMessage({ uid: 123, source: undefined }),
+      );
+
+      const result = await emailService.getEmail(123);
+
+      expect(result).toBeNull();
+      expect(simpleParser).not.toHaveBeenCalled();
     });
   });
 
@@ -635,7 +841,8 @@ describe("EmailService", () => {
         from: [],
         to: [],
         cc: [],
-        date: expect.any(Date),
+        // No Date header and no arrival date: unknown, not invented.
+        date: null,
         flags: [],
         folder: "INBOX",
       });
@@ -665,6 +872,24 @@ describe("EmailService", () => {
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(Array.isArray(result.flags)).toBe(true);
       expect(result.flags).toEqual(["\\Answered"]);
+    });
+
+    it("should fall back to the arrival date when the Date header is missing", () => {
+      const message = createMockImapMessage({
+        internalDate: new Date("2024-03-04T05:06:07Z"),
+      });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.date?.toISOString()).toBe("2024-03-04T05:06:07.000Z");
+    });
+
+    it("should leave the date unknown when there is no date at all", () => {
+      const message = createMockImapMessage();
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.date).toBeNull();
     });
 
     it("should return an empty array when flags are missing", () => {

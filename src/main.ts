@@ -1,10 +1,19 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   type CallToolRequest,
   CallToolRequestSchema,
   type CallToolResult,
+  ErrorCode,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+  type ServerNotification,
+  type ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig, type ServerConfig } from "./config/config.js";
@@ -19,6 +28,15 @@ import {
   isCalendarTool,
 } from "./tools/calendarTools.js";
 import {
+  createEmailPrompts,
+  handleEmailPrompt,
+  isEmailPrompt,
+} from "./tools/emailPrompts.js";
+import {
+  listEmailResources,
+  readEmailResource,
+} from "./tools/emailResources.js";
+import {
   createEmailTools,
   handleEmailTool,
   isEmailTool,
@@ -29,6 +47,23 @@ import {
   isSieveTool,
 } from "./tools/sieveTools.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
+import {
+  createProgressReporter,
+  type ToolContext,
+  toolOutcome,
+  unknownToolError,
+} from "./types/tool.types.js";
+import { summarizeArgs } from "./utils/toolArgs.js";
+
+/**
+ * Lands in the model's system prompt. This is the place for conventions that
+ * span tools; repeating them in every description would be noise.
+ */
+export const SERVER_INSTRUCTIONS = [
+  "Mailbox folder names vary by account: call get_folders to discover the real paths before passing a folder argument.",
+  "Email UIDs are per-folder. A UID from search_emails is only meaningful in the folder it was returned from, and a message that moves folders gets a new one.",
+  "search_emails returns headers only; message bodies come from get_email.",
+].join(" ");
 
 class MailboxMcpServer {
   private server: Server;
@@ -49,7 +84,10 @@ class MailboxMcpServer {
         capabilities: {
           tools: {},
           logging: {},
+          prompts: {},
+          resources: {},
         },
+        instructions: SERVER_INSTRUCTIONS,
       },
     );
   }
@@ -68,6 +106,7 @@ class MailboxMcpServer {
     instance.loadConfiguration();
     instance.initializeServices();
     instance.setupToolHandlers();
+    instance.setupPromptAndResourceHandlers();
 
     return instance;
   }
@@ -188,42 +227,26 @@ class MailboxMcpServer {
     }
   }
 
-  private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
-    if (!args || typeof args !== "object") {
-      return args;
-    }
-
-    const sanitized = { ...args };
-
-    // Remove invalid UUID parameters that Claude Desktop might pass
-    for (const key in sanitized) {
-      if (key.includes("uuid") && typeof sanitized[key] === "string") {
-        const value = sanitized[key];
-        // Check if the value is a valid UUID format
-        if (
-          value === "null" ||
-          value === "none" ||
-          value === "undefined" ||
-          value === "" ||
-          (value.length > 0 &&
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-              value,
-            ) &&
-            !value.startsWith("urn:uuid:"))
-        ) {
-          this.logger.debug(
-            `Removing invalid UUID parameter: ${key}=${value}`,
-            {
-              operation: "sanitizeArgs",
-              service: "validation",
-            },
-          );
-          delete sanitized[key];
-        }
-      }
-    }
-
-    return sanitized;
+  /**
+   * Narrows the SDK's per-request `extra` to what tools need: the abort
+   * signal, and a progress reporter only when the client sent a
+   * progressToken, since without one there is nothing to address it to.
+   */
+  private toolContext(
+    request: CallToolRequest,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  ): ToolContext {
+    return {
+      signal: extra.signal,
+      reportProgress: createProgressReporter(
+        request.params._meta?.progressToken,
+        params =>
+          extra.sendNotification({
+            method: "notifications/progress",
+            params,
+          }),
+      ),
+    };
   }
 
   private setupToolHandlers(): void {
@@ -238,9 +261,11 @@ class MailboxMcpServer {
       };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async request => {
+    const { server } = this;
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
       const timer = this.logger.startTimer(`tool:${name}`);
+      const context = this.toolContext(request, extra);
 
       this.logger.debug(
         `Executing tool: ${name}`,
@@ -248,11 +273,11 @@ class MailboxMcpServer {
           operation: "callTool",
           service: "toolHandler",
         },
-        { tool: name, args },
+        // Shape only: argument values are mail content and recipients.
+        { tool: name, args: summarizeArgs(args) },
       );
 
-      // Filter out invalid UUID parameters that Claude Desktop might pass
-      const cleanArgs = this.sanitizeArgs(args as Record<string, unknown>);
+      const toolArgs = args ?? {};
 
       try {
         let result: CallToolResult;
@@ -260,39 +285,50 @@ class MailboxMcpServer {
         if (isEmailTool(name)) {
           result = await handleEmailTool(
             name,
-            cleanArgs,
+            toolArgs,
             this.emailService,
             this.smtpService,
+            context,
           );
         } else if (isCalendarTool(name)) {
           result = await handleCalendarTool(
             name,
-            cleanArgs,
+            toolArgs,
             this.calendarService,
+            context,
           );
         } else if (isSieveTool(name)) {
           result = await handleSieveTool(
-            { params: { name, arguments: cleanArgs } } as CallToolRequest,
+            { params: { name, arguments: toolArgs } } as CallToolRequest,
             this.config,
+            context,
           );
         } else {
-          throw new ValidationError(`Unknown tool: ${name}`, "tool_name", name);
+          throw unknownToolError(name);
         }
 
-        // Record successful execution
-        const metrics = timer.end(true);
+        // Record the real outcome: most failures come back as isError results.
+        const { success } = toolOutcome(result);
+        const metrics = timer.end(success);
         this.logger.info(
-          `Tool executed successfully: ${name}`,
+          success
+            ? `Tool executed successfully: ${name}`
+            : `Tool returned an error: ${name}`,
           {
             operation: "callTool",
             service: "toolHandler",
             duration: metrics.duration,
           },
-          { tool: name, success: true },
+          { tool: name, success },
         );
 
         return result;
       } catch (error) {
+        // A protocol error such as an unknown tool goes back as JSON-RPC.
+        if (error instanceof McpError) {
+          timer.end(false, "McpError");
+          throw error;
+        }
         // Record failed execution
         const errorType =
           error instanceof Error ? error.constructor.name : "UnknownError";
@@ -304,7 +340,7 @@ class MailboxMcpServer {
             ? ErrorUtils.toMCPError(error, {
                 operation: `call_tool:${name}`,
                 service: "MailboxMcpServer",
-                details: { tool: name, args: cleanArgs },
+                details: { tool: name, args: summarizeArgs(toolArgs) },
               })
             : new ValidationError(String(error), "unknown", error);
 
@@ -336,6 +372,35 @@ class MailboxMcpServer {
     });
   }
 
+  /**
+   * Prompts are user-picked workflows; the folder resource is reference data
+   * the host can browse. Neither has side effects: every mail access still
+   * goes through a tool call the user can see and approve.
+   */
+  private setupPromptAndResourceHandlers(): void {
+    this.server.setRequestHandler(ListPromptsRequestSchema, () => ({
+      prompts: createEmailPrompts(),
+    }));
+
+    this.server.setRequestHandler(GetPromptRequestSchema, request => {
+      const { name, arguments: args } = request.params;
+      // Guarded the same way tools are, so an unknown name fails at dispatch
+      // rather than inside a handler that assumes it owns the namespace.
+      if (!isEmailPrompt(name)) {
+        throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+      }
+      return handleEmailPrompt(name, args);
+    });
+
+    this.server.setRequestHandler(ListResourcesRequestSchema, () => ({
+      resources: listEmailResources(),
+    }));
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, request =>
+      readEmailResource(request.params.uri, this.emailService),
+    );
+  }
+
   async start(): Promise<void> {
     const startTimer = this.logger.startTimer("server_startup");
 
@@ -353,7 +418,7 @@ class MailboxMcpServer {
         },
         {
           version: "0.1.0",
-          capabilities: ["tools", "logging"],
+          capabilities: ["tools", "logging", "prompts", "resources"],
           transport: "stdio",
         },
       );

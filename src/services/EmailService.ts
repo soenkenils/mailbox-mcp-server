@@ -1,3 +1,4 @@
+import type { FetchMessageObject } from "imapflow";
 import {
   type AddressObject,
   type EmailAddress,
@@ -14,7 +15,10 @@ interface ImapSearchCriteria {
   to?: string;
   subject?: string;
   body?: string;
-  or?: Array<{ [key: string]: string | Date }>;
+  // Nested criteria, ORed together, as imapflow's SearchObject defines them.
+  // The looser `Array<{ [key: string]: string | Date }>` this replaces could
+  // not express one criterion built from another.
+  or?: ImapSearchCriteria[];
   seen?: boolean;
   answered?: boolean;
   flagged?: boolean;
@@ -22,21 +26,51 @@ interface ImapSearchCriteria {
   deleted?: boolean;
 }
 
-interface ImapMessage {
-  envelope: {
-    messageId?: string;
-    subject?: string;
-    from?: Array<{ name?: string; address: string }>;
-    to?: Array<{ name?: string; address: string }>;
-    cc?: Array<{ name?: string; address: string }>;
-    date?: Date;
-  };
-  uid: number;
-  /** imapflow returns a Set; arrays are accepted for robustness */
-  flags?: Set<string> | string[];
-  bodystructure?: unknown;
-  size?: number;
-}
+/**
+ * imapflow returns the raw header string when a Date: header will not parse
+ * (see parseEnvelope in its tools.js), which mail from spammers and broken
+ * clients regularly triggers. Such a value is normalised to a Date, or to
+ * null when it names no real time, so one message cannot break a listing.
+ */
+const toDate = (value: unknown): Date | null => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+};
+
+/**
+ * The message's own Date header, else the time the server received it
+ * (INTERNALDATE). Null when neither is usable: inventing "now" would show a
+ * made-up date and sort the message to the top of every listing.
+ */
+const messageDate = (header: unknown, internalDate: unknown): Date | null =>
+  toDate(header) ?? toDate(internalDate);
+
+/** Newest first, with undated messages after every dated one. */
+const byDateDescending = (a: EmailMessage, b: EmailMessage): number =>
+  (b.date?.getTime() ?? Number.NEGATIVE_INFINITY) -
+    (a.date?.getTime() ?? Number.NEGATIVE_INFINITY) || 0;
+
+/** Oldest first, as a thread reads, with undated messages at the end. */
+const byDateAscending = (a: EmailMessage, b: EmailMessage): number =>
+  (a.date?.getTime() ?? Number.POSITIVE_INFINITY) -
+    (b.date?.getTime() ?? Number.POSITIVE_INFINITY) || 0;
+
+/**
+ * The shape imapflow actually hands back, taken from the library rather than
+ * restated here. The hand-written version this replaces had drifted: it
+ * declared `date?: Date` where the library may return the raw header string,
+ * a required `envelope` the library marks optional, and `bodystructure`
+ * misspelt (the library spells it `bodyStructure`). Because the casts at the
+ * fetch sites were `as unknown as`, none of that could be caught by
+ * type-checking.
+ */
+type ImapMessage = FetchMessageObject;
 
 import type { LocalCache } from "../types/cache.types.js";
 import type {
@@ -45,6 +79,7 @@ import type {
   EmailMessage,
   EmailOperationResult,
   EmailSearchOptions,
+  EmailSearchResult,
   EmailThread,
   ImapConnection,
 } from "../types/email.types.js";
@@ -57,6 +92,54 @@ import {
 import { createLogger } from "./Logger.js";
 
 const FOLDERS_CACHE_KEY = "email_folders";
+
+/**
+ * Separates the sides of a disjunctive query. Case-insensitive, matching the
+ * from:/to: prefixes, so a lowercase `or` is not searched as literal text; a
+ * phrase in double quotes is never split. Anchored, as it is tried at each
+ * position outside quotes.
+ */
+const OR_SEPARATOR = /^\s+or\s+/i;
+
+/** One side of a query: its text, and whether it was a quoted phrase. */
+interface QueryTerm {
+  text: string;
+  quoted: boolean;
+}
+
+/** A term in double quotes is a literal phrase; the quotes are not searched. */
+const toTerm = (raw: string): QueryTerm => {
+  const text = raw.trim();
+  return text.length >= 2 && text.startsWith('"') && text.endsWith('"')
+    ? { text: text.slice(1, -1).trim(), quoted: true }
+    : { text, quoted: false };
+};
+
+/** Splits a query on OR separators that lie outside double quotes. */
+const splitOnOr = (query: string): QueryTerm[] => {
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let i = 0;
+  while (i < query.length) {
+    const char = query[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      const separator = OR_SEPARATOR.exec(query.slice(i));
+      if (separator) {
+        parts.push(current);
+        current = "";
+        i += separator[0].length;
+        continue;
+      }
+    }
+    current += char;
+    i++;
+  }
+  parts.push(current);
+  return parts.map(toTerm).filter(term => term.text !== "");
+};
 
 /** Common trash folder names, tried after the server's \Trash folder. */
 const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
@@ -88,7 +171,7 @@ export class EmailService {
     await this.pool.destroy();
   }
 
-  async searchEmails(options: EmailSearchOptions): Promise<EmailMessage[]> {
+  async searchEmails(options: EmailSearchOptions): Promise<EmailSearchResult> {
     const cacheKey = `email_search:${JSON.stringify(options)}`;
 
     return this.cachedFetch(
@@ -161,21 +244,24 @@ export class EmailService {
   private async performEmailSearch(
     wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
-  ): Promise<EmailMessage[]> {
+  ): Promise<EmailSearchResult> {
     const searchResult = await this.executeSearch(wrapper, options);
     if (searchResult.length === 0) {
-      return [];
+      return { messages: [], total: 0 };
     }
 
+    // Captured before pagination: this is how many messages matched, not how
+    // many this page returns. The server evaluates the whole query, including
+    // OR terms and flag filters, so the count is exact.
+    const total = searchResult.length;
     const paginatedResults = this.applyPagination(searchResult, options);
     const messages = await this.fetchMessageHeaders(
       wrapper,
       paginatedResults,
       options.folder || "INBOX",
     );
-    const filteredMessages = this.applyInMemoryFilters(messages, options);
 
-    return this.sortMessagesByDate(filteredMessages);
+    return { messages: this.sortMessagesByDate(messages), total };
   }
 
   private async executeSearch(
@@ -225,16 +311,14 @@ export class EmailService {
           envelope: true,
           uid: true,
           flags: true,
+          internalDate: true,
         },
         { uid: true },
       );
 
       try {
         for await (const message of iterator) {
-          const emailMessage = this.parseEmailMessage(
-            message as unknown as ImapMessage,
-            folder,
-          );
+          const emailMessage = this.parseEmailMessage(message, folder);
           if (emailMessage) {
             messages.push(emailMessage);
           }
@@ -267,7 +351,7 @@ export class EmailService {
   }
 
   private sortMessagesByDate(messages: EmailMessage[]): EmailMessage[] {
-    return messages.sort((a, b) => b.date.getTime() - a.date.getTime());
+    return messages.sort(byDateDescending);
   }
 
   private async fetchEmailByUid(
@@ -278,13 +362,13 @@ export class EmailService {
     try {
       const rawMessage = await this.fetchRawMessageByUid(wrapper, uid, folder);
 
-      if (!rawMessage) {
+      // `source` is optional on FetchMessageObject: a partial fetch can yield
+      // a message with no body to parse, which reads as not found.
+      if (!rawMessage?.source) {
         return null;
       }
 
-      const parsed = await simpleParser(
-        (rawMessage as ImapMessage & { source: Buffer }).source,
-      );
+      const parsed = await simpleParser(rawMessage.source);
       return this.parseFullEmailMessage(parsed, rawMessage, folder);
     } catch (error) {
       throw new Error(
@@ -353,6 +437,7 @@ export class EmailService {
         envelope: true,
         uid: true,
         flags: true,
+        internalDate: true,
       },
       { uid: true },
     );
@@ -362,7 +447,7 @@ export class EmailService {
     if (message === undefined) {
       throw new Error("IMAP fetch failed: no folder selected");
     }
-    return message ? (message as unknown as ImapMessage) : null;
+    return message || null;
   }
 
   private buildSearchCriteria(options: EmailSearchOptions): ImapSearchCriteria {
@@ -421,7 +506,12 @@ export class EmailService {
     const query = options.query.trim();
 
     if (this.isOrQuery(query)) {
-      return this.handleOrQuery(criteria);
+      return this.handleOrQuery(criteria, query);
+    }
+
+    const whole = toTerm(query);
+    if (whole.quoted) {
+      return whole.text ? this.handleTextQuery(criteria, whole.text) : criteria;
     }
 
     if (this.isFromQuery(query)) {
@@ -435,16 +525,65 @@ export class EmailService {
     return this.handleTextQuery(criteria, query);
   }
 
+  /** The sides of a disjunctive query; fewer than two means it is not one. */
+  private orTerms(query: string): QueryTerm[] {
+    return splitOnOr(query);
+  }
+
   private isOrQuery(query: string): boolean {
-    return query.includes(" OR ");
+    return this.orTerms(query).length > 1;
   }
 
-  private handleOrQuery(criteria: ImapSearchCriteria): ImapSearchCriteria {
-    return Object.keys(criteria).length === 0 ? { all: true } : criteria;
+  /**
+   * Expands `a OR b` into an IMAP OR the server evaluates itself.
+   *
+   * This used to leave the query to a filter applied to each page after it
+   * was fetched, which only ever examined one page of the mailbox: matches
+   * older than the newest `limit` messages were invisible, the match count
+   * was the size of the folder, and with a date filter the query was dropped
+   * altogether.
+   *
+   * Top-level criteria are ANDed by IMAP, so assigning `or` alongside date
+   * and flag filters narrows the disjunction instead of replacing it.
+   */
+  private handleOrQuery(
+    criteria: ImapSearchCriteria,
+    query: string,
+  ): ImapSearchCriteria {
+    criteria.or = this.orTerms(query).flatMap(term => this.termCriteria(term));
+    return criteria;
   }
 
+  /**
+   * The criteria one side of an OR contributes, keeping from:/to: addressed.
+   * A quoted phrase is always plain text, even when it starts with from:.
+   */
+  private termCriteria({
+    text: term,
+    quoted,
+  }: QueryTerm): ImapSearchCriteria[] {
+    if (quoted) {
+      return [{ subject: term }, { body: term }];
+    }
+    if (this.isFromQuery(term)) {
+      return [{ from: term.substring(5).trim() }];
+    }
+    if (this.isToQuery(term)) {
+      return [{ to: term.substring(3).trim() }];
+    }
+    return [{ subject: term }, { body: term }];
+  }
+
+  /**
+   * A prefix with nothing after it is not an addressed query: IMAP treats
+   * `FROM ""` as matching every message, so `from:` alone would quietly return
+   * the whole mailbox. Such a term falls through to a text search instead.
+   */
   private isFromQuery(query: string): boolean {
-    return query.toLowerCase().startsWith("from:");
+    return (
+      query.toLowerCase().startsWith("from:") &&
+      query.substring(5).trim() !== ""
+    );
   }
 
   private handleFromQuery(
@@ -456,7 +595,9 @@ export class EmailService {
   }
 
   private isToQuery(query: string): boolean {
-    return query.toLowerCase().startsWith("to:");
+    return (
+      query.toLowerCase().startsWith("to:") && query.substring(3).trim() !== ""
+    );
   }
 
   private handleToQuery(
@@ -473,72 +614,6 @@ export class EmailService {
   ): ImapSearchCriteria {
     criteria.or = [{ subject: query }, { body: query }];
     return criteria;
-  }
-
-  private applyInMemoryFilters(
-    messages: EmailMessage[],
-    options: EmailSearchOptions,
-  ): EmailMessage[] {
-    let filtered = messages;
-
-    // Apply query filter for complex queries that weren't handled by IMAP
-    if (options.query) {
-      const query = options.query;
-      const needsInMemoryQueryFilter = query.includes(" OR ");
-
-      if (needsInMemoryQueryFilter) {
-        filtered = filtered.filter(msg => this.matchesQuery(msg, query));
-      }
-    }
-
-    return filtered;
-  }
-
-  private matchesQuery(message: EmailMessage, query: string): boolean {
-    // Handle complex query matching in memory
-    const lowercaseQuery = query.toLowerCase();
-
-    // Handle OR operations
-    if (lowercaseQuery.includes(" or ")) {
-      const orParts = lowercaseQuery.split(" or ").map(part => part.trim());
-      return orParts.some(part => this.matchesSingleQuery(message, part));
-    }
-
-    return this.matchesSingleQuery(message, lowercaseQuery);
-  }
-
-  private matchesSingleQuery(message: EmailMessage, query: string): boolean {
-    // Handle from: queries
-    if (query.startsWith("from:")) {
-      const emailDomain = query.substring(5).trim();
-      return message.from.some(from =>
-        from.address.toLowerCase().includes(emailDomain),
-      );
-    }
-
-    // Handle to: queries
-    if (query.startsWith("to:")) {
-      const emailDomain = query.substring(3).trim();
-      return message.to.some(to =>
-        to.address.toLowerCase().includes(emailDomain),
-      );
-    }
-
-    // Default text search in subject and from/to addresses
-    const searchText = query.toLowerCase();
-    return (
-      message.subject.toLowerCase().includes(searchText) ||
-      message.from.some(
-        from =>
-          from.address.toLowerCase().includes(searchText) ||
-          from.name?.toLowerCase().includes(searchText),
-      ) ||
-      message.to.some(
-        to =>
-          to.address.toLowerCase().includes(searchText) ||
-          to.name?.toLowerCase().includes(searchText),
-      )
-    );
   }
 
   private parseEmailMessage(
@@ -558,7 +633,7 @@ export class EmailService {
       from: this.parseAddressesFromEnvelope(envelope.from),
       to: this.parseAddressesFromEnvelope(envelope.to),
       cc: this.parseAddressesFromEnvelope(envelope.cc),
-      date: envelope.date || new Date(),
+      date: messageDate(envelope.date, message.internalDate),
       flags: Array.from(message.flags ?? []),
       folder,
     };
@@ -577,7 +652,7 @@ export class EmailService {
       to: this.parseAddressesFromParsed(parsed.to),
       cc: this.parseAddressesFromParsed(parsed.cc),
       bcc: this.parseAddressesFromParsed(parsed.bcc),
-      date: parsed.date || new Date(),
+      date: messageDate(parsed.date, message.internalDate),
       text: parsed.text,
       html: parsed.html || undefined,
       attachments: parsed.attachments?.map(att => ({
@@ -673,9 +748,7 @@ export class EmailService {
       }
 
       // Oldest first: a thread reads in the order it happened.
-      const ordered = [...messages].sort(
-        (a, b) => a.date.getTime() - b.date.getTime(),
-      );
+      const ordered = [...messages].sort(byDateAscending);
       // Callers may pass the id with or without angle brackets, while the
       // envelope keeps whichever form the sender used.
       const sameId = (a: string, b: string) =>
@@ -688,7 +761,10 @@ export class EmailService {
         messages: ordered,
         subject: root.subject,
         participants: this.collectParticipants(ordered),
-        lastActivity: ordered[ordered.length - 1].date,
+        // The newest known date: undated messages sort last, so skip them.
+        lastActivity:
+          [...ordered].reverse().find(message => message.date !== null)?.date ??
+          null,
       };
     } finally {
       if (wrapper) {
@@ -1056,8 +1132,13 @@ export class EmailService {
           operation: "createDraft",
           service: "EmailService",
         },
+        // Shape only: subject, body and addresses are mail content.
         {
-          composition,
+          folder,
+          recipients:
+            composition.to.length +
+            (composition.cc?.length ?? 0) +
+            (composition.bcc?.length ?? 0),
           error: error instanceof Error ? error.message : String(error),
         },
       );

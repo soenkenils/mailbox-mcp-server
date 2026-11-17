@@ -116,22 +116,28 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ## Available Tools
 
+Every tool carries [MCP tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-annotations): a human-readable title plus hints that tell the client whether the tool only reads (`readOnlyHint`), can destroy data (`destructiveHint`), is safe to repeat (`idempotentHint`) and reaches outside your mailbox (`openWorldHint`). Clients use them to decide what to run freely and what to confirm with you first. The "Hints" column below summarises them for email and Sieve; the calendar reads (`get_calendar_events`, `search_calendar`, `get_free_busy`) are read-only, `create_calendar_event` is additive, `update_calendar_event` and `delete_calendar_event` are destructive, and all three calendar writes are open-world because they can email participants when asked to.
+
+Each input schema is closed (`additionalProperties: false`). Undeclared arguments are ignored: they are dropped before validation, never reach the mail, calendar or Sieve server, and only their names are logged at debug level. Declared arguments are validated as before. `update_calendar_event` and `delete_calendar_event` are the exception and refuse undeclared arguments, so an edit is never reported for a field that was not applied.
+
 ### **Email Tools**
 
-#### **Reading & Search**
-- **`search_emails`** - Search your mailbox by text, sender, date, and flags (read/unread, flagged, etc.)
-- **`get_email`** - Retrieve complete email content by UID
-- **`get_email_thread`** - Get conversation threads by message ID
-- **`get_folders`** - List all available email folders
+| Tool | What it does | Hints | Typed output |
+| --- | --- | --- | --- |
+| **`search_emails`** | Search one folder, newest first. `query` matches subject or body; `from:address` / `to:address` match a sender or recipient; the word `OR` (any case) between spaces separates alternatives, e.g. `from:alice@example.com OR invoice`; a phrase in double quotes is searched literally, OR and `from:` included (`"rock or roll"`). Optional `since`/`before` dates and the flag filters `seen`, `answered`, `flagged`, `draft`, `deleted` (`true` = only with the flag, `false` = only without, omit = both) narrow the whole query. Returns headers with flags; `limit` (1-200, default 50) and `offset` page through the matches, and the result says how many matched and which offset comes next | read-only | `messages` (each with `flags` and `unread`), `total`, `nextOffset` while pages remain |
+| **`get_email`** | One message in full by UID, with attachment metadata. UIDs are per folder | read-only | `found`, `message` (headers, `cc`, `body`, `attachments`) |
+| **`get_email_thread`** | Every message in a conversation, found by the Message-ID of any message in it; bodies are shortened to 200 characters | read-only | `found`, `subject`, `participants`, `lastActivity`, `messages` (`uid`, `preview`, `truncated`) |
+| **`get_folders`** | Every folder with its path, flags and special-use role | read-only | `folders` |
+| **`send_email`** | Send a message over SMTP immediately; needs `text` or `html` | destructive, open-world | `success`, `messageId` |
+| **`create_draft`** | Save a message to Drafts without sending it; the body may be empty | additive | `success`, `uid`, `folder` |
+| **`move_email`** | Move one message to another folder (it gets a new UID there) | idempotent | – |
+| **`mark_email`** | Add or remove flags: `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, `\Draft` (server keywords such as `\Junk` are accepted too; `\Recent` is refused, the server owns it) | idempotent | – |
+| **`delete_email`** | Move one message to the trash, or with `permanent: true` expunge it | destructive | – |
+| **`create_directory`** | Create a folder, optionally under an existing `parentPath` | additive | – |
 
-#### **Composition & Sending**
-- **`send_email`** - Compose and send emails with attachments
-- **`create_draft`** - Save email drafts for later editing
+Mail content in tool results is third-party data. `search_emails`, `get_email` and `get_email_thread` say so at the top of their text, and each message body is fenced between `--- BEGIN EMAIL BODY <marker> ---` and `--- END EMAIL BODY <marker> ---` lines with a random marker, so a message cannot pass itself off as instructions by closing the fence early.
 
-#### **Email Management**
-- **`move_email`** - Move emails between folders
-- **`mark_email`** - Mark emails as read/unread, flag as important
-- **`delete_email`** - Delete emails (move to trash or permanent)
+**Typed output.** The tools with a "Typed output" entry return [`structuredContent`](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#structured-content) that matches the `outputSchema` they declare, next to the same text as before, so a client can read a UID or the next offset without parsing prose. Fields that carry mail content (subjects, display names, bodies, previews, attachment names) are described in the schema as untrusted third-party data. A message that does not exist is `found: false`. A message date is its `Date:` header, else the server's arrival date; when neither is usable it is `null` ("unknown date" in the text) rather than a made-up one. Tools that only acknowledge an action report it through `isError`.
 
 ### **Calendar Tools**
 
@@ -158,16 +164,15 @@ Calendars for update and delete are chosen like for create: exact display name, 
 
 Manage email filtering rules using the [Sieve language](https://tools.ietf.org/html/rfc5228) (RFC 5228) through the ManageSieve protocol.
 
-#### **Script Management**
-- **`list_sieve_scripts`** - List all Sieve filter scripts on the server
-- **`get_sieve_script`** - Retrieve the content of a specific Sieve script
-- **`create_sieve_filter`** - Create or update a Sieve filter script
-- **`delete_sieve_script`** - Delete a Sieve script from the server
-- **`activate_sieve_script`** - Activate a specific Sieve script (deactivates others)
-
-#### **Script Validation**
-- **`check_sieve_script`** - Validate Sieve script syntax without saving
-- **`get_sieve_capabilities`** - Get ManageSieve server capabilities and supported extensions
+| Tool | What it does | Hints |
+| --- | --- | --- |
+| **`list_sieve_scripts`** | List the scripts on the server and which one is active | read-only |
+| **`get_sieve_script`** | Return the source of one script | read-only |
+| **`create_sieve_filter`** | Save a script under a name (replacing one of that name) after the server has checked it; activates it unless `activate: false` | destructive, idempotent |
+| **`delete_sieve_script`** | Delete a script; the server refuses to delete the active one | destructive, idempotent |
+| **`activate_sieve_script`** | Make one script the active filter; the previous one stays stored but stops running | destructive, idempotent |
+| **`check_sieve_script`** | Check a script's syntax without saving it | read-only |
+| **`get_sieve_capabilities`** | Show the server's limits and supported Sieve extensions | read-only |
 
 #### **Example Use Cases**
 
@@ -202,6 +207,23 @@ if anyof (
 - "Create a filter to move all GitHub notifications to a Developer folder"
 - "Show me all my active Sieve filters"
 - "Validate this Sieve script for syntax errors"
+
+### **Prompts**
+
+Prompts are workflows you pick in the client (Claude Desktop lists them as attachable prompts or slash commands). They only write the opening request; the work is done by the tools above, which the client shows and asks you to approve as usual.
+
+- **`draft_reply`** (`uid`, optional `folder`): read one message with `get_email` and save a reply with `create_draft`, never sending it.
+- **`summarize_thread`** (`messageId`, optional `folder`): read a conversation with `get_email_thread` and summarise what was decided and what is still open.
+
+Both remind the model that the mail is third-party content.
+
+### **Resources**
+
+- **`mailbox://folders`** (`application/json`): the folder list `get_folders` returns, with path, delimiter, flags and special-use role, for clients that let you attach reference data without a tool call.
+
+### **Server Instructions**
+
+On connect the server sends short `instructions` that clients add to the model's context: folder names differ per account (call `get_folders`), UIDs are only valid in the folder they came from, and `search_emails` returns headers only.
 
 ## Configuration
 
@@ -289,6 +311,7 @@ The IMAP pool keeps one connection open while idle. The SMTP pool connects on de
 
 - `DEBUG`: Enable debug logging (default: `false`)
   - Must be `"true"` or `"false"`
+  - Tool calls are logged with the names and types of their arguments only, never their values, so mail content, recipients and Sieve scripts stay out of the log
 
 ### **Security Notes**
 
