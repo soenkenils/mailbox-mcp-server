@@ -1,10 +1,19 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 import {
   SmtpConnectionPool,
   type SmtpConnectionWrapper,
   type SmtpPoolConfig,
 } from "../src/services/SmtpConnectionPool.js";
 import type { SmtpConnection } from "../src/types/email.types.js";
+import type { WithPrivates } from "./helpers/privates.js";
 
 interface SendMailOptions {
   to?: string | string[];
@@ -16,9 +25,12 @@ interface SendMailOptions {
 }
 
 // Type for accessing pool internals in tests
-interface TestableSmtpConnectionPool extends SmtpConnectionPool {
-  connections: Map<string, SmtpConnectionWrapper>;
-}
+type TestableSmtpConnectionPool = WithPrivates<
+  SmtpConnectionPool,
+  {
+    connections: Map<string, SmtpConnectionWrapper>;
+  }
+>;
 
 // Mock Transporter
 class MockTransporter {
@@ -41,7 +53,7 @@ class MockTransporter {
     return this.isValid;
   }
 
-  async sendMail(options: SendMailOptions): Promise<{ messageId: string }> {
+  async sendMail(_options: SendMailOptions): Promise<{ messageId: string }> {
     if (this.shouldFailSend) {
       throw new Error("Failed to send email");
     }
@@ -207,7 +219,7 @@ describe("SmtpConnectionPool", () => {
     it("should detect invalid connections", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       const isValid = await pool.validateConnection(wrapper.connection);
@@ -219,7 +231,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle verification errors gracefully", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
       mockTransporter.verify = vi
         .fn()
         .mockRejectedValue(new Error("Network error"));
@@ -301,7 +313,7 @@ describe("SmtpConnectionPool", () => {
       const wrapper = await pool.acquire();
       wrapper.lastVerified = new Date(Date.now() - 2000); // Force verification
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       await pool.release(wrapper);
@@ -311,7 +323,8 @@ describe("SmtpConnectionPool", () => {
       expect(replacement.id).not.toBe(wrapper.id);
 
       // Check that failure was tracked
-      const connections = (pool as TestableSmtpConnectionPool).connections;
+      const connections = (pool as unknown as TestableSmtpConnectionPool)
+        .connections;
       const connection = connections.get(wrapper.id);
       expect(connection?.verificationFailures).toBeGreaterThan(0);
     });
@@ -324,15 +337,20 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
 
       // Access the connection directly from the pool's internal map
-      const connections = (pool as TestableSmtpConnectionPool).connections;
+      const connections = (pool as unknown as TestableSmtpConnectionPool)
+        .connections;
       const storedWrapper = connections.get(connectionId);
+      if (!storedWrapper) {
+        throw new Error(`Connection ${connectionId} is not in the pool`);
+      }
 
       // Set up the failure scenario
       storedWrapper.verificationFailures =
         (config.maxVerificationFailures || 2) - 1; // Set to 1 (max is 2)
       storedWrapper.lastVerified = new Date(Date.now() - 2000); // Force verification needed
 
-      const mockTransporter = storedWrapper.connection as MockTransporter;
+      const mockTransporter =
+        storedWrapper.connection as unknown as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       // Should destroy the connection and open a new one
@@ -394,7 +412,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle verification failures in verifyAllConnections", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
       mockTransporter.setShouldFailVerify(true);
 
       await pool.release(wrapper);
@@ -427,7 +445,9 @@ describe("SmtpConnectionPool", () => {
       await pool.destroyConnection(wrapper.connection);
 
       expect(closeSpy).toHaveBeenCalled();
-      expect(wrapper.connection.isValid).toBe(false);
+      expect((wrapper.connection as unknown as MockTransporter).isValid).toBe(
+        false,
+      );
 
       await pool.release(wrapper);
     });
@@ -435,7 +455,7 @@ describe("SmtpConnectionPool", () => {
     it("should handle close errors gracefully", async () => {
       const wrapper = await pool.acquire();
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
       mockTransporter.close = vi.fn(() => {
         throw new Error("Close failed");
       });
@@ -565,7 +585,7 @@ describe("SmtpConnectionPool", () => {
       const wrapper = await pool.acquire();
       wrapper.lastVerified = new Date(Date.now() - 2000);
 
-      const mockTransporter = wrapper.connection as MockTransporter;
+      const mockTransporter = wrapper.connection as unknown as MockTransporter;
 
       // First verification fails
       mockTransporter.setShouldFailVerify(true);

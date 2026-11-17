@@ -38,7 +38,11 @@ describe("email resources", () => {
       uri: FOLDERS_RESOURCE_URI,
       mimeType: "application/json",
     });
-    expect(JSON.parse(String(result.contents[0].text))).toEqual(folders);
+    const [content] = result.contents;
+    if (!content || !("text" in content)) {
+      throw new Error("Expected a text resource");
+    }
+    expect(JSON.parse(content.text)).toEqual(folders);
   });
 
   it("should surface a failed folder listing instead of an empty one", async () => {

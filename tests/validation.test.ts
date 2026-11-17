@@ -4,7 +4,6 @@ import {
   createCalendarEventSchema,
   createDirectorySchema,
   createDraftSchema,
-  deleteEmailSchema,
   getCalendarEventsSchema,
   getEmailSchema,
   getFreeBusySchema,

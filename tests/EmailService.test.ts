@@ -8,21 +8,25 @@ import type {
   EmailSearchOptions,
   ImapConnection,
 } from "../src/types/email.types.js";
+import type { WithPrivates } from "./helpers/privates.js";
 
-// Test helper interface for accessing private methods
-interface TestableEmailService extends EmailService {
-  parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
-  parseFullEmailMessage(
-    parsed: unknown,
-    message: unknown,
-    folder: string,
-  ): EmailMessage;
-  parseAddressesFromEnvelope(
-    addresses: unknown,
-  ): Array<{ name?: string; address: string }>;
-  buildSearchCriteria(options: unknown): unknown;
-  applyPagination(searchResult: number[], options: unknown): number[];
-}
+// Private methods of EmailService reached by these tests
+type TestableEmailService = WithPrivates<
+  EmailService,
+  {
+    parseEmailMessage(message: unknown, folder: string): EmailMessage | null;
+    parseFullEmailMessage(
+      parsed: unknown,
+      message: unknown,
+      folder: string,
+    ): EmailMessage;
+    parseAddressesFromEnvelope(
+      addresses: unknown,
+    ): Array<{ name?: string; address: string }>;
+    buildSearchCriteria(options: unknown): unknown;
+    applyPagination(searchResult: number[], options: unknown): number[];
+  }
+>;
 
 // Mock factories for cleaner test setup
 const createMockEmailMessage = (
@@ -64,9 +68,8 @@ const createMockCache = (): LocalCache => ({
   cleanup: vi.fn(),
   has: vi.fn(),
   size: vi.fn(),
-  destroy: vi.fn(),
   getStats: vi.fn(),
-  cleanupWithStaleRetention: vi.fn(),
+  keys: vi.fn(() => new Set<string>().values()),
 });
 
 const createMockConnection = (
@@ -181,9 +184,9 @@ describe("EmailService", () => {
   describe("buildSearchCriteria", () => {
     // Access the private method for testing
     const buildSearchCriteria = (options: EmailSearchOptions) => {
-      return (emailService as TestableEmailService).buildSearchCriteria(
-        options,
-      );
+      return (
+        emailService as unknown as TestableEmailService
+      ).buildSearchCriteria(options);
     };
 
     it("should return all for empty options", () => {
@@ -633,7 +636,7 @@ describe("EmailService", () => {
 
       const result = await emailService.searchEmails({ query: "test" });
 
-      expect(result.messages[0]?.date.toISOString()).toBe(
+      expect(result.messages[0]?.date?.toISOString()).toBe(
         "2024-01-01T10:00:00.000Z",
       );
     });
@@ -674,7 +677,7 @@ describe("EmailService", () => {
 
   describe("applyPagination", () => {
     const applyPagination = (searchResult: number[], options: unknown) =>
-      (emailService as TestableEmailService).applyPagination(
+      (emailService as unknown as TestableEmailService).applyPagination(
         searchResult,
         options,
       );
@@ -791,10 +794,9 @@ describe("EmailService", () => {
         },
         flags: ["Seen"],
       };
-      const result = (emailService as TestableEmailService).parseEmailMessage(
-        message,
-        "INBOX",
-      );
+      const result = (
+        emailService as unknown as TestableEmailService
+      ).parseEmailMessage(message, "INBOX");
       expect(result).toMatchObject({
         id: "msg-42",
         uid: 42,
@@ -810,10 +812,9 @@ describe("EmailService", () => {
 
     it("should return null if envelope is missing", () => {
       const message = { uid: 1 };
-      const result = (emailService as TestableEmailService).parseEmailMessage(
-        message,
-        "INBOX",
-      );
+      const result = (
+        emailService as unknown as TestableEmailService
+      ).parseEmailMessage(message, "INBOX");
       expect(result).toBeNull();
     });
 
@@ -830,10 +831,9 @@ describe("EmailService", () => {
         },
         flags: undefined,
       };
-      const result = (emailService as TestableEmailService).parseEmailMessage(
-        message,
-        "INBOX",
-      );
+      const result = (
+        emailService as unknown as TestableEmailService
+      ).parseEmailMessage(message, "INBOX");
       expect(result).toMatchObject({
         id: "msg-2",
         uid: 2,
@@ -853,10 +853,9 @@ describe("EmailService", () => {
       const message = createMockImapMessage({
         flags: new Set(["\\Seen", "\\Flagged"]),
       });
-      const result = (emailService as TestableEmailService).parseEmailMessage(
-        message,
-        "INBOX",
-      );
+      const result = (
+        emailService as unknown as TestableEmailService
+      ).parseEmailMessage(message, "INBOX");
       expect(Array.isArray(result?.flags)).toBe(true);
       expect(result?.flags).toEqual(["\\Seen", "\\Flagged"]);
     });
@@ -868,7 +867,7 @@ describe("EmailService", () => {
         flags: new Set(["\\Answered"]),
       });
       const result = (
-        emailService as TestableEmailService
+        emailService as unknown as TestableEmailService
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(Array.isArray(result.flags)).toBe(true);
       expect(result.flags).toEqual(["\\Answered"]);
@@ -879,7 +878,7 @@ describe("EmailService", () => {
         internalDate: new Date("2024-03-04T05:06:07Z"),
       });
       const result = (
-        emailService as TestableEmailService
+        emailService as unknown as TestableEmailService
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(result.date?.toISOString()).toBe("2024-03-04T05:06:07.000Z");
     });
@@ -887,7 +886,7 @@ describe("EmailService", () => {
     it("should leave the date unknown when there is no date at all", () => {
       const message = createMockImapMessage();
       const result = (
-        emailService as TestableEmailService
+        emailService as unknown as TestableEmailService
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(result.date).toBeNull();
     });
@@ -895,7 +894,7 @@ describe("EmailService", () => {
     it("should return an empty array when flags are missing", () => {
       const message = createMockImapMessage({ flags: undefined });
       const result = (
-        emailService as TestableEmailService
+        emailService as unknown as TestableEmailService
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(result.flags).toEqual([]);
     });
@@ -903,9 +902,9 @@ describe("EmailService", () => {
 
   describe("parseAddressesFromEnvelope", () => {
     const parseAddresses = (addresses: unknown) =>
-      (emailService as TestableEmailService).parseAddressesFromEnvelope(
-        addresses,
-      );
+      (
+        emailService as unknown as TestableEmailService
+      ).parseAddressesFromEnvelope(addresses);
 
     it("should handle array of addresses", () => {
       const input = [
@@ -977,10 +976,9 @@ describe("EmailService", () => {
         flags: null,
       };
 
-      const result = (emailService as TestableEmailService).parseEmailMessage(
-        message,
-        "INBOX",
-      );
+      const result = (
+        emailService as unknown as TestableEmailService
+      ).parseEmailMessage(message, "INBOX");
 
       expect(result).toMatchObject({
         uid: 1,
@@ -994,9 +992,9 @@ describe("EmailService", () => {
 
     it("should handle boundary conditions for search criteria", () => {
       const buildSearchCriteria = (options: unknown) => {
-        return (emailService as TestableEmailService).buildSearchCriteria(
-          options,
-        );
+        return (
+          emailService as unknown as TestableEmailService
+        ).buildSearchCriteria(options);
       };
 
       // Test very long query
@@ -1014,9 +1012,9 @@ describe("EmailService", () => {
   describe("additional edge cases", () => {
     it("should handle complex search criteria combinations", () => {
       const buildSearchCriteria = (options: unknown) => {
-        return (emailService as TestableEmailService).buildSearchCriteria(
-          options,
-        );
+        return (
+          emailService as unknown as TestableEmailService
+        ).buildSearchCriteria(options);
       };
 
       // Test multiple criteria combinations
@@ -1033,9 +1031,9 @@ describe("EmailService", () => {
 
     it("should handle malformed address parsing edge cases", () => {
       const parseAddresses = (addresses: unknown) =>
-        (emailService as TestableEmailService).parseAddressesFromEnvelope(
-          addresses,
-        );
+        (
+          emailService as unknown as TestableEmailService
+        ).parseAddressesFromEnvelope(addresses);
 
       // Test falsy values return empty array
       expect(parseAddresses(null)).toEqual([]);

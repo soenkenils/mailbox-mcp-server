@@ -4,6 +4,7 @@ import type { ServerConfig } from "../src/config/config.js";
 import { SieveService } from "../src/services/SieveService.js";
 import { handleSieveTool } from "../src/tools/sieveTools.js";
 import { SieveError } from "../src/types/sieve.types.js";
+import { textOf } from "./helpers/toolResult.js";
 
 vi.mock("../src/services/Logger.js", () => ({
   createLogger: vi.fn(() => ({
@@ -42,7 +43,7 @@ describe("sieve tools reject unsafe script names", () => {
   ])("%s", async (tool, args) => {
     const result = await call(tool, args);
     expect(result.isError).toBe(true);
-    const text = String(result.content[0].text);
+    const text = textOf(result);
     expect(text).toMatch(/must not contain control characters/);
     expect(text).not.toMatch(/ECONNREFUSED|connect/i);
   });
@@ -50,7 +51,7 @@ describe("sieve tools reject unsafe script names", () => {
   it("rejects names longer than 100 characters", async () => {
     const result = await call("get_sieve_script", { name: "a".repeat(101) });
     expect(result.isError).toBe(true);
-    expect(String(result.content[0].text)).not.toMatch(/ECONNREFUSED/);
+    expect(textOf(result)).not.toMatch(/ECONNREFUSED/);
   });
 });
 
@@ -91,7 +92,7 @@ describe("sieve tool error reporting", () => {
     );
     const result = await call("get_sieve_script", { name: "x" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toBe(
+    expect(textOf(result)).toBe(
       "Error: Failed to get script 'x': There is no script by that name [NONEXISTENT]",
     );
   });
@@ -102,8 +103,6 @@ describe("sieve tool error reporting", () => {
       new SieveError("Failed to get script 'x': nope", status),
     );
     const result = await call("get_sieve_script", { name: "x" });
-    expect(result.content[0].text).toBe(
-      "Error: Failed to get script 'x': nope",
-    );
+    expect(textOf(result)).toBe("Error: Failed to get script 'x': nope");
   });
 });

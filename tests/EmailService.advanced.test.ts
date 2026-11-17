@@ -1,3 +1,4 @@
+import type { ImapFlow } from "imapflow";
 import { type AddressObject, type ParsedMail, simpleParser } from "mailparser";
 import {
   afterEach,
@@ -10,27 +11,31 @@ import {
 } from "vitest";
 import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import { EmailService } from "../src/services/EmailService.js";
+import type { ImapConnectionWrapper } from "../src/services/ImapConnectionPool.js";
 import type { LocalCache } from "../src/types/cache.types.js";
 import type {
   EmailComposition,
   EmailFolder,
   ImapConnection,
-  ImapConnectionWrapper,
 } from "../src/types/email.types.js";
+import type { WithPrivates } from "./helpers/privates.js";
 
-// Test helper interface for accessing private methods
-interface TestableEmailService extends EmailService {
-  isConnectionError(error: unknown): boolean;
-  buildEmailContent(composition: EmailComposition): Promise<Buffer>;
-  tryGetStaleCache<T>(key: string): T | null;
-  clearFolderCache(folder: string): void;
-  parseAddressesFromEnvelope(
-    addresses: unknown,
-  ): Array<{ name?: string; address: string }>;
-  parseAddressesFromParsed(
-    addresses: unknown,
-  ): Array<{ name?: string; address: string }>;
-}
+// Private methods of EmailService reached by these tests
+type TestableEmailService = WithPrivates<
+  EmailService,
+  {
+    isConnectionError(error: unknown): boolean;
+    buildEmailContent(composition: EmailComposition): Promise<Buffer>;
+    tryGetStaleCache<T>(key: string): T | null;
+    clearFolderCache(folder: string): void;
+    parseAddressesFromEnvelope(
+      addresses: unknown,
+    ): Array<{ name?: string; address: string }>;
+    parseAddressesFromParsed(
+      addresses: unknown,
+    ): Array<{ name?: string; address: string }>;
+  }
+>;
 
 // Mock factories
 const createMockCache = (): LocalCache => ({
@@ -42,9 +47,8 @@ const createMockCache = (): LocalCache => ({
   cleanup: vi.fn(),
   has: vi.fn(),
   size: vi.fn(),
-  destroy: vi.fn(),
   getStats: vi.fn(),
-  cleanupWithStaleRetention: vi.fn(),
+  keys: vi.fn(() => new Set<string>().values()),
 });
 
 const createMockConnection = (
@@ -76,8 +80,13 @@ const createMockConnectionWrapper = (
         created: true,
       })),
     list: vi.fn(),
-  } as any,
-  folder: "INBOX",
+  } as unknown as ImapFlow,
+  id: "test-connection",
+  createdAt: new Date(),
+  lastUsed: new Date(),
+  isHealthy: true,
+  inUse: true,
+  selectedFolder: "INBOX",
   ...overrides,
 });
 
@@ -158,13 +167,16 @@ describe("EmailService - Advanced Coverage", () => {
       maxConnections: 5,
       acquireTimeoutMs: 5000,
       idleTimeoutMs: 30000,
+      maxRetries: 3,
+      retryDelayMs: 1000,
+      healthCheckIntervalMs: 60000,
     };
 
     service = new EmailService(
       mockImapConnection,
       mockCache,
       poolConfig,
-    ) as TestableEmailService;
+    ) as unknown as TestableEmailService;
 
     // Reset mock implementations
     mockPool.getMetrics.mockReturnValue({
@@ -336,31 +348,37 @@ describe("EmailService - Advanced Coverage", () => {
   });
 
   describe("clearFolderCache", () => {
-    it("should clear cache entries matching folder pattern", () => {
-      const mockHas = vi.fn();
-      const mockDelete = vi.fn();
+    it("should delete only cache entries for the given folder", () => {
+      mockCache.keys = vi
+        .fn()
+        .mockReturnValue(
+          [
+            'email_search:{"folder":"INBOX","limit":10}',
+            'email_search:{"folder":"Archive","limit":10}',
+            "email:INBOX:42",
+            "email:Archive:7",
+            "thread:INBOX:abc",
+            "email_folders",
+          ].values(),
+        );
 
-      // Mock cache.has to return Map-like iterator
-      mockHas.mockReturnValue(true);
-      mockCache.has = mockHas;
-      mockCache.delete = mockDelete;
-
-      // We need to mock the internal cache keys iteration
-      // This is a bit tricky since we don't have direct access to internal cache
-      // For now, we'll just verify the method can be called without error
       service.clearFolderCache("INBOX");
 
-      // The method should execute without throwing
-      expect(true).toBe(true);
+      expect(mockCache.delete).toHaveBeenCalledTimes(3);
+      expect(mockCache.delete).toHaveBeenCalledWith(
+        'email_search:{"folder":"INBOX","limit":10}',
+      );
+      expect(mockCache.delete).toHaveBeenCalledWith("email:INBOX:42");
+      expect(mockCache.delete).toHaveBeenCalledWith("thread:INBOX:abc");
     });
 
-    it("should handle cache without has() method", () => {
-      // Create cache without has method
-      const cacheWithoutHas = { ...mockCache };
-      delete (cacheWithoutHas as any).has;
+    it("should skip clearing when cache has no keys() method", () => {
+      // Older cache implementations predate keys(); clearFolderCache checks
+      // for it rather than assuming it exists.
+      (mockCache as { keys?: LocalCache["keys"] }).keys = undefined;
 
-      // Should not throw
       expect(() => service.clearFolderCache("INBOX")).not.toThrow();
+      expect(mockCache.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -411,7 +429,7 @@ describe("EmailService - Advanced Coverage", () => {
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
 
       // Spy on clearFolderCache
-      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+      const clearSpy = vi.spyOn(service, "clearFolderCache");
 
       await service.moveEmail(123, "INBOX", "Archive");
 
@@ -440,7 +458,7 @@ describe("EmailService - Advanced Coverage", () => {
       mockWrapper.connection.messageMove = vi.fn().mockResolvedValue(false);
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
       mockPool.releaseFromFolder.mockResolvedValue(undefined);
-      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+      const clearSpy = vi.spyOn(service, "clearFolderCache");
 
       const result = await service.moveEmail(123, "INBOX", "NoSuchFolder");
 
@@ -671,7 +689,7 @@ describe("EmailService - Advanced Coverage", () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
 
-      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+      const clearSpy = vi.spyOn(service, "clearFolderCache");
 
       await service.markEmail(123, "INBOX", ["\\Seen"], "add");
 
@@ -997,7 +1015,7 @@ describe("EmailService - Advanced Coverage", () => {
       const mockWrapper = createMockConnectionWrapper();
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
 
-      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+      const clearSpy = vi.spyOn(service, "clearFolderCache");
 
       await service.deleteEmail(123, "INBOX", true);
 
@@ -1071,7 +1089,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       expect(result.success).toBe(true);
       expect(result.uid).toBe(456);
-      const appendCall = mockWrapper.connection.append.mock.calls[0];
+      const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
       expect(appendCall[0]).toBe("Drafts");
       expect(String(appendCall[1])).toContain("Draft Subject");
       expect(String(appendCall[1])).toContain("Draft content");
@@ -1093,7 +1111,7 @@ describe("EmailService - Advanced Coverage", () => {
       const result = await service.createDraft(composition);
 
       expect(result.success).toBe(true);
-      const appendCall = mockWrapper.connection.append.mock.calls[0];
+      const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
       expect(String(appendCall[1])).toContain("Content-Type: text/html");
       expect(String(appendCall[1])).toContain("<p>HTML content</p>");
     });
@@ -1112,7 +1130,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       await service.createDraft(composition, "Custom Drafts");
 
-      const appendCall = mockWrapper.connection.append.mock.calls[0];
+      const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
       expect(appendCall[0]).toBe("Custom Drafts");
       expect(appendCall[2]).toEqual(["\\Draft"]);
     });
@@ -1133,7 +1151,7 @@ describe("EmailService - Advanced Coverage", () => {
 
       await service.createDraft(composition);
 
-      const appendCall = mockWrapper.connection.append.mock.calls[0];
+      const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
       expect(String(appendCall[1])).toMatch(/^Cc: cc@example\.com\r$/im);
       expect(String(appendCall[1])).toMatch(/^Bcc: bcc@example\.com\r$/im);
     });
@@ -1143,7 +1161,7 @@ describe("EmailService - Advanced Coverage", () => {
       mockWrapper.connection.append = vi.fn().mockResolvedValue({ uid: 456 });
       mockPool.acquireForFolder.mockResolvedValue(mockWrapper);
 
-      const clearSpy = vi.spyOn(service as any, "clearFolderCache");
+      const clearSpy = vi.spyOn(service, "clearFolderCache");
 
       const composition: EmailComposition = {
         to: [{ address: "recipient@example.com" }],
@@ -1204,7 +1222,7 @@ describe("EmailService - Advanced Coverage", () => {
         { name: "INBOX", path: "INBOX", delimiter: "/", flags: [] },
       ];
       const mockGet = vi.fn().mockReturnValue(cachedFolders);
-      (service as any).cache.get = mockGet;
+      mockCache.get = mockGet;
 
       const result = await service.getFolders();
 
@@ -1216,8 +1234,8 @@ describe("EmailService - Advanced Coverage", () => {
     it("should fetch folders from IMAP when not cached", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
       const mockSet = vi.fn();
-      (service as any).cache.get = mockGet;
-      (service as any).cache.set = mockSet;
+      mockCache.get = mockGet;
+      mockCache.set = mockSet;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi.fn().mockResolvedValue([
@@ -1251,9 +1269,9 @@ describe("EmailService - Advanced Coverage", () => {
       const mockGet = vi.fn().mockReturnValue(null);
       const mockSet = vi.fn();
       const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
-      (service as any).cache.set = mockSet;
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.get = mockGet;
+      mockCache.set = mockSet;
+      mockCache.getStale = mockGetStale;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi.fn().mockResolvedValue([
@@ -1261,7 +1279,7 @@ describe("EmailService - Advanced Coverage", () => {
           name: "INBOX",
           path: "INBOX",
           delimiter: "/",
-          flags: "not-an-array" as any, // Invalid flags
+          flags: "not-an-array", // Invalid flags
         },
       ]);
       mockPool.acquire.mockResolvedValue(mockWrapper);
@@ -1276,9 +1294,9 @@ describe("EmailService - Advanced Coverage", () => {
       const mockGet = vi.fn().mockReturnValue(null);
       const mockSet = vi.fn();
       const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
-      (service as any).cache.set = mockSet;
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.get = mockGet;
+      mockCache.set = mockSet;
+      mockCache.getStale = mockGetStale;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi.fn().mockResolvedValue([
@@ -1298,7 +1316,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should return stale cache on connection error", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
+      mockCache.get = mockGet;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi
@@ -1311,7 +1329,7 @@ describe("EmailService - Advanced Coverage", () => {
         { name: "INBOX", path: "INBOX", delimiter: "/", flags: [] },
       ];
       const mockGetStale = vi.fn().mockReturnValue(staleFolders);
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.getStale = mockGetStale;
 
       const result = await service.getFolders();
 
@@ -1324,7 +1342,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should surface a connection error without cache instead of guessing folders", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
+      mockCache.get = mockGet;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi
@@ -1334,7 +1352,7 @@ describe("EmailService - Advanced Coverage", () => {
       mockPool.release.mockResolvedValue(undefined);
 
       const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.getStale = mockGetStale;
 
       // A made-up INBOX/Sent/Drafts/Trash list would read as the real one.
       await expect(service.getFolders()).rejects.toThrow("Connection timeout");
@@ -1343,7 +1361,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     it("should throw non-connection errors", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
+      mockCache.get = mockGet;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi
@@ -1353,14 +1371,14 @@ describe("EmailService - Advanced Coverage", () => {
       mockPool.release.mockResolvedValue(undefined);
 
       const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.getStale = mockGetStale;
 
       await expect(service.getFolders()).rejects.toThrow("Invalid credentials");
     });
 
     it("should release connection even on error", async () => {
       const mockGet = vi.fn().mockReturnValue(null);
-      (service as any).cache.get = mockGet;
+      mockCache.get = mockGet;
 
       const mockWrapper = createMockConnectionWrapper();
       mockWrapper.connection.list = vi
@@ -1370,7 +1388,7 @@ describe("EmailService - Advanced Coverage", () => {
       mockPool.release.mockResolvedValue(undefined);
 
       const mockGetStale = vi.fn().mockReturnValue(null);
-      (service as any).cache.getStale = mockGetStale;
+      mockCache.getStale = mockGetStale;
 
       try {
         await service.getFolders();
@@ -1560,7 +1578,7 @@ describe("EmailService - Advanced Coverage", () => {
 
     const wrapperWithFetchOne = (fetchOne: Mock) =>
       createMockConnectionWrapper({
-        connection: { fetchOne } as any,
+        connection: { fetchOne } as unknown as ImapFlow,
         isHealthy: true,
       } as Partial<ImapConnectionWrapper>);
 

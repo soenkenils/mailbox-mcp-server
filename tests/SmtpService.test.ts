@@ -1,7 +1,6 @@
 import { simpleParser } from "mailparser";
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import type {
   SmtpConnectionWrapper,
   SmtpPoolConfig,
@@ -11,17 +10,23 @@ import type {
   EmailComposition,
   SmtpConnection,
 } from "../src/types/email.types.js";
+import type { WithPrivates } from "./helpers/privates.js";
 
 // Type for accessing service internals in tests
-interface TestableSmtpService extends SmtpService {
-  pool: {
-    acquire: Mock;
-    release: Mock;
-    destroy: Mock;
-    getSmtpMetrics: Mock;
-    getMetrics: Mock;
-  };
-}
+type TestableSmtpService = WithPrivates<
+  SmtpService,
+  {
+    pool: {
+      acquire: Mock;
+      release: Mock;
+      destroy: Mock;
+      getSmtpMetrics: Mock;
+      getMetrics: Mock;
+      verifyAllConnections: Mock;
+      connectionConfig: SmtpConnection;
+    };
+  }
+>;
 
 // Mock factories for cleaner test setup
 const createMockSmtpConnection = (
@@ -63,6 +68,7 @@ describe("SmtpService", () => {
     destroy: Mock;
     getSmtpMetrics: Mock;
     getMetrics: Mock;
+    verifyAllConnections: Mock;
   };
   let mockWrapper: SmtpConnectionWrapper;
   let mockSendMail: Mock;
@@ -83,7 +89,7 @@ describe("SmtpService", () => {
         sendMail: mockSendMail,
         verify: mockVerify,
         close: mockClose,
-      },
+      } as unknown as Transporter,
       id: "mock-wrapper-id",
       inUse: false,
       isHealthy: true,
@@ -145,7 +151,7 @@ describe("SmtpService", () => {
     smtpService = new SmtpService(mockConnection, mockPoolConfig);
 
     // Get the mock pool instance
-    mockPool = (smtpService as TestableSmtpService).pool;
+    mockPool = (smtpService as unknown as TestableSmtpService).pool;
 
     // Setup default successful responses
     mockSendMail.mockResolvedValue({
@@ -358,7 +364,7 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition();
 
       // Setup the mock pool for this service instance
-      const servicePool = (service as TestableSmtpService).pool;
+      const servicePool = (service as unknown as TestableSmtpService).pool;
       servicePool.acquire.mockResolvedValue(mockWrapper);
       servicePool.release.mockResolvedValue(undefined);
       servicePool.connectionConfig = connection;
@@ -395,7 +401,7 @@ describe("SmtpService", () => {
       const composition = createMockEmailComposition();
 
       // Setup the mock pool for this service instance
-      const servicePool = (service as TestableSmtpService).pool;
+      const servicePool = (service as unknown as TestableSmtpService).pool;
       servicePool.acquire.mockResolvedValue(mockWrapper);
       servicePool.release.mockResolvedValue(undefined);
       servicePool.connectionConfig = connection;
