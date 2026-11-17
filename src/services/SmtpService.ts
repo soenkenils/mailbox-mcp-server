@@ -58,6 +58,12 @@ function isNetworkError(error: unknown): boolean {
   );
 }
 
+// Replaces anything shaped like an email address, so a server's reply that
+// quotes a recipient does not carry it into the logs.
+function redactAddresses(text: string): string {
+  return text.replace(/[^\s<>"'@,;:]+@[^\s<>"',;]+/g, "[address]");
+}
+
 export class SmtpService {
   private pool: SmtpConnectionPool;
   private logger = createLogger("SmtpService");
@@ -107,6 +113,10 @@ export class SmtpService {
       if (wrapper && isNetworkError(error)) {
         wrapper.isHealthy = false;
       }
+      // Shape only: the logger forwards to stderr and to the MCP client's log
+      // stream, and recipients, subject and body are the user's mail.
+      const { code, responseCode } =
+        (error as { code?: unknown; responseCode?: unknown } | null) ?? {};
       await this.logger.error(
         "Failed to send email",
         {
@@ -114,8 +124,20 @@ export class SmtpService {
           service: "SmtpService",
         },
         {
-          composition,
-          error: error instanceof Error ? error.message : String(error),
+          recipients:
+            composition.to.length +
+            (composition.cc?.length ?? 0) +
+            (composition.bcc?.length ?? 0),
+          subjectLength: composition.subject.length,
+          hasText: Boolean(composition.text),
+          hasHtml: Boolean(composition.html),
+          attachments: composition.attachments?.length ?? 0,
+          code,
+          responseCode,
+          // A rejection names the refused recipient, e.g. "550 <bob@x>: ..."
+          error: redactAddresses(
+            error instanceof Error ? error.message : String(error),
+          ),
         },
       );
       return {

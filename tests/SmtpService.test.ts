@@ -280,6 +280,54 @@ describe("SmtpService", () => {
       expect(result.messageId).toBeUndefined();
     });
 
+    // The logger forwards to stderr and to the MCP client's log stream, so a
+    // failed send must log its shape only, never the mail itself.
+    it("should log only the shape of a failed send", async () => {
+      const logError = vi.spyOn(
+        (smtpService as unknown as { logger: { error: Mock } }).logger,
+        "error",
+      );
+      mockSendMail.mockRejectedValue(
+        Object.assign(
+          new Error(
+            "Can't send mail - all recipients were rejected: 550 5.1.1 <secret-recipient@example.com>: Recipient address rejected",
+          ),
+          { code: "EENVELOPE", responseCode: 550 },
+        ),
+      );
+
+      await smtpService.sendEmail(
+        createMockEmailComposition({
+          to: [
+            { name: "Secret Name", address: "secret-recipient@example.com" },
+          ],
+          cc: [{ address: "secret-cc@example.com" }],
+          bcc: [{ address: "secret-bcc@example.com" }],
+          subject: "Confidential subject",
+          text: "Confidential body",
+          html: "<p>Confidential html</p>",
+          attachments: [
+            { filename: "secret.pdf", content: "Confidential attachment" },
+          ],
+        }),
+      );
+
+      expect(logError).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(logError.mock.calls);
+      expect(logged).not.toMatch(/secret|confidential/i);
+      expect(logError.mock.calls[0][2]).toEqual({
+        recipients: 3,
+        subjectLength: "Confidential subject".length,
+        hasText: true,
+        hasHtml: true,
+        attachments: 1,
+        code: "EENVELOPE",
+        responseCode: 550,
+        error:
+          "Can't send mail - all recipients were rejected: 550 5.1.1 <[address]>: Recipient address rejected",
+      });
+    });
+
     it("should handle non-Error exceptions", async () => {
       const composition = createMockEmailComposition();
       mockSendMail.mockRejectedValue("String error");
