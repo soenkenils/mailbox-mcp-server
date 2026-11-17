@@ -11,6 +11,12 @@ import {
   ValidationError,
 } from "../types/errors.js";
 import {
+  cancelledResult,
+  isCancelled,
+  type ToolContext,
+} from "../types/tool.types.js";
+import { dropUndeclaredArgs, summarizeArgs } from "../utils/toolArgs.js";
+import {
   createCalendarEventSchema,
   deleteCalendarEventSchema,
   getCalendarEventsSchema,
@@ -38,10 +44,23 @@ export function isCalendarTool(name: string): name is CalendarToolName {
   return CALENDAR_TOOLS.includes(name as CalendarToolName);
 }
 
-export function createCalendarTools(_calendarService: CalendarService): Tool[] {
+/**
+ * Behavioural hints (MCP tool annotations). Reads are safe to run freely.
+ * The writes are marked open-world because, when asked to, the server emails
+ * invitations, updates or cancellations to other people; update and delete
+ * are destructive, since overwritten fields and deleted events are gone.
+ */
+const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+
+// The service is not needed to describe the tools; the parameter stays for
+// callers that pass it.
+export function createCalendarTools(
+  _calendarService?: CalendarService,
+): Tool[] {
   return [
     {
       name: "get_calendar_events",
+      annotations: { ...READ_ONLY, title: "List calendar events" },
       description:
         "Get calendar events from mailbox.org calendar within a date range. Recurring events are listed once per occurrence. Each event shows the UID that update_calendar_event and delete_calendar_event take; an occurrence of a recurring series shows the series UID and an Occurrence line, and those tools change the whole series.",
       inputSchema: {
@@ -83,6 +102,7 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
     {
       name: "search_calendar",
+      annotations: { ...READ_ONLY, title: "Search calendar" },
       description:
         "Search calendar events by text query in title, description, or location. Each event shows the UID that update_calendar_event and delete_calendar_event take (for an occurrence of a recurring series: the series UID; those tools change the whole series).",
       inputSchema: {
@@ -129,6 +149,7 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
     {
       name: "get_free_busy",
+      annotations: { ...READ_ONLY, title: "Check availability" },
       description: "Get free/busy information for scheduling appointments",
       inputSchema: {
         type: "object",
@@ -155,6 +176,13 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
     {
       name: "create_calendar_event",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+        title: "Create a calendar event",
+      },
       description:
         "Create an event in a mailbox.org calendar and return its UID. Calling twice creates two events. Attendees: by default nobody is notified; attendees are only recorded on the event. Set sendInvitations to true only when the user explicitly asked to invite people: the server may then email an invitation to every attendee.",
       inputSchema: {
@@ -226,6 +254,13 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
     {
       name: "update_calendar_event",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+        title: "Change a calendar event",
+      },
       description:
         "Change an existing calendar event, found by its UID (from get_calendar_events, search_calendar or create_calendar_event). Only the fields you pass change; alarms, recurrence and everything else are kept. Overwritten values cannot be restored. A recurring event changes as a WHOLE SERIES: there is no way to change a single occurrence, and occurrence ids (UID:date) are refused. Moving a recurring series is refused. By default nobody is notified: new attendees are only recorded, and a meeting with attendees that you organize, or whose organizer cannot be recognised as someone who invited you, is not changed. Set sendInvitations to true only when the user explicitly wants participants emailed: the server then sends invitations or updates. Events you were invited to by someone else cannot be changed.",
       inputSchema: {
@@ -299,6 +334,13 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
     {
       name: "delete_calendar_event",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+        title: "Delete a calendar event",
+      },
       description:
         "Permanently delete a calendar event, found by its UID (from get_calendar_events or search_calendar). This cannot be undone. A recurring event is deleted as a WHOLE SERIES with all its occurrences; occurrence ids (UID:date) are refused. By default nobody is notified: a meeting with attendees that you organize, or whose organizer cannot be recognised as someone who invited you, is not deleted, and for an invitation you received the server is asked not to send the organizer a decline. Set notifyParticipants to true only when the user explicitly wants that.",
       inputSchema: {
@@ -327,6 +369,17 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
     },
   ];
 }
+
+/** Writes whose validators reject undeclared arguments instead of dropping them. */
+const REJECTS_UNDECLARED = new Set<string>([
+  "update_calendar_event",
+  "delete_calendar_event",
+]);
+
+/** Advertised input schemas by tool name, for dropping undeclared arguments. */
+const INPUT_SCHEMAS = new Map(
+  createCalendarTools().map(tool => [tool.name, tool.inputSchema]),
+);
 
 /**
  * The UID update_calendar_event and delete_calendar_event take, and whether
@@ -363,9 +416,23 @@ const allDayRange = (startDate?: string, endDate?: string): string => {
 
 export async function handleCalendarTool(
   name: string,
-  args: Record<string, unknown>,
+  rawArgs: unknown,
   calendarService: CalendarService,
+  context?: ToolContext,
 ): Promise<CallToolResult> {
+  if (isCancelled(context)) {
+    return cancelledResult(name);
+  }
+
+  // Undeclared arguments are dropped before validation, so they can never
+  // reach the calendar service; declared ones are validated as before. The
+  // edits are the exception: their validators refuse unknown arguments on
+  // purpose, since quietly skipping, say, a `recurrence` the caller believes
+  // was applied would report a change that never happened.
+  const args = REJECTS_UNDECLARED.has(name)
+    ? (rawArgs ?? {})
+    : dropUndeclaredArgs(name, INPUT_SCHEMAS.get(name), rawArgs);
+
   try {
     switch (name) {
       case "get_calendar_events": {
@@ -632,7 +699,8 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
     const context: ErrorContext = {
       operation: name,
       service: "calendarTools",
-      details: { args },
+      // Shape only: event text and attendee addresses are personal data.
+      details: { args: summarizeArgs(args) },
     };
 
     // Handle validation errors specifically
@@ -643,7 +711,7 @@ ${freeSlots.length > 0 ? freeSlots.join("\n") : "No free times"}`,
       const validationError = new ValidationError(
         error.message.replace("Validation failed: ", ""),
         "input_validation",
-        args,
+        summarizeArgs(args),
         context,
       );
 

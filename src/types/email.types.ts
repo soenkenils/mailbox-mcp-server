@@ -17,6 +17,16 @@ export interface EmailSearchOptions {
   deleted?: boolean;
 }
 
+/**
+ * A page of search results plus the size of the full match set, so callers can
+ * tell "these are all of them" from "this is the first 50 of 800".
+ */
+export interface EmailSearchResult {
+  messages: EmailMessage[];
+  /** How many messages matched, before pagination. */
+  total: number;
+}
+
 export interface EmailMessage {
   id: string;
   uid: number;
@@ -37,7 +47,11 @@ export interface EmailMessage {
     name?: string;
     address: string;
   }>;
-  date: Date;
+  /**
+   * The Date header, else the server's arrival date; null when neither is
+   * usable rather than a made-up one.
+   */
+  date: Date | null;
   text?: string;
   html?: string;
   attachments?: Array<{
@@ -58,7 +72,8 @@ export interface EmailThread {
     name?: string;
     address: string;
   }>;
-  lastActivity: Date;
+  /** Date of the newest dated message; null when none has a date. */
+  lastActivity: Date | null;
 }
 
 export interface ImapConnection {
