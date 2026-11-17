@@ -282,28 +282,57 @@ try {
 
   // GreenMail has no Drafts folder, so the draft goes to the test folder. Its
   // subject avoids `subject`, which the move and delete checks count on.
-  const draftSubject = `Draft ${stamp}`;
+  const draftSubject = `Entwurf ${stamp} — Grüße`;
+  // Crafted to read as a further recipient if the name reached the header
+  // unescaped.
+  const craftedName = 'Jörg "Müller" <evil@example.com>, Bob';
   const saved = await call("create_draft", {
-    to: [{ name: "Joe Example", address: "joe@example.com" }],
+    to: [{ name: craftedName, address: "joe@example.com" }],
     bcc: [{ address: "hidden@example.com" }],
     subject: draftSubject,
-    text: "line 1\nline 2",
+    text: "Zeile 1\nZeile 2\n\nZeile 4",
+    html: "<p>Zeile 1</p>",
     folder,
   });
   const draftUid = Number(saved.text.match(/\*\*UID:\*\*\s*(\d+)/)?.[1]);
   const stored = await fetchStored(folder, draftUid);
-  const draft = await simpleParser(stored?.source ?? "");
+  const raw = stored?.source?.toString() ?? "";
+  const draft = await simpleParser(raw);
+  const rawHeaders = raw.slice(0, raw.indexOf("\r\n\r\n"));
   check(
     "draft is stored with the \\Draft flag",
     stored?.flags.includes("\\Draft") ?? false,
     `flags: ${stored?.flags.join(" ") || "(none)"}`,
   );
   check(
-    "draft keeps subject, recipient and Bcc",
+    "draft has the account as sender",
+    draft.from?.value[0]?.address === USER,
+    `From: ${draft.from?.text}`,
+  );
+  check(
+    "draft keeps an umlaut subject in encoded 7-bit headers",
     draft.subject === draftSubject &&
-      draft.to?.value[0]?.address === "joe@example.com" &&
-      draft.bcc?.text === "hidden@example.com",
+      rawHeaders.length > 0 &&
+      !/[^ -~\r\n\t]/.test(rawHeaders),
     `Subject: ${draft.subject}`,
+  );
+  check(
+    "draft keeps a crafted display name as one recipient",
+    draft.to?.value.length === 1 &&
+      draft.to.value[0].address === "joe@example.com" &&
+      draft.to.value[0].name === craftedName,
+    `To: ${draft.to?.text}`,
+  );
+  check("draft keeps its Bcc", draft.bcc?.text === "hidden@example.com");
+  check(
+    "draft keeps text and HTML with line breaks",
+    draft.text?.replace(/\r\n/g, "\n").trim() ===
+      "Zeile 1\nZeile 2\n\nZeile 4" &&
+      (draft.html || "").includes("<p>Zeile 1</p>"),
+  );
+  check(
+    "draft lines all end in CRLF",
+    raw.length > 0 && !/(?<!\r)\n/.test(raw),
   );
 
   await call("send_email", {
