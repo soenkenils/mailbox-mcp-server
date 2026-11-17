@@ -21,9 +21,10 @@ export const sanitizeString = (str: string): string => {
 };
 
 /**
- * For free text such as event descriptions, where line breaks and tabs are
- * content. Line endings are normalised to LF; the iCalendar layer produces
- * the escapes its format requires. Every other control character is removed.
+ * For free text such as mail bodies and event descriptions, where line breaks
+ * and tabs are content. Line endings are normalised to LF; the mail and
+ * iCalendar layers produce the CRLF and escapes their formats require. Every
+ * other control character is removed.
  */
 export const sanitizeMultilineString = (str: string): string =>
   str
@@ -126,7 +127,7 @@ const subjectSchema = v.pipe(
 const textContentSchema = v.pipe(
   v.string("Text content must be a string"),
   v.maxLength(1000000, "Text content too long"), // 1MB limit
-  v.transform(sanitizeString),
+  v.transform(sanitizeMultilineString),
 );
 
 // HTML content validation

@@ -177,6 +177,34 @@ describe("Email validation schemas", () => {
       expect(result.text).toBe("Test content");
     });
 
+    it("should keep line breaks and tabs in the text body", () => {
+      const result = validateInput(sendEmailSchema, {
+        ...validEmail,
+        text: "Hallo,\r\n\r\nzweiter Absatz.\n\tEingerückt\rGrüße",
+      });
+      expect(result.text).toBe(
+        "Hallo,\n\nzweiter Absatz.\n\tEingerückt\nGrüße",
+      );
+    });
+
+    it("should keep line breaks in a draft body", () => {
+      const result = validateInput(createDraftSchema, {
+        ...validEmail,
+        text: "Zeile 1\nZeile 2",
+      });
+      expect(result.text).toBe("Zeile 1\nZeile 2");
+    });
+
+    it("should still strip line breaks from the subject and names", () => {
+      const result = validateInput(sendEmailSchema, {
+        ...validEmail,
+        to: [{ name: "Eve\r\nBcc: x@evil.com", address: "test@example.com" }],
+        subject: "Hi\r\nBcc: victim@example.com",
+      });
+      expect(result.subject).toBe("HiBcc: victim@example.com");
+      expect(result.to[0].name).toBe("EveBcc: x@evil.com");
+    });
+
     it("should require at least one recipient", () => {
       expect(() => {
         validateInput(sendEmailSchema, { ...validEmail, to: [] });
