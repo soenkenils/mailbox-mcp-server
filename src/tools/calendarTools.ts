@@ -245,7 +245,7 @@ export function createCalendarTools(_calendarService: CalendarService): Tool[] {
           start: {
             type: "string",
             description:
-              "New start. Timed events: an ISO 8601 date-time with an offset or Z. All-day events: YYYY-MM-DD. If only start is passed, a timed event keeps its end and an all-day event becomes one day long.",
+              "New start. Timed events: an ISO 8601 date-time with an offset or Z. All-day events: YYYY-MM-DD. If only start is passed, the event keeps its length (timed and all-day).",
           },
           end: {
             type: "string",

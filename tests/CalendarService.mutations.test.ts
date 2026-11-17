@@ -1105,22 +1105,90 @@ describe("CalendarService event changes", () => {
       expect(event.end).toEqual(new Date("2025-06-21T10:30:00Z"));
     });
 
-    it("should keep the stored end when only the start moves, and refuse an inverted range", async () => {
+    it("should keep the duration when only the start of a timed event moves", async () => {
+      await makeService().updateCalendarEvent({
+        uid: "evt-1",
+        start: new Date("2025-06-20T12:00:00Z"),
+      });
+
+      const lines = linesOf(writtenData());
+      expect(lines).toContain("DTSTART:20250620T120000Z");
+      expect(lines).toContain("DTEND:20250620T130000Z");
+    });
+
+    it("should name the stored start when only the end is passed and falls before it", async () => {
       await expect(
         makeService().updateCalendarEvent({
           uid: "evt-1",
-          start: new Date("2025-06-20T12:00:00Z"),
+          end: new Date("2025-06-20T09:00:00Z"),
         }),
-      ).rejects.toThrow("Start date must be before end date");
+      ).rejects.toThrow(
+        "Start date must be before end date: the event's current start is 2025-06-20T10:00:00.000Z; pass start as well",
+      );
       expect(updateCalendarObject).not.toHaveBeenCalled();
+    });
+
+    describe("all-day events", () => {
+      const holiday = vcalendar([
+        "BEGIN:VEVENT",
+        "UID:evt-1",
+        "DTSTAMP:20250101T000000Z",
+        "DTSTART;VALUE=DATE:20250620",
+        "DTEND;VALUE=DATE:20250623",
+        "SUMMARY:Holiday",
+        "END:VEVENT",
+      ]);
+
+      it("should keep the length of a multi-day event when only its start moves", async () => {
+        objectsByCalendar[WORK_URL] = [stored(holiday)];
+
+        await makeService().updateCalendarEvent({
+          uid: "evt-1",
+          startDate: "2025-07-01",
+        });
+
+        const lines = linesOf(writtenData());
+        expect(lines).toContain("DTSTART;VALUE=DATE:20250701");
+        expect(lines).toContain("DTEND;VALUE=DATE:20250704");
+      });
+
+      it("should name the stored first day when only the last day is passed and falls before it", async () => {
+        objectsByCalendar[WORK_URL] = [stored(holiday)];
+
+        await expect(
+          makeService().updateCalendarEvent({
+            uid: "evt-1",
+            endDate: "2025-06-19",
+          }),
+        ).rejects.toThrow(
+          "The last day must not be before the first day: the event's current first day is 2025-06-20; pass start as well",
+        );
+      });
+    });
+
+    it.each([
+      ["allDay equal to its current value", { allDay: false }],
+      [
+        "the stored start and end",
+        {
+          start: new Date("2025-06-20T08:00:00Z"),
+          end: new Date("2025-06-20T09:00:00Z"),
+        },
+      ],
+    ])("should not take %s for moving a recurring series", async (_label, same) => {
+      objectsByCalendar[WORK_URL] = [stored(richSeries)];
 
       await makeService().updateCalendarEvent({
         uid: "evt-1",
-        start: new Date("2025-06-20T09:30:00Z"),
+        summary: "Renamed",
+        ...same,
       });
+
       const lines = linesOf(writtenData());
-      expect(lines).toContain("DTSTART:20250620T093000Z");
-      expect(lines).toContain("DTEND:20250620T110000Z");
+      expect(lines).toContain("SUMMARY:Renamed");
+      // Untouched, time zone included.
+      expect(lines).toContain("DTSTART;TZID=Europe/Berlin:20250620T100000");
+      expect(lines).toContain("DURATION:PT1H");
     });
 
     it("should turn a timed event into an all-day event from dates as written", async () => {

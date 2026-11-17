@@ -738,7 +738,10 @@ export class CalendarService {
 
   /**
    * Writes new times the way createCalendarEvent does: timed events in UTC,
-   * all-day events as dates with an exclusive DTEND.
+   * all-day events as dates with an exclusive DTEND. When only the start is
+   * passed, the event keeps its length. Values equal to the stored ones are
+   * no change, so passing them leaves the stored times (and a recurring
+   * series) untouched.
    */
   private applyTimeChange(
     vevent: ICAL.Component,
@@ -747,6 +750,91 @@ export class CalendarService {
     allDay: boolean,
     wasAllDay: boolean,
   ): void {
+    const switching = allDay !== wasAllDay;
+    if (switching && !(options.start || options.startDate)) {
+      throw new ValidationError(
+        "start is required when changing allDay",
+        "allDay",
+        options.allDay,
+      );
+    }
+
+    let next: { start: ICAL.Time; end: ICAL.Time };
+    let unchanged: boolean;
+    if (allDay) {
+      if (options.start || options.end) {
+        throw new ValidationError(
+          "All-day events take dates (YYYY-MM-DD) for start and end, not date-times",
+          "start",
+        );
+      }
+      const day = (date: string) => dayjs.utc(date);
+      const storedStart = wasAllDay ? event.startDate.toString() : undefined;
+      const storedEnd = wasAllDay ? event.endDate.toString() : undefined;
+      const startDate = options.startDate ?? (storedStart as string);
+      const endDate =
+        options.endDate ??
+        (switching || !storedStart || !storedEnd
+          ? day(startDate).add(1, "day").format("YYYY-MM-DD")
+          : day(storedEnd)
+              .add(day(startDate).diff(day(storedStart), "day"), "day")
+              .format("YYYY-MM-DD"));
+      if (endDate <= startDate) {
+        throw new ValidationError(
+          options.startDate
+            ? "The last day must not be before the first day"
+            : `The last day must not be before the first day: the event's current first day is ${startDate}; pass start as well`,
+          "end",
+        );
+      }
+      unchanged = startDate === storedStart && endDate === storedEnd;
+      next = {
+        start: ICAL.Time.fromDateString(startDate),
+        end: ICAL.Time.fromDateString(endDate),
+      };
+    } else {
+      if (options.startDate || options.endDate) {
+        throw new ValidationError(
+          "Timed events need a date-time for start and end, e.g. 2025-06-20T14:00+02:00; set allDay to true for an all-day event",
+          "start",
+        );
+      }
+      if (switching && !options.end) {
+        throw new ValidationError(
+          "end is required when turning an all-day event into a timed one",
+          "end",
+        );
+      }
+      const storedStart = event.startDate.toJSDate();
+      const storedEnd = event.endDate.toJSDate();
+      const start = options.start ?? storedStart;
+      const end =
+        options.end ??
+        new Date(
+          storedEnd.getTime() + (start.getTime() - storedStart.getTime()),
+        );
+      if (start >= end) {
+        throw new ValidationError(
+          options.start
+            ? "Start date must be before end date"
+            : `Start date must be before end date: the event's current start is ${start.toISOString()}; pass start as well`,
+          "start",
+          start.toISOString(),
+        );
+      }
+      unchanged =
+        !switching &&
+        start.getTime() === storedStart.getTime() &&
+        end.getTime() === storedEnd.getTime();
+      next = {
+        start: ICAL.Time.fromJSDate(start, true),
+        end: ICAL.Time.fromJSDate(end, true),
+      };
+    }
+
+    if (unchanged) {
+      return;
+    }
     if (event.isRecurring()) {
       // Times are written in UTC: a series kept in local time would move by
       // an hour across daylight-saving changes, and its overrides and
@@ -756,62 +844,8 @@ export class CalendarService {
         "start",
       );
     }
-    if (allDay !== wasAllDay && !(options.start || options.startDate)) {
-      throw new ValidationError(
-        "start is required when changing allDay",
-        "allDay",
-        options.allDay,
-      );
-    }
-
-    if (allDay) {
-      if (options.start || options.end) {
-        throw new ValidationError(
-          "All-day events take dates (YYYY-MM-DD) for start and end, not date-times",
-          "start",
-        );
-      }
-      const startDate =
-        options.startDate ?? (wasAllDay ? event.startDate.toString() : "");
-      const endDate =
-        options.endDate ??
-        (allDay === wasAllDay && !options.startDate
-          ? event.endDate.toString()
-          : dayjs.utc(startDate).add(1, "day").format("YYYY-MM-DD"));
-      if (endDate <= startDate) {
-        throw new ValidationError(
-          "The last day must not be before the first day",
-          "end",
-        );
-      }
-      this.setEventTime(vevent, "dtstart", ICAL.Time.fromDateString(startDate));
-      this.setEventTime(vevent, "dtend", ICAL.Time.fromDateString(endDate));
-      return;
-    }
-
-    if (options.startDate || options.endDate) {
-      throw new ValidationError(
-        "Timed events need a date-time for start and end, e.g. 2025-06-20T14:00+02:00; set allDay to true for an all-day event",
-        "start",
-      );
-    }
-    if (allDay !== wasAllDay && !options.end) {
-      throw new ValidationError(
-        "end is required when turning an all-day event into a timed one",
-        "end",
-      );
-    }
-    const start = options.start ?? event.startDate.toJSDate();
-    const end = options.end ?? event.endDate.toJSDate();
-    if (start >= end) {
-      throw new ValidationError(
-        "Start date must be before end date",
-        "start",
-        start.toISOString(),
-      );
-    }
-    this.setEventTime(vevent, "dtstart", ICAL.Time.fromJSDate(start, true));
-    this.setEventTime(vevent, "dtend", ICAL.Time.fromJSDate(end, true));
+    this.setEventTime(vevent, "dtstart", next.start);
+    this.setEventTime(vevent, "dtend", next.end);
   }
 
   private setEventTime(
