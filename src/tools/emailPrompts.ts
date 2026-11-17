@@ -1,9 +1,9 @@
 import {
-  ErrorCode,
   type GetPromptResult,
-  McpError,
   type Prompt,
-} from "@modelcontextprotocol/sdk/types.js";
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/server";
 
 /**
  * Prompts are user-controlled: the host surfaces them as slash commands, the
@@ -77,8 +77,8 @@ const requireUid = (value: string | undefined): number => {
   // Digits only: Number() would also accept "1e3", "0x10" or " 7".
   const uid = /^\d+$/.test(value ?? "") ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(uid) || uid < 1) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
       `Expected a positive integer UID, got ${JSON.stringify(value)}. Use search_emails to find one.`,
     );
   }
@@ -88,8 +88,8 @@ const requireUid = (value: string | undefined): number => {
 const requireText = (value: string | undefined, field: string): string => {
   const trimmed = value?.trim();
   if (!trimmed) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
       `Missing required argument: ${field}`,
     );
   }
@@ -134,6 +134,9 @@ export function handleEmailPrompt(
     }
 
     default:
-      throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        `Unknown prompt: ${name}`,
+      );
   }
 }

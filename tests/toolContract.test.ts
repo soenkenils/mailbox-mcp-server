@@ -1,11 +1,11 @@
 import {
   type CallToolRequest,
   type CallToolResult,
-  ErrorCode,
-  McpError,
+  ProtocolError,
+  ProtocolErrorCode,
   type Tool,
-} from "@modelcontextprotocol/sdk/types.js";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+} from "@modelcontextprotocol/server";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
 import { SERVER_INSTRUCTIONS } from "../src/main.js";
@@ -814,8 +814,8 @@ describe("unknownToolError", () => {
   it("should be a JSON-RPC InvalidParams error naming the tool", () => {
     const error = unknownToolError("no_such_tool");
 
-    expect(error).toBeInstanceOf(McpError);
-    expect(error.code).toBe(ErrorCode.InvalidParams);
+    expect(error).toBeInstanceOf(ProtocolError);
+    expect(error.code).toBe(ProtocolErrorCode.InvalidParams);
     expect(error.message).toContain("no_such_tool");
   });
 });

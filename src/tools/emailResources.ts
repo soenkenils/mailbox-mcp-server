@@ -1,9 +1,9 @@
 import {
-  ErrorCode,
-  McpError,
+  ProtocolError,
+  ProtocolErrorCode,
   type ReadResourceResult,
   type Resource,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/server";
 import type { EmailService } from "../services/EmailService.js";
 
 /** Canonical URI for the browsable folder listing. */
@@ -32,7 +32,10 @@ export async function readEmailResource(
   emailService: EmailService,
 ): Promise<ReadResourceResult> {
   if (uri !== FOLDERS_RESOURCE_URI) {
-    throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      `Unknown resource: ${uri}`,
+    );
   }
 
   const folders = await emailService.getFolders();

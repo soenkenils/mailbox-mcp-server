@@ -1,13 +1,13 @@
 import {
   type CallToolResult,
-  ErrorCode,
-  McpError,
-} from "@modelcontextprotocol/sdk/types.js";
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/server";
 
 /**
  * Per-call context the transport hands to a tool handler.
  *
- * The MCP SDK exposes this as `RequestHandlerExtra`, which carries transport
+ * The MCP SDK exposes this as `ServerContext`, which carries transport
  * internals the tools have no business knowing about. Narrowing it here keeps
  * the handlers testable with a plain object and leaves the SDK type at the
  * single point where the request is dispatched.
@@ -89,5 +89,5 @@ export const toolOutcome = (result: CallToolResult): { success: boolean } => ({
  * A call naming no tool this server has is a protocol error (JSON-RPC
  * InvalidParams), like an unknown prompt or resource, not a failed tool run.
  */
-export const unknownToolError = (name: string): McpError =>
-  new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
+export const unknownToolError = (name: string): ProtocolError =>
+  new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool: ${name}`);
