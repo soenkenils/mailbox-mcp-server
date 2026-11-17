@@ -13,7 +13,9 @@ import {
  * call.
  *
  * Prompt arguments are strings by protocol, so a UID arrives as text and is
- * validated here rather than trusted. Bad arguments are reported to the
+ * validated here rather than trusted, and free text is JSON-encoded where it
+ * is quoted, so an argument cannot close its quotes and add instructions of
+ * its own to the message. Bad arguments are reported to the
  * client as InvalidParams, not as an internal error.
  */
 export const EMAIL_PROMPTS = ["draft_reply", "summarize_thread"] as const;
@@ -72,8 +74,9 @@ const userMessage = (text: string): GetPromptResult => ({
 
 /** Arguments arrive as strings; a UID that is not a positive integer is a typo. */
 const requireUid = (value: string | undefined): number => {
-  const uid = Number(value);
-  if (!Number.isInteger(uid) || uid < 1) {
+  // Digits only: Number() would also accept "1e3", "0x10" or " 7".
+  const uid = /^\d+$/.test(value ?? "") ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(uid) || uid < 1) {
     throw new McpError(
       ErrorCode.InvalidParams,
       `Expected a positive integer UID, got ${JSON.stringify(value)}. Use search_emails to find one.`,
@@ -105,7 +108,7 @@ export function handleEmailPrompt(
 
       return userMessage(
         [
-          `Read the message with UID ${uid} in folder "${folder}" using get_email, then draft a reply to it.`,
+          `Read the message with UID ${uid} in folder ${JSON.stringify(folder)} using get_email, then draft a reply to it.`,
           "",
           "Quote only what you need for context, keep the tone consistent with the original, and address every question it raises.",
           "Save the result with create_draft rather than sending it, so it can be reviewed first.",
@@ -120,7 +123,7 @@ export function handleEmailPrompt(
 
       return userMessage(
         [
-          `Read the conversation containing Message-ID ${messageId} in folder "${folder}" using get_email_thread, then summarise it.`,
+          `Read the conversation containing Message-ID ${JSON.stringify(messageId)} in folder ${JSON.stringify(folder)} using get_email_thread, then summarise it.`,
           "",
           "Cover what was decided, what is still open, and who owes what to whom.",
           "Thread bodies come back truncated, so use get_email on a message's UID where the detail matters.",
