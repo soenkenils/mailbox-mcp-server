@@ -450,6 +450,7 @@ MCP_DEBUG=true MCP_INSPECTOR=true bun start
 
 - **`bun dev`** - Start development server with hot reloading
 - **`bun run build`** - Build for production
+- **`bun run typecheck`** - Type-check `src/` and `tests/` (`build` covers `src/` only)
 - **`bun start`** - Start production server
 - **`bun run test`** - Run test suite
 - **`bun run test:unit`** - Run unit tests only

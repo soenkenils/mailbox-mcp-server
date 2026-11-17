@@ -1,9 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ImapConnectionPool,
+  type ImapConnectionWrapper,
   type ImapPoolConfig,
 } from "../src/services/ImapConnectionPool.js";
 import type { ImapConnection } from "../src/types/email.types.js";
+import type { WithPrivates } from "./helpers/privates.js";
+
+type TestableImapConnectionPool = WithPrivates<
+  ImapConnectionPool,
+  {
+    connections: Map<string, ImapConnectionWrapper>;
+  }
+>;
 
 // Mock ImapFlow
 class MockImapFlow {
@@ -166,7 +175,7 @@ describe("ImapConnectionPool", () => {
     it("should handle noop failures", async () => {
       const wrapper = await pool.acquire();
 
-      const mockImapFlow = wrapper.connection as MockImapFlow;
+      const mockImapFlow = wrapper.connection as unknown as MockImapFlow;
       mockImapFlow.setShouldFailNoop(true);
 
       const isValid = await pool.validateConnection(wrapper.connection);
@@ -181,7 +190,9 @@ describe("ImapConnectionPool", () => {
       const wrapper = await pool.acquireForFolder("INBOX");
 
       expect(wrapper.selectedFolder).toBe("INBOX");
-      expect(wrapper.connection.selectedFolder).toBe("INBOX");
+      expect(
+        (wrapper.connection as unknown as MockImapFlow).selectedFolder,
+      ).toBe("INBOX");
 
       await pool.releaseFromFolder(wrapper);
     });
@@ -208,7 +219,9 @@ describe("ImapConnectionPool", () => {
       // Should reuse connection but switch folder
       expect(wrapper2.id).toBe(wrapper1.id);
       expect(wrapper2.selectedFolder).toBe("Sent");
-      expect(wrapper2.connection.selectedFolder).toBe("Sent");
+      expect(
+        (wrapper2.connection as unknown as MockImapFlow).selectedFolder,
+      ).toBe("Sent");
 
       await pool.releaseFromFolder(wrapper2);
     });
@@ -254,13 +267,13 @@ describe("ImapConnectionPool", () => {
       await pool.invalidateFolderConnections("INBOX");
 
       // Check connections
-      const connections = (pool as { connections: Map<string, unknown> })
+      const connections = (pool as unknown as TestableImapConnectionPool)
         .connections;
       const inboxConnection = Array.from(connections.values()).find(
-        (w: { id: string }) => w.id === wrapper1.id,
+        w => w.id === wrapper1.id,
       );
       const sentConnection = Array.from(connections.values()).find(
-        (w: { id: string }) => w.id === wrapper2.id,
+        w => w.id === wrapper2.id,
       );
 
       // INBOX connection should be marked unhealthy
@@ -324,7 +337,7 @@ describe("ImapConnectionPool", () => {
       const wrapper = await pool.acquire();
 
       // Mock logout to fail
-      const mockImapFlow = wrapper.connection as MockImapFlow;
+      const mockImapFlow = wrapper.connection as unknown as MockImapFlow;
       mockImapFlow.logout = vi
         .fn()
         .mockRejectedValue(new Error("Logout failed"));

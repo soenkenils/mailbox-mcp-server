@@ -66,6 +66,8 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 
 - `bun dev` - Start development server with file watching
 - `bun run build` - Build TypeScript to JavaScript
+- `bun run typecheck` - Type-check `src/` **and** `tests/` (the `build`
+  script only covers `src/`, since `tsconfig.json` excludes tests)
 
 ### Testing
 
@@ -193,7 +195,7 @@ MAILBOX_PASSWORD=your-app-password
 ### Tests Failing
 
 - Run `bun install` to ensure dependencies are up to date
-- Check for TypeScript errors with `bun run build`
+- Check for TypeScript errors with `bun run typecheck` (covers tests too)
 - Verify test mocks are properly configured
 
 ### Connection Errors

@@ -11,7 +11,10 @@ import {
 } from "vitest";
 import { CalendarService } from "../src/services/CalendarService.js";
 import type { LocalCache } from "../src/types/cache.types.js";
-import type { CalDavConnection } from "../src/types/calendar.types.js";
+import type {
+  CalDavConnection,
+  CalendarEvent,
+} from "../src/types/calendar.types.js";
 import { ErrorCode } from "../src/types/errors.js";
 
 // Type for the mock DAV client with only the methods we need for testing
@@ -20,6 +23,12 @@ type MockDAVClient = Pick<
   "fetchCalendars" | "fetchCalendarObjects"
 >;
 
+// Private methods of CalendarService reached for branch coverage testing
+type CalendarServicePrivates = {
+  filterEventsByQuery(events: CalendarEvent[], query?: string): CalendarEvent[];
+  extractStatus(attendee: unknown): string;
+};
+
 // Test helper class for accessing protected methods
 class TestableCalendarService extends CalendarService {
   public async getClient() {
@@ -27,12 +36,18 @@ class TestableCalendarService extends CalendarService {
   }
 
   // Expose private methods for branch coverage testing
-  public testFilterEventsByQuery(events: any[], query?: string): any[] {
-    return (this as any).filterEventsByQuery(events, query);
+  public testFilterEventsByQuery(
+    events: CalendarEvent[],
+    query?: string,
+  ): CalendarEvent[] {
+    return (this as unknown as CalendarServicePrivates).filterEventsByQuery(
+      events,
+      query,
+    );
   }
 
   public testExtractStatus(attendee: unknown): string {
-    return (this as any).extractStatus(attendee);
+    return (this as unknown as CalendarServicePrivates).extractStatus(attendee);
   }
 }
 
@@ -118,6 +133,8 @@ const createMockCache = (): LocalCache => ({
   size: vi.fn(),
   cleanup: vi.fn(),
   getStale: vi.fn(),
+  getStats: vi.fn(),
+  keys: vi.fn(() => new Set<string>().values()),
 });
 
 const createMockConnection = (
@@ -130,7 +147,9 @@ const createMockConnection = (
   ...overrides,
 });
 
-const createTestCalendarEvent = (overrides: Record<string, unknown> = {}) => ({
+const createTestCalendarEvent = (
+  overrides: Partial<CalendarEvent> = {},
+): CalendarEvent => ({
   id: "event1",
   uid: "event1@example.com",
   summary: "Test Event",
@@ -189,7 +208,7 @@ afterAll(() => {
 });
 
 describe("CalendarService", () => {
-  let calendarService: CalendarService;
+  let calendarService: TestableCalendarService;
   let mockCache: LocalCache;
   let mockConnection: CalDavConnection;
 
@@ -205,14 +224,16 @@ describe("CalendarService", () => {
     mockConnection = createMockConnection();
     calendarService = new TestableCalendarService(mockConnection, mockCache);
 
-    // Mock the getClient method to return our mock client
-    vi.spyOn(
-      calendarService as TestableCalendarService,
-      "getClient",
-    ).mockResolvedValue({
+    // Mock the getClient method to return our mock client. MockDAVClient
+    // checks the two methods the service uses; the cast covers the rest of
+    // tsdav's client surface, which these tests never touch.
+    const mockClient: MockDAVClient = {
       fetchCalendars: mockFetchCalendars,
       fetchCalendarObjects: mockFetchCalendarObjects,
-    } as MockDAVClient);
+    };
+    vi.spyOn(calendarService, "getClient").mockResolvedValue(
+      mockClient as unknown as Awaited<ReturnType<typeof createDAVClient>>,
+    );
   });
 
   describe("getCalendarEvents", () => {
@@ -373,7 +394,7 @@ describe("CalendarService", () => {
       vi.spyOn(service, "getClient").mockResolvedValue({
         fetchCalendars: mockFetchCalendars,
         fetchCalendarObjects: mockFetchCalendarObjects,
-      } as MockDAVClient);
+      } as MockDAVClient as Awaited<ReturnType<typeof createDAVClient>>);
       return service;
     };
     const readUrls = (): string[] =>
@@ -507,7 +528,7 @@ describe("CalendarService", () => {
       vi.spyOn(service, "getClient").mockResolvedValue({
         fetchCalendars: mockFetchCalendars,
         fetchCalendarObjects: mockFetchCalendarObjects,
-      } as MockDAVClient);
+      } as MockDAVClient as Awaited<ReturnType<typeof createDAVClient>>);
       mockFetchCalendars.mockResolvedValue([
         { displayName: "personal", url: "https://x/personal/" },
         { displayName: "work", url: "https://x/work/" },
@@ -630,38 +651,30 @@ describe("CalendarService", () => {
   // Phase 1: Branch Coverage Tests - Data-Driven Testing
   describe("filterEventsByQuery - branch coverage", () => {
     const events = [
-      {
+      createTestCalendarEvent({
         id: "1",
         summary: "Team Meeting",
         description: "Discuss project roadmap",
         location: "Conference Room A",
-        start: new Date(),
-        end: new Date(),
-      },
-      {
+      }),
+      createTestCalendarEvent({
         id: "2",
         summary: "Lunch Break",
-        description: null,
+        description: undefined,
         location: "Cafeteria",
-        start: new Date(),
-        end: new Date(),
-      },
-      {
+      }),
+      createTestCalendarEvent({
         id: "3",
         summary: "Code Review",
         description: "Review PR #123",
-        location: null,
-        start: new Date(),
-        end: new Date(),
-      },
-      {
+        location: undefined,
+      }),
+      createTestCalendarEvent({
         id: "4",
         summary: "Client Call",
         description: "Quarterly update",
         location: "Virtual",
-        start: new Date(),
-        end: new Date(),
-      },
+      }),
     ];
 
     it.each([

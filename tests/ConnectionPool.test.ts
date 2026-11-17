@@ -4,12 +4,16 @@ import {
   type ConnectionPoolConfig,
   type ConnectionWrapper,
 } from "../src/services/ConnectionPool.js";
+import type { WithPrivates } from "./helpers/privates.js";
 
 // Test helper interface for accessing private methods
-interface TestableConnectionPool<T> extends ConnectionPool<T> {
-  updateMetrics(): void;
-  performHealthCheck(): Promise<void>;
-}
+type TestableConnectionPool<T> = WithPrivates<
+  ConnectionPool<T>,
+  {
+    updateMetrics(): void;
+    performHealthCheck(): Promise<void>;
+  }
+>;
 
 // Mock connection class for testing
 class MockConnection {
@@ -407,7 +411,7 @@ describe("ConnectionPool", () => {
         const validate = vi.spyOn(verifiedPool, "validateConnection");
 
         await (
-          verifiedPool as unknown as TestableConnectionPool<MockConnection>
+          verifiedPool as unknown as unknown as TestableConnectionPool<MockConnection>
         ).performHealthCheck();
 
         expect(validate).not.toHaveBeenCalled();
@@ -427,7 +431,7 @@ describe("ConnectionPool", () => {
         const validate = vi.spyOn(checkPool, "validateConnection");
 
         await (
-          checkPool as TestableConnectionPool<MockConnection>
+          checkPool as unknown as TestableConnectionPool<MockConnection>
         ).performHealthCheck();
 
         expect(validate).toHaveBeenCalledTimes(1);
@@ -531,7 +535,7 @@ describe("ConnectionPool", () => {
         shutdownPool.creationGate = gate.promise;
 
         const healthCheck = (
-          shutdownPool as TestableConnectionPool<MockConnection>
+          shutdownPool as unknown as TestableConnectionPool<MockConnection>
         ).performHealthCheck();
         await flush();
         await shutdownPool.destroy();
@@ -795,7 +799,9 @@ describe("ConnectionPool", () => {
       const wrapper2 = await pool.acquire();
 
       // Force metrics update
-      (pool as TestableConnectionPool<MockConnection>).updateMetrics();
+      (
+        pool as unknown as unknown as TestableConnectionPool<MockConnection>
+      ).updateMetrics();
 
       const metrics = pool.getMetrics();
       expect(metrics.averageConnectionAge).toBeGreaterThan(0);
@@ -815,13 +821,13 @@ describe("ConnectionPool", () => {
 
       // Manually trigger health check instead of waiting for timer
       await (
-        pool as TestableConnectionPool<MockConnection>
+        pool as unknown as unknown as TestableConnectionPool<MockConnection>
       ).performHealthCheck();
 
       const updatedMetrics = pool.getMetrics();
       expect(updatedMetrics.lastHealthCheck).toBeInstanceOf(Date);
       expect(updatedMetrics.lastHealthCheck?.getTime()).toBeGreaterThan(
-        initialMetrics.lastHealthCheck?.getTime(),
+        initialMetrics.lastHealthCheck?.getTime() ?? 0,
       );
     });
 
@@ -833,7 +839,9 @@ describe("ConnectionPool", () => {
       await pool.release(wrapper);
 
       // Force metrics update
-      (pool as TestableConnectionPool<MockConnection>).updateMetrics();
+      (
+        pool as unknown as unknown as TestableConnectionPool<MockConnection>
+      ).updateMetrics();
 
       const metrics = pool.getMetrics();
       expect(metrics.unhealthyConnections).toBe(1);
@@ -893,7 +901,7 @@ describe("ConnectionPool", () => {
       racePool.validationDelayMs = 20;
 
       const healthCheck = (
-        racePool as TestableConnectionPool<MockConnection>
+        racePool as unknown as TestableConnectionPool<MockConnection>
       ).performHealthCheck();
       const acquired = await racePool.acquire();
       await healthCheck;
@@ -912,7 +920,7 @@ describe("ConnectionPool", () => {
       const createSpy = vi.spyOn(racePool, "createConnection");
 
       await (
-        racePool as TestableConnectionPool<MockConnection>
+        racePool as unknown as TestableConnectionPool<MockConnection>
       ).performHealthCheck();
 
       expect(racePool.getConnections().size).toBe(config.minConnections);
@@ -922,7 +930,7 @@ describe("ConnectionPool", () => {
 
     it("should leave connections opened by the health check available", async () => {
       await (
-        racePool as TestableConnectionPool<MockConnection>
+        racePool as unknown as TestableConnectionPool<MockConnection>
       ).performHealthCheck();
       expect(racePool.getConnections().size).toBe(config.minConnections);
 
@@ -1204,7 +1212,7 @@ describe("ConnectionPool", () => {
       };
 
       const healthCheck = (
-        slotPool as TestableConnectionPool<MockConnection>
+        slotPool as unknown as TestableConnectionPool<MockConnection>
       ).performHealthCheck();
       await flush();
       // The only connection is claimed by the health check, so this waits.

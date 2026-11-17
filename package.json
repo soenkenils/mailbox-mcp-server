@@ -15,6 +15,7 @@
   "scripts": {
     "dev": "bun run tsx watch src/main.ts",
     "build": "bun run tsc",
+    "typecheck": "bun run tsc -p tsconfig.test.json",
     "start": "node dist/main.js",
     "test": "bun run vitest --run",
     "test:watch": "bun run vitest --watch",
