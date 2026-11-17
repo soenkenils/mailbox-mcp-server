@@ -71,10 +71,8 @@
 		},
 		{
 			"includes": [
-				"src/services/CalendarService.ts",
 				"src/services/ConnectionPool.ts",
 				"src/services/SmtpService.ts",
-				"src/tools/calendarTools.ts",
 				"tests/CalendarService.test.ts",
 				"tests/ImapConnectionPool.test.ts",
 				"tests/SmtpConnectionPool.test.ts",

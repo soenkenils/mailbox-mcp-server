@@ -56,6 +56,11 @@ import {
 } from "./ImapConnectionPool.js";
 import { createLogger } from "./Logger.js";
 
+const FOLDERS_CACHE_KEY = "email_folders";
+
+/** Common trash folder names, tried after the server's \Trash folder. */
+const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
+
 export class EmailService {
   private pool: ImapConnectionPool;
   private cache: LocalCache;
@@ -103,7 +108,8 @@ export class EmailService {
       },
       "searchEmails",
       300000, // 5 minutes TTL
-      { defaultValue: [] },
+      // No default: on a connection failure with nothing cached, an empty
+      // list would read as "no such emails" instead of an outage.
     );
   }
 
@@ -157,7 +163,7 @@ export class EmailService {
     options: EmailSearchOptions,
   ): Promise<EmailMessage[]> {
     const searchResult = await this.executeSearch(wrapper, options);
-    if (!searchResult || searchResult.length === 0) {
+    if (searchResult.length === 0) {
       return [];
     }
 
@@ -175,19 +181,34 @@ export class EmailService {
   private async executeSearch(
     wrapper: ImapConnectionWrapper,
     options: EmailSearchOptions,
-  ): Promise<number[] | null> {
+  ): Promise<number[]> {
     const searchCriteria = this.buildSearchCriteria(options);
-    const result = await wrapper.connection.search(searchCriteria);
-    return Array.isArray(result) ? result : null;
+    // Search by UID (stable across expunges) instead of sequence numbers.
+    const result = await wrapper.connection.search(searchCriteria, {
+      uid: true,
+    });
+    // imapflow resolves false when the server rejects SEARCH and undefined
+    // when no folder is selected, instead of throwing. Either is a failure;
+    // returning no matches would read as an empty mailbox.
+    if (!Array.isArray(result)) {
+      throw new Error(
+        `IMAP search failed in folder ${options.folder || "INBOX"}`,
+      );
+    }
+    return result;
   }
 
   private applyPagination(
     searchResult: number[],
     options: EmailSearchOptions,
   ): number[] {
+    // IMAP SEARCH returns results sorted ascending (oldest first). Callers
+    // expect the NEWEST emails, so reverse before paginating; otherwise
+    // slicing from the front always yields the oldest matches.
+    const newestFirst = [...searchResult].reverse();
     const offset = options.offset || 0;
     const end = options.limit ? offset + options.limit : undefined;
-    return searchResult.slice(offset, end);
+    return newestFirst.slice(offset, end);
   }
 
   private async fetchMessageHeaders(
@@ -198,11 +219,15 @@ export class EmailService {
     const messages: EmailMessage[] = [];
 
     if (uids.length > 0) {
-      const iterator = wrapper.connection.fetch(uids, {
-        envelope: true,
-        uid: true,
-        flags: true,
-      });
+      const iterator = wrapper.connection.fetch(
+        uids,
+        {
+          envelope: true,
+          uid: true,
+          flags: true,
+        },
+        { uid: true },
+      );
 
       try {
         for await (const message of iterator) {
@@ -332,6 +357,11 @@ export class EmailService {
       { uid: true },
     );
 
+    // undefined means no folder was selected, which is a failure; false means
+    // the server returned no such message.
+    if (message === undefined) {
+      throw new Error("IMAP fetch failed: no folder selected");
+    }
     return message ? (message as unknown as ImapMessage) : null;
   }
 
@@ -609,30 +639,83 @@ export class EmailService {
     messageId: string,
     folder: string,
   ): Promise<EmailThread | null> {
-    // Basic implementation - can be enhanced with proper thread detection
-    const message = await this.searchEmails({
-      query: messageId.replace(/[<>]/g, ""),
-      folder,
-      limit: 1,
-    });
+    let wrapper: ImapConnectionWrapper | null = null;
 
-    if (message.length === 0) {
-      return null;
+    try {
+      wrapper = await this.pool.acquireForFolder(folder);
+
+      // Match the message itself plus anything replying to it, by header.
+      // A text search would only hit messages quoting the id in their body.
+      const uids = await wrapper.connection.search(
+        {
+          or: [
+            { header: { "message-id": messageId } },
+            { header: { references: messageId } },
+            { header: { "in-reply-to": messageId } },
+          ],
+        },
+        { uid: true },
+      );
+
+      // imapflow resolves false instead of throwing when SEARCH fails; that
+      // is an error, not an empty thread.
+      if (uids === false) {
+        throw new Error(`IMAP search failed in folder ${folder}`);
+      }
+      if (!Array.isArray(uids) || uids.length === 0) {
+        return null;
+      }
+
+      const messages = await this.fetchMessageHeaders(wrapper, uids, folder);
+
+      if (messages.length === 0) {
+        return null;
+      }
+
+      // Oldest first: a thread reads in the order it happened.
+      const ordered = [...messages].sort(
+        (a, b) => a.date.getTime() - b.date.getTime(),
+      );
+      // Callers may pass the id with or without angle brackets, while the
+      // envelope keeps whichever form the sender used.
+      const sameId = (a: string, b: string) =>
+        a.replace(/[<>]/g, "").trim() === b.replace(/[<>]/g, "").trim();
+      const root =
+        ordered.find(message => sameId(message.id, messageId)) ?? ordered[0];
+
+      return {
+        threadId: messageId,
+        messages: ordered,
+        subject: root.subject,
+        participants: this.collectParticipants(ordered),
+        lastActivity: ordered[ordered.length - 1].date,
+      };
+    } finally {
+      if (wrapper) {
+        await this.pool.releaseFromFolder(wrapper);
+      }
+    }
+  }
+
+  private collectParticipants(
+    messages: EmailMessage[],
+  ): Array<{ name?: string; address: string }> {
+    const byAddress = new Map<string, { name?: string; address: string }>();
+
+    for (const message of messages) {
+      for (const participant of [...message.from, ...message.to]) {
+        const key = participant.address.toLowerCase();
+        if (!byAddress.has(key)) {
+          byAddress.set(key, participant);
+        }
+      }
     }
 
-    const baseMessage = message[0];
-
-    return {
-      threadId: messageId,
-      messages: [baseMessage],
-      subject: baseMessage.subject,
-      participants: [...baseMessage.from, ...baseMessage.to],
-      lastActivity: baseMessage.date,
-    };
+    return [...byAddress.values()];
   }
 
   async getFolders(): Promise<EmailFolder[]> {
-    const cacheKey = "email_folders";
+    const cacheKey = FOLDERS_CACHE_KEY;
     let wrapper: ImapConnectionWrapper | null = null;
 
     try {
@@ -656,7 +739,7 @@ export class EmailService {
         },
         "getFolders",
         900000, // Cache for 15 minutes
-        { defaultValue: this.getDefaultFolders() },
+        // No default: a guessed folder list would read as the real one.
       );
     } finally {
       if (wrapper) {
@@ -674,9 +757,16 @@ export class EmailService {
 
     try {
       wrapper = await this.pool.acquireForFolder(fromFolder);
-      await wrapper.connection.messageMove(`${uid}:${uid}`, toFolder, {
-        uid: true,
-      });
+      // imapflow resolves false instead of throwing when the server refuses,
+      // e.g. for a destination folder that does not exist.
+      const moved = await wrapper.connection.messageMove(
+        `${uid}:${uid}`,
+        toFolder,
+        { uid: true },
+      );
+      if (!moved) {
+        throw new Error(`Server refused to move the message to ${toFolder}`);
+      }
 
       // Clear cache for both folders
       this.clearFolderCache(fromFolder);
@@ -726,14 +816,19 @@ export class EmailService {
     try {
       wrapper = await this.pool.acquireForFolder(folder);
 
-      if (action === "add") {
-        await wrapper.connection.messageFlagsAdd(`${uid}:${uid}`, flags, {
-          uid: true,
-        });
-      } else {
-        await wrapper.connection.messageFlagsRemove(`${uid}:${uid}`, flags, {
-          uid: true,
-        });
+      // Like messageMove, these resolve false on failure rather than throwing.
+      const updated =
+        action === "add"
+          ? await wrapper.connection.messageFlagsAdd(`${uid}:${uid}`, flags, {
+              uid: true,
+            })
+          : await wrapper.connection.messageFlagsRemove(
+              `${uid}:${uid}`,
+              flags,
+              { uid: true },
+            );
+      if (!updated) {
+        throw new Error("Server refused to update the message flags");
       }
 
       // Clear cache for the folder
@@ -769,62 +864,121 @@ export class EmailService {
     }
   }
 
+  /**
+   * Where a soft delete may move a message, best first: the folder the server
+   * marks with the \Trash special-use flag, then the common names. Read
+   * before a folder connection is taken, so a delete never holds two pool
+   * connections. If the folder list cannot be loaded, the names still apply.
+   */
+  private async trashCandidates(): Promise<{
+    candidates: string[];
+    specialUse?: string;
+  }> {
+    let specialUse: string | undefined;
+    try {
+      const folders = await this.getFolders();
+      specialUse = folders.find(f => f.specialUse === "\\Trash")?.path;
+    } catch (error) {
+      this.logger.warning(
+        "Could not list folders to find the trash folder; trying common names",
+        { operation: "deleteEmail", service: "EmailService" },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    const candidates = [
+      ...(specialUse ? [specialUse] : []),
+      ...TRASH_FOLDER_NAMES.filter(name => name !== specialUse),
+    ];
+    return { candidates, specialUse };
+  }
+
+  // Tries each candidate in turn and returns the folder the message moved
+  // to, or null when none accepted it.
+  private async moveToTrash(
+    wrapper: ImapConnectionWrapper,
+    uid: number,
+    candidates: string[],
+  ): Promise<string | null> {
+    for (const trashFolder of candidates) {
+      // messageMove resolves false for a missing destination rather than
+      // throwing, so the return value is the only signal that it worked.
+      const moved = await wrapper.connection.messageMove(
+        `${uid}:${uid}`,
+        trashFolder,
+        { uid: true },
+      );
+
+      if (moved) {
+        return trashFolder;
+      }
+    }
+
+    return null;
+  }
+
   async deleteEmail(
     uid: number,
     folder: string,
     permanent = false,
   ): Promise<EmailOperationResult> {
     let wrapper: ImapConnectionWrapper | null = null;
+    let movedTo: string | null = null;
 
     try {
+      let candidates: string[] = [];
+      if (!permanent) {
+        const trash = await this.trashCandidates();
+        // Moving a message from the trash to the trash does nothing, and
+        // falling through to the \Deleted flag would not remove it either.
+        const isTrash = trash.specialUse
+          ? folder === trash.specialUse
+          : TRASH_FOLDER_NAMES.includes(folder);
+        if (isTrash) {
+          return {
+            success: false,
+            message: `Email is already in the trash folder "${folder}"; use permanent: true to remove it`,
+          };
+        }
+        candidates = trash.candidates.filter(name => name !== folder);
+      }
+
       wrapper = await this.pool.acquireForFolder(folder);
 
       if (permanent) {
-        // Add deleted flag and expunge
-        await wrapper.connection.messageFlagsAdd(
+        // Without UIDPLUS, imapflow's messageDelete falls back to a plain
+        // EXPUNGE, which removes every message flagged \Deleted in the folder
+        // (including ones our own soft-delete fallback flagged), not just
+        // this one. Refuse rather than risk deleting other mail.
+        if (!wrapper.connection.capabilities?.has("UIDPLUS")) {
+          throw new Error(
+            "server does not support UIDPLUS; cannot permanently delete a single message safely",
+          );
+        }
+        // Flags the message \Deleted and expunges it (UID EXPUNGE with
+        // UIDPLUS). Resolves false instead of throwing when that fails.
+        const expunged = await wrapper.connection.messageDelete(
           `${uid}:${uid}`,
-          ["\\Deleted"],
-          {
-            uid: true,
-          },
+          { uid: true },
         );
-        // Note: expunge is called automatically after messageDelete in newer ImapFlow versions
-        // await wrapper.connection.expunge(); // This method may not exist in current ImapFlow version
+        if (expunged !== true) {
+          throw new Error("Server did not expunge the message");
+        }
       } else {
-        // Move to Trash folder
-        try {
-          await wrapper.connection.messageMove(`${uid}:${uid}`, "Trash", {
-            uid: true,
-          });
-        } catch (_moveError) {
-          // If Trash folder doesn't exist, try other common names
-          const trashFolders = ["Deleted Items", "Deleted", "INBOX.Trash"];
-          let moved = false;
+        movedTo = await this.moveToTrash(wrapper, uid, candidates);
 
-          for (const trashFolder of trashFolders) {
-            try {
-              await wrapper.connection.messageMove(
-                `${uid}:${uid}`,
-                trashFolder,
-                {
-                  uid: true,
-                },
-              );
-              moved = true;
-              break;
-            } catch (_error) {
-              // Continue to next folder
-            }
-          }
-
-          if (!moved) {
-            // If no trash folder found, mark as deleted
-            await wrapper.connection.messageFlagsAdd(
-              `${uid}:${uid}`,
-              ["\\Deleted"],
-              {
-                uid: true,
-              },
+        if (!movedTo) {
+          // No trash folder anywhere: flag the message and say so, rather
+          // than reporting a move that never happened.
+          const flagged = await wrapper.connection.messageFlagsAdd(
+            `${uid}:${uid}`,
+            ["\\Deleted"],
+            {
+              uid: true,
+            },
+          );
+          if (!flagged) {
+            throw new Error(
+              "No trash folder found and the server refused to flag the message as deleted",
             );
           }
         }
@@ -837,7 +991,9 @@ export class EmailService {
         success: true,
         message: permanent
           ? "Email permanently deleted"
-          : "Email moved to trash",
+          : movedTo
+            ? `Email moved to trash folder "${movedTo}"`
+            : "Email marked as deleted: no trash folder found",
       };
     } catch (error) {
       this.logger.error(
@@ -880,6 +1036,10 @@ export class EmailService {
       const result = await wrapper.connection.append(folder, emailContent, [
         "\\Draft",
       ]);
+      // append resolves false instead of throwing when the server refuses.
+      if (!result) {
+        throw new Error(`Server refused to save the draft to ${folder}`);
+      }
 
       // Clear cache for the drafts folder
       this.clearFolderCache(folder);
@@ -887,10 +1047,7 @@ export class EmailService {
       return {
         success: true,
         message: "Draft saved successfully",
-        uid:
-          result && typeof result === "object" && "uid" in result
-            ? result.uid
-            : undefined,
+        uid: result.uid,
       };
     } catch (error) {
       this.logger.error(
@@ -989,40 +1146,6 @@ export class EmailService {
     }
   }
 
-  private getDefaultFolders(): EmailFolder[] {
-    // Return a basic set of folders when connection is not available
-    return [
-      {
-        name: "INBOX",
-        path: "INBOX",
-        delimiter: "/",
-        flags: [],
-        specialUse: undefined,
-      },
-      {
-        name: "Sent",
-        path: "Sent",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Sent",
-      },
-      {
-        name: "Drafts",
-        path: "Drafts",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Drafts",
-      },
-      {
-        name: "Trash",
-        path: "Trash",
-        delimiter: "/",
-        flags: [],
-        specialUse: "\\Trash",
-      },
-    ];
-  }
-
   // Pool management methods
   getPoolMetrics() {
     return this.pool.getImapMetrics();
@@ -1037,13 +1160,21 @@ export class EmailService {
     try {
       wrapper = await this.pool.acquire();
 
-      // Construct the full folder path
-      // Use standard IMAP delimiter
-      const delimiter = "/"; // Standard IMAP delimiter
-      const folderPath = parentPath ? `${parentPath}${delimiter}${name}` : name;
+      // Servers differ ("/" or "."), so a nested path is passed as parts for
+      // imapflow to join with the server's own delimiter.
+      const folderPath = parentPath ? [parentPath, name] : name;
 
       // Create the folder using IMAP CREATE command
-      await wrapper.connection.mailboxCreate(folderPath);
+      const created = await wrapper.connection.mailboxCreate(folderPath);
+      // imapflow answers ALREADYEXISTS with created: false instead of throwing.
+      if (created && created.created === false) {
+        return {
+          success: false,
+          message: `Failed to create directory: '${created.path}' already exists`,
+        };
+      }
+      // Otherwise get_folders keeps serving the old list for up to 15 minutes.
+      this.cache.delete(FOLDERS_CACHE_KEY);
 
       return {
         success: true,
