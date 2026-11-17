@@ -108,6 +108,29 @@ describe("CalendarService recurring events", () => {
     expect(events[0].recurring).toBe(true);
     expect(events[0].uid).toBe("weekly@example.com");
     expect(events[0].id).toBe("weekly@example.com:2026-11-09T10:00:00.000Z");
+    // The series UID update/delete take, and the marker that this is one
+    // occurrence of it.
+    expect(events[0].recurrenceId).toBe("2026-11-09T10:00:00.000Z");
+  });
+
+  it("should mark a non-recurring event as no occurrence", async () => {
+    const events = await eventsFor(
+      vcalendar(
+        vevent([
+          "UID:single@example.com",
+          "SUMMARY:Single",
+          "DTSTART:20261110T100000Z",
+          "DTEND:20261110T110000Z",
+        ]),
+      ),
+    );
+
+    expect(events[0]).toMatchObject({
+      id: "single@example.com",
+      uid: "single@example.com",
+      recurring: false,
+    });
+    expect(events[0].recurrenceId).toBeUndefined();
   });
 
   it("should return every occurrence in a longer range", async () => {
@@ -148,6 +171,7 @@ describe("CalendarService recurring events", () => {
     expect(events[0].start.getMonth()).toBe(7);
     expect(events[0].start.getDate()).toBe(1);
     expect(events[0].id).toBe("birthday@example.com:2026-08-01");
+    expect(events[0].recurrenceId).toBe("2026-08-01");
   });
 
   it("should expand a daily series that started decades ago", async () => {
@@ -192,6 +216,9 @@ describe("CalendarService recurring events", () => {
     expect(events).toHaveLength(1);
     expect(events[0].summary).toBe("Weekly meeting (moved)");
     expect(events[0].start.toISOString()).toBe("2026-11-09T14:00:00.000Z");
+    // Identified by its original slot, not the moved start.
+    expect(events[0].recurrenceId).toBe("2026-11-09T10:00:00.000Z");
+    expect(events[0].uid).toBe("weekly@example.com");
   });
 
   it("should drop an instance cancelled by its override", async () => {

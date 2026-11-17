@@ -1,7 +1,7 @@
-import {
-  type CallToolRequest,
-  type CallToolResult,
-  type Tool,
+import type {
+  CallToolRequest,
+  CallToolResult,
+  Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as v from "valibot";
 import type { ServerConfig } from "../config/config.js";
