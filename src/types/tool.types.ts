@@ -1,3 +1,9 @@
+import {
+  type CallToolResult,
+  ErrorCode,
+  McpError,
+} from "@modelcontextprotocol/sdk/types.js";
+
 /**
  * Per-call context the transport hands to a tool handler.
  *
@@ -70,3 +76,18 @@ export const cancelledResult = (operation: string) => ({
   ],
   isError: true,
 });
+
+/**
+ * Whether a tool call worked, read from the result rather than assumed: a
+ * handler reports most failures as a result with `isError`, not by throwing.
+ */
+export const toolOutcome = (result: CallToolResult): { success: boolean } => ({
+  success: result.isError !== true,
+});
+
+/**
+ * A call naming no tool this server has is a protocol error (JSON-RPC
+ * InvalidParams), like an unknown prompt or resource, not a failed tool run.
+ */
+export const unknownToolError = (name: string): McpError =>
+  new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);

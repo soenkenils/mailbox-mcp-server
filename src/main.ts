@@ -50,6 +50,8 @@ import { ErrorUtils, ValidationError } from "./types/errors.js";
 import {
   createProgressReporter,
   type ToolContext,
+  toolOutcome,
+  unknownToolError,
 } from "./types/tool.types.js";
 import { summarizeArgs } from "./utils/toolArgs.js";
 
@@ -301,23 +303,31 @@ class MailboxMcpServer {
             context,
           );
         } else {
-          throw new ValidationError(`Unknown tool: ${name}`, "tool_name", name);
+          throw unknownToolError(name);
         }
 
-        // Record successful execution
-        const metrics = timer.end(true);
+        // Record the real outcome: most failures come back as isError results.
+        const { success } = toolOutcome(result);
+        const metrics = timer.end(success);
         this.logger.info(
-          `Tool executed successfully: ${name}`,
+          success
+            ? `Tool executed successfully: ${name}`
+            : `Tool returned an error: ${name}`,
           {
             operation: "callTool",
             service: "toolHandler",
             duration: metrics.duration,
           },
-          { tool: name, success: true },
+          { tool: name, success },
         );
 
         return result;
       } catch (error) {
+        // A protocol error such as an unknown tool goes back as JSON-RPC.
+        if (error instanceof McpError) {
+          timer.end(false, "McpError");
+          throw error;
+        }
         // Record failed execution
         const errorType =
           error instanceof Error ? error.constructor.name : "UnknownError";

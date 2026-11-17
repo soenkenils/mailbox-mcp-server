@@ -1,7 +1,9 @@
-import type {
-  CallToolRequest,
-  CallToolResult,
-  Tool,
+import {
+  type CallToolRequest,
+  type CallToolResult,
+  ErrorCode,
+  McpError,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { describe, expect, it, vi } from "vitest";
@@ -15,6 +17,8 @@ import { getSieveTools, handleSieveTool } from "../src/tools/sieveTools.js";
 import {
   createProgressReporter,
   type ToolContext,
+  toolOutcome,
+  unknownToolError,
 } from "../src/types/tool.types.js";
 import { textOf } from "./helpers/toolResult.js";
 
@@ -708,5 +712,30 @@ describe("server instructions", () => {
   it("should tell the model how folders and UIDs behave", () => {
     expect(SERVER_INSTRUCTIONS).toContain("get_folders");
     expect(SERVER_INSTRUCTIONS.toLowerCase()).toContain("uid");
+  });
+});
+
+describe("toolOutcome", () => {
+  it("should report a result flagged isError as a failure", () => {
+    expect(
+      toolOutcome({ content: [{ type: "text", text: "x" }], isError: true }),
+    ).toEqual({ success: false });
+  });
+
+  it("should report a result without isError as a success", () => {
+    expect(toolOutcome({ content: [] })).toEqual({ success: true });
+    expect(toolOutcome({ content: [], isError: false })).toEqual({
+      success: true,
+    });
+  });
+});
+
+describe("unknownToolError", () => {
+  it("should be a JSON-RPC InvalidParams error naming the tool", () => {
+    const error = unknownToolError("no_such_tool");
+
+    expect(error).toBeInstanceOf(McpError);
+    expect(error.code).toBe(ErrorCode.InvalidParams);
+    expect(error.message).toContain("no_such_tool");
   });
 });
