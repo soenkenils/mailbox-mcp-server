@@ -11,10 +11,14 @@ import type {
   CalendarSearchOptions,
   CreateCalendarEventOptions,
   CreateCalendarEventResult,
+  DeleteCalendarEventOptions,
+  DeleteCalendarEventResult,
   FreeBusyInfo,
+  UpdateCalendarEventOptions,
+  UpdateCalendarEventResult,
 } from "../types/calendar.types.js";
 import { CalendarError, ErrorCode, ValidationError } from "../types/errors.js";
-import { withCacheFallback } from "../utils/cacheFallback.js";
+import { createCacheFetcher } from "../utils/cacheFallback.js";
 import {
   CircuitBreaker,
   type CircuitBreakerConfig,
@@ -63,8 +67,23 @@ const MAX_LINE_OCTETS = 75;
  * Id of one instance of a series: UID plus RECURRENCE-ID. All-day instances
  * use the date itself, so the id does not depend on the server's time zone.
  */
-const occurrenceId = (uid: string, recurrenceId: ICAL.Time): string =>
-  `${uid}:${recurrenceId.isDate ? recurrenceId.toString() : recurrenceId.toJSDate().toISOString()}`;
+const recurrenceIdText = (recurrenceId: ICAL.Time): string =>
+  recurrenceId.isDate
+    ? recurrenceId.toString()
+    : recurrenceId.toJSDate().toISOString();
+
+/**
+ * An occurrence id as the read tools report it: "UID:2025-06-20" or
+ * "UID:2025-06-20T08:00:00.000Z".
+ */
+const OCCURRENCE_ID =
+  /^(.+):(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)?)$/;
+
+interface LocatedEvent {
+  object: DAVObject;
+  calendarName: string;
+  calendarUrl: string;
+}
 
 const calendarLabel = (calendar: DAVCalendar): string =>
   (calendar.displayName as string) || calendar.url;
@@ -75,6 +94,8 @@ export class CalendarService {
   private client: Awaited<ReturnType<typeof createDAVClient>> | null = null;
   private circuitBreaker: CircuitBreaker;
   private logger = createLogger("CalendarService");
+  private cachedFetch: ReturnType<typeof createCacheFetcher>;
+  private authorization: string | undefined;
 
   constructor(
     connection: CalDavConnection,
@@ -83,6 +104,11 @@ export class CalendarService {
   ) {
     this.connection = connection;
     this.cache = cache;
+    this.cachedFetch = createCacheFetcher(
+      this.cache,
+      this.logger,
+      "CalendarService",
+    );
 
     // Initialize circuit breaker with defaults or provided config
     const cbConfig = circuitBreakerConfig || {
@@ -108,47 +134,32 @@ export class CalendarService {
     return this.client;
   }
 
+  // A failed read is never replaced by a made-up default: an empty event list
+  // or an all-free range would read as a real answer rather than an outage.
   async getCalendarEvents(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    const cacheKey = `calendar_events:${JSON.stringify(options)}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents(options);
-        return events;
-      },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "getCalendarEvents",
-      service: "CalendarService",
-      ttl: 900000, // 15 minutes TTL
-      logContext: { options },
-    });
+    return this.cachedFetch(
+      `calendar_events:${JSON.stringify(options)}`,
+      () => this.fetchCalendarEvents(options),
+      "getCalendarEvents",
+      900000, // 15 minutes
+    );
   }
 
   async searchCalendar(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    const cacheKey = `calendar_search:${JSON.stringify(options)}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents(options);
-        const filteredEvents = this.filterEventsByQuery(events, options.query);
-        return filteredEvents;
-      },
-      defaultValue: [],
-      logger: this.logger,
-      operation: "searchCalendar",
-      service: "CalendarService",
-      ttl: 900000, // 15 minutes TTL
-      logContext: { query: options.query },
-    });
+    return this.cachedFetch(
+      `calendar_search:${JSON.stringify(options)}`,
+      async () =>
+        this.filterEventsByQuery(
+          await this.fetchCalendarEvents(options),
+          options.query,
+        ),
+      "searchCalendar",
+      900000, // 15 minutes
+    );
   }
 
   async getFreeBusy(
@@ -156,37 +167,17 @@ export class CalendarService {
     end: Date,
     calendar?: string,
   ): Promise<FreeBusyInfo> {
-    const cacheKey = `freebusy:${start.toISOString()}:${end.toISOString()}:${calendar || "all"}`;
-
-    return withCacheFallback({
-      cacheKey,
-      cache: this.cache,
-      fetch: async () => {
-        const events = await this.fetchCalendarEvents({
+    return this.cachedFetch(
+      `freebusy:${start.toISOString()}:${end.toISOString()}:${calendar || "all"}`,
+      async () =>
+        this.calculateFreeBusy(
+          await this.fetchCalendarEvents({ start, end, calendar }),
           start,
           end,
-          calendar,
-        });
-
-        const freeBusy = this.calculateFreeBusy(events, start, end);
-        return freeBusy;
-      },
-      defaultValue: {
-        start,
-        end,
-        busy: [],
-        free: [{ start, end }],
-      },
-      logger: this.logger,
-      operation: "getFreeBusy",
-      service: "CalendarService",
-      ttl: 300000, // 5 minutes TTL
-      logContext: {
-        start: start.toISOString(),
-        end: end.toISOString(),
-        calendar,
-      },
-    });
+        ),
+      "getFreeBusy",
+      300000, // 5 minutes
+    );
   }
 
   async createCalendarEvent(
@@ -206,26 +197,16 @@ export class CalendarService {
         return { client, calendars: await client.fetchCalendars() };
       },
     );
-    const target = this.chooseCreateTarget(
-      this.selectCalendars(calendars, options.calendar),
-      options.calendar,
-    );
+    const target = this.chooseCreateTarget(calendars, options.calendar);
     const calendarName = calendarLabel(target);
 
-    const response = await this.circuitBreaker.execute(async () => {
-      const response = await client.createCalendarObject({
+    await this.writeChecked("create", calendarName, uid, () =>
+      client.createCalendarObject({
         calendar: target,
         filename: `${uid}.ics`,
         iCalString,
-      });
-      // A server error counts towards opening the circuit; a refusal (4xx)
-      // is about this request and is reported below without counting.
-      if (response.status >= 500) {
-        this.assertWritten(response, "create", calendarName, uid);
-      }
-      return response;
-    });
-    this.assertWritten(response, "create", calendarName, uid);
+      }),
+    );
     this.invalidateEventCaches();
 
     this.logger.info("Calendar event created", {
@@ -245,11 +226,724 @@ export class CalendarService {
   }
 
   /**
+   * Changes the fields passed on the stored event and writes it back with
+   * If-Match, so a concurrent change fails with EVENT_MODIFIED instead of
+   * being overwritten. Recurring events change as a whole series.
+   */
+  async updateCalendarEvent(
+    options: UpdateCalendarEventOptions,
+  ): Promise<UpdateCalendarEventResult> {
+    const located = await this.locateSeries(options.uid, options.calendar);
+
+    // The edit happens on the stored iCalendar rather than a rebuilt one, so
+    // alarms, recurrence rules, time zones and other properties this server
+    // does not model survive the round trip.
+    const root = new ICAL.Component(ICAL.parse(String(located.object.data)));
+    const withUid = this.eventsWithUid(root, options.uid);
+    const vevent = this.editableEvent(withUid, options.uid);
+    const role = await this.schedulingRole(withUid);
+    const sendInvitations = options.sendInvitations ?? false;
+
+    if (role.kind === "attendee") {
+      throw new ValidationError(
+        `You were invited to this event by ${role.organizer}; only the organizer can change it. To remove it from your calendar, use delete_calendar_event`,
+        "uid",
+        options.uid,
+      );
+    }
+    if (role.kind === "organizer" && !sendInvitations) {
+      throw new ValidationError(
+        `This is a meeting you organize with ${role.attendees} attendee(s): saving any change makes the server email them an update. Pass sendInvitations: true only if the user wants them notified`,
+        "sendInvitations",
+        false,
+      );
+    }
+    if (role.kind === "unknown" && !sendInvitations) {
+      throw new ValidationError(
+        `Can't tell whether you organize this meeting (organizer ${role.organizer}). Saving a change may email updates to ${role.attendees} attendee(s); pass sendInvitations: true only if that is acceptable`,
+        "sendInvitations",
+        false,
+      );
+    }
+
+    this.applyEventUpdate(vevent, options);
+    const notified =
+      role.kind === "organizer" ||
+      role.kind === "unknown" ||
+      (sendInvitations && !!options.attendees?.length);
+
+    // Read from the component that was edited: parsing the whole document
+    // again would return whichever VEVENT with this UID comes first, which
+    // may be an override rather than the series.
+    const updated = this.parseVEvent(vevent, located.calendarName);
+    if (!updated) {
+      throw new CalendarError(
+        "The edited event could not be read back, so it was not saved",
+        ErrorCode.OPERATION_FAILED,
+        located.calendarName,
+        options.uid,
+      );
+    }
+
+    const data = this.serializeICal(root);
+    await this.writeChecked("update", located.calendarName, options.uid, () =>
+      this.getClient().then(client =>
+        client.updateCalendarObject({
+          calendarObject: { ...located.object, data },
+        }),
+      ),
+    );
+    this.invalidateEventCaches();
+
+    this.logger.info("Calendar event updated", {
+      operation: "updateCalendarEvent",
+      service: "CalendarService",
+    });
+
+    return { event: updated, notified };
+  }
+
+  /**
+   * Deletes the stored object (a recurring event with all its occurrences)
+   * with If-Match. Unless participants may be notified, a meeting the account
+   * organizes is refused, and the server is asked not to send a decline for
+   * an invitation (RFC 6638 Schedule-Reply: F).
+   */
+  async deleteCalendarEvent(
+    options: DeleteCalendarEventOptions,
+  ): Promise<DeleteCalendarEventResult> {
+    const located = await this.locateSeries(options.uid, options.calendar);
+    const withUid = this.eventsWithUid(
+      new ICAL.Component(ICAL.parse(String(located.object.data))),
+      options.uid,
+    );
+    const role = await this.schedulingRole(withUid);
+    const notify = options.notifyParticipants ?? false;
+
+    if (role.kind === "organizer" && !notify) {
+      throw new ValidationError(
+        `This is a meeting you organize with ${role.attendees} attendee(s): deleting it makes the server email them a cancellation. Pass notifyParticipants: true only if the user wants them told`,
+        "notifyParticipants",
+        false,
+      );
+    }
+    if (role.kind === "unknown" && !notify) {
+      throw new ValidationError(
+        `Can't tell whether you organize this meeting (organizer ${role.organizer}). Deleting may email cancellations to ${role.attendees} attendee(s); pass notifyParticipants: true only if that is acceptable`,
+        "notifyParticipants",
+        false,
+      );
+    }
+
+    const master = this.findSeriesMaster(withUid) ?? withUid[0];
+    const event = master
+      ? this.parseVEvent(master, located.calendarName)
+      : null;
+
+    // A headers argument replaces tsdav's default ones, so the credentials
+    // are passed along with it.
+    const headers: Record<string, string> = notify
+      ? {}
+      : {
+          authorization: this.basicAuthorization(),
+          "Schedule-Reply": "F",
+        };
+    await this.writeChecked("delete", located.calendarName, options.uid, () =>
+      this.getClient().then(client =>
+        client.deleteCalendarObject({
+          calendarObject: located.object,
+          ...(notify ? {} : { headers }),
+        }),
+      ),
+    );
+    this.invalidateEventCaches();
+
+    this.logger.info("Calendar event deleted", {
+      operation: "deleteCalendarEvent",
+      service: "CalendarService",
+    });
+
+    return {
+      uid: options.uid,
+      summary: event?.summary ?? "",
+      calendar: located.calendarName,
+      recurring: event?.recurring ?? false,
+      notified: notify && role.kind !== "none",
+    };
+  }
+
+  /**
+   * The Basic authorization value, built once. tsdav's getBasicAuthHeaders
+   * writes the encoded credentials to its debug log on every call; this
+   * value is never logged or put into an error.
+   */
+  private basicAuthorization(): string {
+    this.authorization ??= `Basic ${Buffer.from(
+      `${this.connection.username}:${this.connection.password}`,
+    ).toString("base64")}`;
+    return this.authorization;
+  }
+
+  /**
+   * update and delete act on whole series. A UID that is not stored but has
+   * the shape of an occurrence id from the read tools is refused with the
+   * series UID to use instead, so a model cannot believe it changed one
+   * occurrence when it changed them all. A stored UID of that shape (such as
+   * "holiday:2025-12-25") is used as it is.
+   */
+  private async locateSeries(
+    uid: string,
+    calendarFilter?: string,
+  ): Promise<LocatedEvent> {
+    try {
+      return await this.locateEvent(uid, calendarFilter);
+    } catch (error) {
+      const occurrence = OCCURRENCE_ID.exec(uid);
+      if (
+        occurrence &&
+        error instanceof CalendarError &&
+        error.code === ErrorCode.EVENT_NOT_FOUND
+      ) {
+        throw new ValidationError(
+          `"${uid}" is the id of one occurrence (${occurrence[2]}) of the recurring series "${occurrence[1]}". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "${occurrence[1]}" only if the whole series is meant`,
+          "uid",
+          uid,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Finds the stored object for a UID among the calendars a write may touch.
+   * Throws when nothing matches, and when several calendars hold the UID and
+   * the caller did not say which one, so a change never lands on a guess.
+   */
+  private async locateEvent(
+    uid: string,
+    calendarFilter?: string,
+  ): Promise<LocatedEvent> {
+    // Choosing calendars happens outside the breaker: a name the caller got
+    // wrong must not count towards opening the circuit.
+    const all = await this.listCalendars();
+    const calendars = this.selectCalendars(all, calendarFilter);
+    if (calendars.length === 0) {
+      throw this.noCalendarError(all, calendarFilter);
+    }
+
+    const matches = await this.circuitBreaker.execute(async () => {
+      const client = await this.getClient();
+      const found: LocatedEvent[] = [];
+      const failed: DAVCalendar[] = [];
+      for (const calendar of calendars) {
+        try {
+          const object = await this.queryObjectByUid(client, calendar, uid);
+          if (object) {
+            found.push({
+              object,
+              calendarName: calendarLabel(calendar),
+              calendarUrl: calendar.url,
+            });
+          }
+        } catch (error) {
+          failed.push(calendar);
+          this.logger.warning(
+            "UID query failed, scanning the calendar instead",
+            { operation: "locateEvent", service: "CalendarService" },
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
+
+      // Servers differ in how they treat prop-filters: with no hit at all,
+      // the miss is confirmed against every full calendar; otherwise only
+      // calendars whose query failed are downloaded, so the UID cannot hide
+      // in one of them.
+      const scan = found.length === 0 ? calendars : failed;
+      for (const calendar of scan) {
+        const all = await client.fetchCalendarObjects({ calendar });
+        const object = all.find(candidate => this.holdsEvent(candidate, uid));
+        if (object) {
+          found.push({
+            object,
+            calendarName: calendarLabel(calendar),
+            calendarUrl: calendar.url,
+          });
+        }
+      }
+      return found;
+    });
+
+    if (matches.length === 0) {
+      const scope = this.allowedCalendars()
+        ? " in the calendars MAILBOX_CALENDARS allows"
+        : "";
+      throw new CalendarError(
+        `No event with UID "${uid}" found${scope}${
+          calendarFilter ? ` (calendar "${calendarFilter}")` : ""
+        }`,
+        ErrorCode.EVENT_NOT_FOUND,
+        calendarFilter,
+        uid,
+      );
+    }
+
+    if (matches.length > 1) {
+      throw new ValidationError(
+        `UID "${uid}" exists in several calendars (${matches
+          .map(match => match.calendarName)
+          .join(", ")}); pass "calendar" to pick one`,
+        "calendar",
+        calendarFilter,
+      );
+    }
+
+    const [located] = matches;
+    // The write carries the account's credentials: it must not go to a host
+    // other than the calendar's, whatever URL the server listed.
+    let sameOrigin = false;
+    try {
+      sameOrigin =
+        new URL(located.object.url, located.calendarUrl).origin ===
+        new URL(located.calendarUrl).origin;
+    } catch {
+      sameOrigin = false;
+    }
+    if (!sameOrigin) {
+      throw new CalendarError(
+        `The server listed event "${uid}" on a different host than its calendar, so it is not changed (that would send your credentials there)`,
+        ErrorCode.EVENT_WRITE_REJECTED,
+        located.calendarName,
+        uid,
+      );
+    }
+    // tsdav turns a missing getetag into the string "undefined": sent as
+    // If-Match it always fails (412), and a truly absent one would make the
+    // write unconditional and overwrite concurrent changes.
+    const etag = located.object.etag;
+    if (!etag || etag === "undefined") {
+      throw new CalendarError(
+        `The server returned no ETag for event "${uid}", so it cannot be changed safely (a concurrent change could be overwritten); change it in a calendar client`,
+        ErrorCode.EVENT_WRITE_REJECTED,
+        located.calendarName,
+        uid,
+      );
+    }
+
+    return located;
+  }
+
+  /** The object holding the UID, by a CalDAV UID query (REPORT). */
+  private async queryObjectByUid(
+    client: DAVClient,
+    calendar: DAVCalendar,
+    uid: string,
+  ): Promise<DAVObject | undefined> {
+    const filtered = await client.fetchCalendarObjects({
+      calendar,
+      filters: {
+        "comp-filter": {
+          _attributes: { name: "VCALENDAR" },
+          "comp-filter": {
+            _attributes: { name: "VEVENT" },
+            "prop-filter": {
+              _attributes: { name: "UID" },
+              "text-match": {
+                _attributes: { collation: "i;octet" },
+                _text: uid,
+              },
+            },
+          },
+        },
+      },
+    });
+    return filtered.find(object => this.holdsEvent(object, uid));
+  }
+
+  private holdsEvent(object: DAVObject, uid: string): boolean {
+    if (!object.data) {
+      return false;
+    }
+    try {
+      const root = new ICAL.Component(ICAL.parse(String(object.data)));
+      return this.eventsWithUid(root, uid).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private eventsWithUid(root: ICAL.Component, uid: string): ICAL.Component[] {
+    return root
+      .getAllSubcomponents("vevent")
+      .filter(vevent => vevent.getFirstPropertyValue("uid") === uid);
+  }
+
+  /** The VEVENT that is not an override of a single occurrence. */
+  private findSeriesMaster(
+    vevents: ICAL.Component[],
+  ): ICAL.Component | undefined {
+    return vevents.find(vevent => !vevent.hasProperty("recurrence-id"));
+  }
+
+  /**
+   * The VEVENT an update edits: the series master. Overrides of single
+   * occurrences carry RECURRENCE-ID and stay untouched. A lone override (an
+   * invitation to one occurrence) is edited as it is; several without a
+   * series master leave no safe choice.
+   */
+  private editableEvent(
+    withUid: ICAL.Component[],
+    uid: string,
+  ): ICAL.Component {
+    const vevent =
+      this.findSeriesMaster(withUid) ??
+      (withUid.length === 1 ? withUid[0] : undefined);
+    if (vevent) {
+      return vevent;
+    }
+    if (withUid.length > 1) {
+      throw new ValidationError(
+        "The stored event has several single-occurrence overrides but no series to edit; change it in a calendar client",
+        "uid",
+        uid,
+      );
+    }
+    throw new CalendarError(
+      `No event with UID "${uid}" found`,
+      ErrorCode.EVENT_NOT_FOUND,
+      undefined,
+      uid,
+    );
+  }
+
+  /**
+   * Whether the stored event is a scheduling object (RFC 6638): it has an
+   * ORGANIZER and attendees the server would notify, i.e. without
+   * SCHEDULE-AGENT=CLIENT. The account organizes it when the ORGANIZER is
+   * its username or one of the calendar user addresses the server reports.
+   * It was invited only on positive evidence: one of those addresses is an
+   * ATTENDEE. Anything else is unknown, since an alias the server did not
+   * report would make the account the organizer, and a DELETE then mails
+   * cancellations whatever Schedule-Reply says.
+   */
+  private async schedulingRole(
+    vevents: ICAL.Component[],
+  ): Promise<
+    | { kind: "none" }
+    | { kind: "organizer"; attendees: number }
+    | { kind: "attendee"; organizer: string }
+    | { kind: "unknown"; organizer: string; attendees: number }
+  > {
+    const address = (value: unknown): string =>
+      String(value)
+        .replace(/^mailto:/i, "")
+        .trim()
+        .toLowerCase();
+    let organizer: string | undefined;
+    const scheduled = new Set<string>();
+    const listed = new Set<string>();
+
+    for (const vevent of vevents) {
+      const own = vevent.getFirstPropertyValue("organizer");
+      if (!own) {
+        continue;
+      }
+      const ownAddress = address(own);
+      for (const attendee of vevent.getAllProperties("attendee")) {
+        const agent = String(
+          attendee.getParameter("schedule-agent") ?? "SERVER",
+        ).toUpperCase();
+        const attendeeAddress = address(attendee.getFirstValue());
+        listed.add(attendeeAddress);
+        if (agent !== "CLIENT" && attendeeAddress !== ownAddress) {
+          organizer ??= ownAddress;
+          scheduled.add(attendeeAddress);
+        }
+      }
+    }
+
+    if (!organizer) {
+      return { kind: "none" };
+    }
+    const mine = await this.ownAddresses();
+    if (mine.has(organizer)) {
+      return { kind: "organizer", attendees: scheduled.size };
+    }
+    if ([...listed].some(attendee => mine.has(attendee))) {
+      return { kind: "attendee", organizer };
+    }
+    return { kind: "unknown", organizer, attendees: scheduled.size };
+  }
+
+  /** The account's own calendar user addresses, lower-cased, best effort. */
+  private async ownAddresses(): Promise<Set<string>> {
+    const mine = new Set([this.connection.username.trim().toLowerCase()]);
+    try {
+      const client = await this.getClient();
+      // The client fills in its own account; the typings still demand one.
+      const fetchAddresses =
+        client.fetchCalendarUserAddresses as unknown as () => Promise<string[]>;
+      const addresses = await fetchAddresses();
+      for (const value of addresses) {
+        mine.add(
+          value
+            .replace(/^mailto:/i, "")
+            .trim()
+            .toLowerCase(),
+        );
+      }
+    } catch (error) {
+      this.logger.warning(
+        "Could not read the account's calendar user addresses",
+        { operation: "ownAddresses", service: "CalendarService" },
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    return mine;
+  }
+
+  /** Applies only the fields the caller passed to the VEVENT. */
+  private applyEventUpdate(
+    vevent: ICAL.Component,
+    options: UpdateCalendarEventOptions,
+  ): void {
+    const event = new ICAL.Event(vevent);
+    const wasAllDay = event.startDate?.isDate ?? false;
+    const allDay = options.allDay ?? wasAllDay;
+    const changesTime =
+      options.allDay !== undefined ||
+      options.start !== undefined ||
+      options.end !== undefined ||
+      options.startDate !== undefined ||
+      options.endDate !== undefined;
+
+    if (changesTime) {
+      this.applyTimeChange(vevent, event, options, allDay, wasAllDay);
+    }
+
+    if (options.summary !== undefined) {
+      vevent.updatePropertyWithValue("summary", options.summary);
+    }
+    this.setOptionalText(vevent, "description", options.description);
+    this.setOptionalText(vevent, "location", options.location);
+
+    if (options.attendees) {
+      this.replaceAttendees(vevent, options);
+    }
+
+    const sequence = Number(vevent.getFirstPropertyValue("sequence"));
+    vevent.updatePropertyWithValue(
+      "sequence",
+      (Number.isFinite(sequence) ? sequence : 0) + 1,
+    );
+    const now = ICAL.Time.fromJSDate(new Date(), true);
+    vevent.updatePropertyWithValue("last-modified", now);
+    vevent.updatePropertyWithValue("dtstamp", now);
+  }
+
+  /**
+   * Writes new times the way createCalendarEvent does: timed events in UTC,
+   * all-day events as dates with an exclusive DTEND. When only the start is
+   * passed, the event keeps its length. Values equal to the stored ones are
+   * no change, so passing them leaves the stored times (and a recurring
+   * series) untouched.
+   */
+  private applyTimeChange(
+    vevent: ICAL.Component,
+    event: ICAL.Event,
+    options: UpdateCalendarEventOptions,
+    allDay: boolean,
+    wasAllDay: boolean,
+  ): void {
+    const switching = allDay !== wasAllDay;
+    if (switching && !(options.start || options.startDate)) {
+      throw new ValidationError(
+        "start is required when changing allDay",
+        "allDay",
+        options.allDay,
+      );
+    }
+
+    let next: { start: ICAL.Time; end: ICAL.Time };
+    let unchanged: boolean;
+    if (allDay) {
+      if (options.start || options.end) {
+        throw new ValidationError(
+          "All-day events take dates (YYYY-MM-DD) for start and end, not date-times",
+          "start",
+        );
+      }
+      const day = (date: string) => dayjs.utc(date);
+      const storedStart = wasAllDay ? event.startDate.toString() : undefined;
+      const storedEnd = wasAllDay ? event.endDate.toString() : undefined;
+      const startDate = options.startDate ?? (storedStart as string);
+      const endDate =
+        options.endDate ??
+        (switching || !storedStart || !storedEnd
+          ? day(startDate).add(1, "day").format("YYYY-MM-DD")
+          : day(storedEnd)
+              .add(day(startDate).diff(day(storedStart), "day"), "day")
+              .format("YYYY-MM-DD"));
+      if (endDate <= startDate) {
+        throw new ValidationError(
+          options.startDate
+            ? "The last day must not be before the first day"
+            : `The last day must not be before the first day: the event's current first day is ${startDate}; pass start as well`,
+          "end",
+        );
+      }
+      unchanged = startDate === storedStart && endDate === storedEnd;
+      next = {
+        start: ICAL.Time.fromDateString(startDate),
+        end: ICAL.Time.fromDateString(endDate),
+      };
+    } else {
+      if (options.startDate || options.endDate) {
+        throw new ValidationError(
+          "Timed events need a date-time for start and end, e.g. 2025-06-20T14:00+02:00; set allDay to true for an all-day event",
+          "start",
+        );
+      }
+      if (switching && !options.end) {
+        throw new ValidationError(
+          "end is required when turning an all-day event into a timed one",
+          "end",
+        );
+      }
+      const storedStart = event.startDate.toJSDate();
+      const storedEnd = event.endDate.toJSDate();
+      const start = options.start ?? storedStart;
+      const end =
+        options.end ??
+        new Date(
+          storedEnd.getTime() + (start.getTime() - storedStart.getTime()),
+        );
+      if (start >= end) {
+        throw new ValidationError(
+          options.start
+            ? "Start date must be before end date"
+            : `Start date must be before end date: the event's current start is ${start.toISOString()}; pass start as well`,
+          "start",
+          start.toISOString(),
+        );
+      }
+      unchanged =
+        !switching &&
+        start.getTime() === storedStart.getTime() &&
+        end.getTime() === storedEnd.getTime();
+      next = {
+        start: ICAL.Time.fromJSDate(start, true),
+        end: ICAL.Time.fromJSDate(end, true),
+      };
+    }
+
+    if (unchanged) {
+      return;
+    }
+    if (event.isRecurring()) {
+      // Times are written in UTC: a series kept in local time would move by
+      // an hour across daylight-saving changes, and its overrides and
+      // EXDATEs would no longer match the new slots.
+      throw new ValidationError(
+        "Moving a recurring series is not supported; change its times in a calendar client. Title, description, location and attendees can be changed",
+        "start",
+      );
+    }
+    this.setEventTime(vevent, "dtstart", next.start);
+    this.setEventTime(vevent, "dtend", next.end);
+  }
+
+  private setEventTime(
+    vevent: ICAL.Component,
+    name: "dtstart" | "dtend",
+    value: ICAL.Time,
+  ): void {
+    // Dropped first so a TZID parameter of the old value cannot outlive it,
+    // and DURATION with it, which would contradict the new DTEND.
+    vevent.removeProperty(name);
+    vevent.removeProperty("duration");
+    vevent.addPropertyWithValue(name, value);
+  }
+
+  private setOptionalText(
+    vevent: ICAL.Component,
+    name: string,
+    value: string | undefined,
+  ): void {
+    if (value === undefined) {
+      return;
+    }
+    if (value === "") {
+      vevent.removeProperty(name);
+    } else {
+      vevent.updatePropertyWithValue(name, value);
+    }
+  }
+
+  /**
+   * Replaces the attendee list. Attendees who stay keep their reply status.
+   * Without sendInvitations every attendee is only recorded
+   * (SCHEDULE-AGENT=CLIENT), as on create; with it the server schedules them
+   * and the account is the ORGANIZER.
+   */
+  private replaceAttendees(
+    vevent: ICAL.Component,
+    options: UpdateCalendarEventOptions,
+  ): void {
+    const attendees = options.attendees ?? [];
+    const organizer = this.invitationOrganizer(options);
+    const emailOf = (property: ICAL.Property): string =>
+      String(property.getFirstValue())
+        .replace(/^mailto:/i, "")
+        .toLowerCase();
+
+    const existing = new Map(
+      vevent
+        .getAllProperties("attendee")
+        .map(property => [emailOf(property), property] as const),
+    );
+    vevent.removeAllProperties("attendee");
+
+    for (const { email, name } of attendees) {
+      const property =
+        existing.get(email.toLowerCase()) ??
+        (() => {
+          const created = new ICAL.Property("attendee");
+          created.setValue(`mailto:${email}`);
+          return created;
+        })();
+      if (name) {
+        property.setParameter("cn", name);
+      }
+      if (organizer) {
+        property.removeParameter("schedule-agent");
+      } else {
+        property.setParameter("schedule-agent", "CLIENT");
+      }
+      vevent.addProperty(property);
+    }
+
+    if (organizer && !vevent.hasProperty("organizer")) {
+      vevent.addPropertyWithValue("organizer", `mailto:${organizer}`);
+    }
+  }
+
+  /** ical.js output, refolded so no line exceeds 75 octets. */
+  private serializeICal(root: ICAL.Component): string {
+    return `${root
+      .toString()
+      .replace(/\r\n[ \t]/g, "")
+      .split("\r\n")
+      .map(line => this.foldICalLine(line))
+      .join("\r\n")}\r\n`;
+  }
+
+  /**
    * The ORGANIZER address when the caller asked the server to invite the
    * attendees, or undefined when attendees are only recorded.
    */
   private invitationOrganizer(
-    options: CreateCalendarEventOptions,
+    options: Pick<CreateCalendarEventOptions, "sendInvitations" | "attendees">,
   ): string | undefined {
     if (!options.sendInvitations || !options.attendees?.length) {
       return undefined;
@@ -284,32 +978,19 @@ export class CalendarService {
    * are ValidationErrors so the user sees the reason, not a generic message.
    */
   private chooseCreateTarget(
-    candidates: DAVCalendar[],
+    calendars: DAVCalendar[],
     calendarFilter?: string,
   ): DAVCalendar {
+    const candidates = this.selectCalendars(calendars, calendarFilter);
     if (candidates.length === 0) {
-      const scope = this.allowedCalendars()
-        ? " among the calendars MAILBOX_CALENDARS allows"
-        : "";
-      throw calendarFilter
-        ? new ValidationError(
-            `Calendar "${calendarFilter}" not found${scope}`,
-            "calendar",
-            calendarFilter,
-          )
-        : new ValidationError(
-            scope
-              ? "No calendar available to create the event in; check MAILBOX_CALENDARS"
-              : "No calendar that can hold events was found",
-            "calendar",
-          );
+      throw this.noCalendarError(calendars, calendarFilter);
     }
 
     if (calendarFilter && candidates.length > 1) {
       throw new ValidationError(
-        `Calendar "${calendarFilter}" matches several calendars (${candidates
-          .map(calendarLabel)
-          .join(", ")}); use the exact name`,
+        `Calendar "${calendarFilter}" matches several calendars; use the calendar's URL or last URL segment. ${this.availableCalendars(
+          candidates,
+        )}`,
         "calendar",
         calendarFilter,
       );
@@ -330,16 +1011,20 @@ export class CalendarService {
   ): DAVCalendar[] {
     const writable = calendars.filter(calendar => this.holdsEvents(calendar));
     const allowed = this.allowedCalendars();
+    // Every entry must name exactly one calendar: one that names none would
+    // silently leave a calendar out, and free/busy would show it as free.
     const ranked = allowed
       ? allowed.flatMap(name => {
           const matches = writable.filter(calendar =>
             this.calendarMatches(calendar, name),
           );
-          if (matches.length > 1) {
+          if (matches.length !== 1) {
             throw new ValidationError(
-              `MAILBOX_CALENDARS entry "${name}" matches several calendars (${matches
-                .map(calendarLabel)
-                .join(", ")}); use a unique name or the calendar's URL`,
+              `MAILBOX_CALENDARS entry "${name}" ${
+                matches.length === 0
+                  ? "matches no calendar"
+                  : `matches several calendars; use a unique name or the calendar's URL`
+              }. ${this.availableCalendars(writable)}`,
               "calendar",
               name,
             );
@@ -352,6 +1037,20 @@ export class CalendarService {
       calendar =>
         !calendarFilter || this.calendarMatches(calendar, calendarFilter),
     );
+  }
+
+  /** "Available calendars: Display Name (last URL segment), ...". */
+  private availableCalendars(calendars: DAVCalendar[]): string {
+    const listed = calendars
+      .filter(calendar => this.holdsEvents(calendar))
+      .map(calendar => {
+        const url = calendar.url.replace(/\/+$/, "");
+        const segment = this.decodeSegment(url.slice(url.lastIndexOf("/") + 1));
+        return `${(calendar.displayName as string) || segment} (${segment})`;
+      });
+    return listed.length
+      ? `Available calendars: ${listed.join(", ")}`
+      : "The server reports no calendar that can hold events";
   }
 
   /** The MAILBOX_CALENDARS names, or undefined when it restricts nothing. */
@@ -396,6 +1095,27 @@ export class CalendarService {
     return (
       !calendar.components?.length || calendar.components.includes("VEVENT")
     );
+  }
+
+  /**
+   * Sends a write and checks the answer. A server error (5xx) or network
+   * failure counts towards opening the circuit; a refusal (4xx) is about
+   * this request and is reported without counting.
+   */
+  private async writeChecked(
+    action: "create" | "update" | "delete",
+    calendar: string,
+    uid: string,
+    send: () => Promise<Response>,
+  ): Promise<void> {
+    const response = await this.circuitBreaker.execute(async () => {
+      const response = await send();
+      if (response.status >= 500) {
+        this.assertWritten(response, action, calendar, uid);
+      }
+      return response;
+    });
+    this.assertWritten(response, action, calendar, uid);
   }
 
   private assertWritten(
@@ -579,116 +1299,113 @@ export class CalendarService {
   private async fetchCalendarEvents(
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    try {
-      const calendars =
-        this.connection.calendars || (await this.discoverCalendars());
-      const allEvents: CalendarEvent[] = [];
+    // Reads choose calendars exactly like writes do, so MAILBOX_CALENDARS and
+    // the calendar argument mean the same thing everywhere.
+    const all = await this.listCalendars();
+    const calendars = this.selectCalendars(all, options.calendar);
+    if (calendars.length === 0) {
+      throw this.noCalendarError(all, options.calendar);
+    }
 
-      for (const calendar of calendars) {
-        if (options.calendar && calendar !== options.calendar) {
-          continue;
-        }
-
-        const calendarEvents = await this.fetchEventsFromCalendar(
-          calendar,
-          options,
+    // Every calendar in scope is read or the call fails. Some calendars'
+    // events without the others would show the missing ones' appointments
+    // as free time, so a failure is never narrowed to a partial list.
+    const allEvents: CalendarEvent[] = [];
+    const failures: string[] = [];
+    for (const calendar of calendars) {
+      try {
+        allEvents.push(
+          ...(await this.fetchEventsFromCalendar(calendar, options)),
         );
-        allEvents.push(...calendarEvents);
+      } catch (error) {
+        failures.push(
+          `Could not read calendar "${calendarLabel(calendar)}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
+    }
 
-      return this.sortAndLimitEvents(allEvents, options);
-    } catch (error) {
-      this.logger.error(
-        "Error fetching calendar events",
-        {
-          operation: "getEvents",
-          service: "CalendarService",
-        },
-        {
-          options,
-          error: error instanceof Error ? error.message : String(error),
-        },
+    if (failures.length > 0) {
+      const hint =
+        failures.length < calendars.length
+          ? '. Nothing was returned, since the readable calendars alone would show the unread ones as free; pass "calendar" to read one that works'
+          : "";
+      throw new CalendarError(
+        `${failures.join("; ")}${hint}`,
+        ErrorCode.CALENDAR_READ_FAILED,
+        options.calendar,
       );
-      return [];
+    }
+
+    return this.sortAndLimitEvents(allEvents, options);
+  }
+
+  /** The server's calendars; a failure is reported, never guessed around. */
+  private async listCalendars(): Promise<DAVCalendar[]> {
+    try {
+      return await this.circuitBreaker.execute(async () => {
+        const client = await this.getClient();
+        return client.fetchCalendars();
+      });
+    } catch (error) {
+      throw new CalendarError(
+        `Could not list your calendars: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        ErrorCode.CALENDAR_READ_FAILED,
+      );
     }
   }
 
-  protected async discoverCalendars(): Promise<string[]> {
-    try {
-      const calendars = await this.circuitBreaker.execute(async () => {
-        const client = await this.getClient();
-        return await client.fetchCalendars();
-      });
-
-      return calendars.map(
-        (cal: DAVCalendar) => (cal.displayName as string) || cal.url,
+  /**
+   * Why no calendar is in scope: an unknown name, or no calendar that can
+   * hold events. Lists the calendars that could have been meant.
+   */
+  private noCalendarError(
+    calendars: DAVCalendar[],
+    calendarFilter?: string,
+  ): ValidationError {
+    if (!calendarFilter) {
+      return new ValidationError(
+        "No calendar that can hold events was found",
+        "calendar",
       );
-    } catch (error) {
-      this.logger.error(
-        "Calendar discovery failed",
-        {
-          operation: "getCalendarList",
-          service: "CalendarService",
-        },
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-      return ["personal"];
     }
+    const scope = this.allowedCalendars()
+      ? " among the calendars MAILBOX_CALENDARS allows"
+      : "";
+    return new ValidationError(
+      `Calendar "${calendarFilter}" not found${scope}. ${this.availableCalendars(
+        this.selectCalendars(calendars),
+      )}`,
+      "calendar",
+      calendarFilter,
+    );
   }
 
   private async fetchEventsFromCalendar(
-    calendar: string,
+    calendar: DAVCalendar,
     options: CalendarSearchOptions,
   ): Promise<CalendarEvent[]> {
-    try {
-      const { calendars, calendarObjects } = await this.circuitBreaker.execute(
-        async () => {
-          const client = await this.getClient();
-          const calendars = await client.fetchCalendars();
-
-          const targetCalendar = calendars.find(
-            (cal: DAVCalendar) =>
-              cal.displayName === calendar || cal.url.includes(calendar),
-          );
-
-          if (!targetCalendar) {
-            throw new Error(`Calendar ${calendar} not found`);
-          }
-
-          const calendarObjects = await client.fetchCalendarObjects({
-            calendar: targetCalendar,
-            timeRange:
-              options.start && options.end
-                ? {
-                    start: options.start.toISOString(),
-                    end: options.end.toISOString(),
-                  }
-                : undefined,
-          });
-
-          return { calendars, calendarObjects };
-        },
-      );
-
-      return await this.parseCalendarObjects(calendarObjects, calendar, {
-        start: options.start,
-        end: options.end,
+    const calendarObjects = await this.circuitBreaker.execute(async () => {
+      const client = await this.getClient();
+      return client.fetchCalendarObjects({
+        calendar,
+        timeRange:
+          options.start && options.end
+            ? {
+                start: options.start.toISOString(),
+                end: options.end.toISOString(),
+              }
+            : undefined,
       });
-    } catch (error) {
-      this.logger.error(
-        `Error fetching events from calendar ${calendar}`,
-        {
-          operation: "fetchCalendarEvents",
-          service: "CalendarService",
-        },
-        {
-          calendar,
-          options,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return [];
-    }
+    });
+
+    return this.parseCalendarObjects(calendarObjects, calendarLabel(calendar), {
+      start: options.start,
+      end: options.end,
+    });
   }
 
   private parseCalendarObjects(
@@ -817,7 +1534,9 @@ export class CalendarService {
     const event = this.parseVEvent(vevent, calendar);
     const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
     if (event && recurrenceId instanceof ICAL.Time) {
-      event.id = occurrenceId(event.uid, recurrenceId);
+      event.recurrenceId = recurrenceIdText(recurrenceId);
+      event.id = `${event.uid}:${event.recurrenceId}`;
+      event.recurring = true;
     }
     return event;
   }
@@ -898,7 +1617,8 @@ export class CalendarService {
     const rangeStartMs = range.start.getTime();
 
     const add = (item: ICAL.Event, start: Date, end: Date, rid: ICAL.Time) => {
-      const id = occurrenceId(item.uid, rid);
+      const recurrenceId = recurrenceIdText(rid);
+      const id = `${item.uid}:${recurrenceId}`;
       if (seen.has(id)) {
         return;
       }
@@ -918,6 +1638,7 @@ export class CalendarService {
         occurrences.push({
           ...base,
           id,
+          recurrenceId,
           start,
           end,
           recurring: true,

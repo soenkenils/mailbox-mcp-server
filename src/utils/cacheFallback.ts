@@ -76,44 +76,6 @@ export function createCacheFetcher(
 }
 
 /**
- * Options for {@link withCacheFallback}.
- */
-export interface CacheFallbackOptions<T> {
-  cacheKey: string;
-  cache: LocalCache;
-  fetch: () => Promise<T>;
-  /** See {@link CacheFallback}; omit it to rethrow connection errors. */
-  defaultValue?: T;
-  logger: LoggerLike;
-  operation: string;
-  service: string;
-  ttl?: number;
-  /** No longer logged; accepted so existing callers still compile. */
-  logContext?: Record<string, unknown>;
-}
-
-/**
- * One-shot form of {@link createCacheFetcher}.
- *
- * @deprecated Use createCacheFetcher. Kept for CalendarService until it
- * moves over (it is being changed in an open PR).
- */
-export function withCacheFallback<T>(
-  options: CacheFallbackOptions<T>,
-): Promise<T> {
-  const { cache, logger, service, cacheKey, fetch, operation, ttl } = options;
-  return createCacheFetcher(cache, logger, service)(
-    cacheKey,
-    fetch,
-    operation,
-    ttl,
-    "defaultValue" in options
-      ? { defaultValue: options.defaultValue as T }
-      : undefined,
-  );
-}
-
-/**
  * Determines if an error is a connection-related error
  */
 function isConnectionError(error: unknown): boolean {

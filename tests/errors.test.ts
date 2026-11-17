@@ -110,9 +110,8 @@ describe("Custom Error Types", () => {
       expect(error.name).toBe("CalendarError");
       expect(error.calendarId).toBe("cal1");
       expect(error.eventId).toBe("event1");
-      expect(error.getUserMessage()).toBe(
-        "The requested calendar event could not be found.",
-      );
+      // The message names the UID searched for, which the caller needs.
+      expect(error.getUserMessage()).toBe("Event not found");
     });
   });
 

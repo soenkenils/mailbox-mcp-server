@@ -566,6 +566,67 @@ export const createCalendarEventSchema = v.pipe(
   ),
 );
 
+const eventUidSchema = v.pipe(
+  v.string("UID must be a string"),
+  v.trim(),
+  v.minLength(1, "UID cannot be empty"),
+  v.maxLength(255, "UID too long"),
+  v.transform(sanitizeString),
+);
+
+export const updateCalendarEventSchema = v.pipe(
+  v.strictObject({
+    uid: eventUidSchema,
+    calendar: v.optional(calendarNameSchema),
+    summary: v.optional(eventSummarySchema),
+    // A date (YYYY-MM-DD) for all-day events, a date-time for timed ones.
+    start: v.optional(eventDateSchema),
+    end: v.optional(eventDateSchema),
+    // Unlike on creation, an empty string is meaningful here: it clears the field.
+    description: v.optional(eventDescriptionSchema),
+    location: v.optional(eventLocationSchema),
+    // No default: an update must tell "not passed" from "false".
+    allDay: v.optional(v.boolean("allDay must be a boolean")),
+    attendees: v.optional(eventAttendeesSchema),
+    sendInvitations: v.optional(
+      v.boolean("sendInvitations must be a boolean"),
+      false,
+    ),
+  }),
+  v.check(
+    data =>
+      [
+        data.summary,
+        data.start,
+        data.end,
+        data.description,
+        data.location,
+        data.allDay,
+        data.attendees,
+      ].some(field => field !== undefined),
+    "Pass at least one field to change",
+  ),
+  v.check(
+    data =>
+      !data.start ||
+      !data.end ||
+      hasTime(data.start) !== hasTime(data.end) ||
+      (hasTime(data.start)
+        ? new Date(data.start) < new Date(data.end)
+        : data.start <= data.end),
+    "Start date must be before end date",
+  ),
+);
+
+export const deleteCalendarEventSchema = v.strictObject({
+  uid: eventUidSchema,
+  calendar: v.optional(calendarNameSchema),
+  notifyParticipants: v.optional(
+    v.boolean("notifyParticipants must be a boolean"),
+    false,
+  ),
+});
+
 export const getFreeBusySchema = v.pipe(
   v.object({
     start: dateSchema,
@@ -600,6 +661,12 @@ export type CreateCalendarEventInput = v.InferOutput<
   typeof createCalendarEventSchema
 >;
 export type GetFreeBusyInput = v.InferOutput<typeof getFreeBusySchema>;
+export type UpdateCalendarEventInput = v.InferOutput<
+  typeof updateCalendarEventSchema
+>;
+export type DeleteCalendarEventInput = v.InferOutput<
+  typeof deleteCalendarEventSchema
+>;
 
 // =============================================================================
 // VALIDATION UTILITIES
