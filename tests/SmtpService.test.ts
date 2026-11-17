@@ -360,6 +360,99 @@ describe("SmtpService", () => {
     });
   });
 
+  describe("network errors", () => {
+    // Shaped like nodemailer's errors: `code` is nodemailer's error type,
+    // the system errno (if any) is moved to `originalCode`
+    const nodemailerError = (
+      message: string,
+      code: string,
+      originalCode?: string,
+      extra: Record<string, unknown> = {},
+    ) =>
+      Object.assign(new Error(message), {
+        code,
+        ...(originalCode ? { originalCode } : {}),
+        command: "CONN",
+        ...extra,
+      });
+
+    it.each([
+      ["ESOCKET", "ECONNREFUSED", "connect ECONNREFUSED 192.0.2.1:465"],
+      ["ESOCKET", "ECONNRESET", "read ECONNRESET"],
+      ["ESOCKET", "ENETUNREACH", "connect ENETUNREACH 2001:db8::1:465"],
+      ["ESOCKET", "EHOSTUNREACH", "connect EHOSTUNREACH 192.0.2.1:465"],
+      ["ETIMEDOUT", undefined, "Connection timeout"],
+      ["ECONNECTION", undefined, "Connection closed unexpectedly"],
+      ["EDNS", "ENOTFOUND", "getaddrinfo ENOTFOUND smtp.example.com"],
+    ])("should mark the connection unhealthy when sendMail fails with %s (%s)", async (code, originalCode, message) => {
+      mockSendMail.mockRejectedValue(
+        nodemailerError(message, code, originalCode),
+      );
+
+      const result = await smtpService.sendEmail(createMockEmailComposition());
+
+      expect(result.success).toBe(false);
+      expect(mockWrapper.isHealthy).toBe(false);
+      expect(mockPool.release).toHaveBeenCalledWith(mockWrapper);
+    });
+
+    it("should recognise a raw system errno outside nodemailer's wrapping", async () => {
+      mockSendMail.mockRejectedValue(
+        Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+      );
+
+      await smtpService.sendEmail(createMockEmailComposition());
+
+      expect(mockWrapper.isHealthy).toBe(false);
+    });
+
+    it("should mark the connection unhealthy when verify fails with a network error", async () => {
+      mockVerify.mockRejectedValue(
+        nodemailerError(
+          "connect ENETUNREACH 192.0.2.1:465",
+          "ESOCKET",
+          "ENETUNREACH",
+        ),
+      );
+
+      const result = await smtpService.verifyConnection();
+
+      expect(result).toBe(false);
+      expect(mockWrapper.isHealthy).toBe(false);
+    });
+
+    it.each([
+      [
+        "EAUTH",
+        nodemailerError(
+          "Invalid login: 535 Authentication failed",
+          "EAUTH",
+          undefined,
+          { command: "AUTH PLAIN", responseCode: 535 },
+        ),
+      ],
+      [
+        "EENVELOPE",
+        nodemailerError("No recipients defined", "EENVELOPE", undefined, {
+          command: "API",
+        }),
+      ],
+      [
+        "EMESSAGE",
+        nodemailerError("Message failed: 554 rejected", "EMESSAGE", undefined, {
+          command: "DATA",
+          responseCode: 554,
+        }),
+      ],
+    ])("should keep the connection healthy for %s", async (_code, error) => {
+      mockSendMail.mockRejectedValue(error);
+
+      await smtpService.sendEmail(createMockEmailComposition());
+
+      expect(mockWrapper.isHealthy).toBe(true);
+    });
+  });
+
   describe("verifyConnection", () => {
     it("should verify connection successfully", async () => {
       const result = await smtpService.verifyConnection();

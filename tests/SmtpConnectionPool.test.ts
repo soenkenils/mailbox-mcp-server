@@ -129,6 +129,20 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
     });
 
+    it("should hand nodemailer the configured hostname, not a resolved address", async () => {
+      const nodemailer = await import("nodemailer");
+      const wrapper = await pool.acquire();
+
+      // nodemailer resolves A and AAAA itself and falls back between IPv4
+      // and IPv6 (autoSelectFamily); an IP literal here would pin the
+      // transport to one address and disable that fallback
+      const options = (nodemailer.default.createTransport as Mock).mock
+        .calls[0][0];
+      expect(options.host).toBe("smtp.example.com");
+      expect(options.tls).not.toHaveProperty("servername");
+      await pool.release(wrapper);
+    });
+
     it("should require TLS when the connection starts unencrypted", async () => {
       await pool.destroy();
       pool = new SmtpConnectionPool({
@@ -303,11 +317,10 @@ describe("SmtpConnectionPool", () => {
   describe("SMTP-specific metrics", () => {
     it("should provide SMTP metrics with verification info", async () => {
       const wrapper = await pool.acquire();
+      await pool.release(wrapper);
+      // Set after release: release resets failures of healthy connections
       wrapper.verificationFailures = 1;
       wrapper.lastVerified = new Date(Date.now() - 2000); // Needs verification
-      wrapper.isHealthy = false; // Mark as unhealthy so release won't reset failures
-
-      await pool.release(wrapper);
 
       const metrics = pool.getSmtpMetrics();
 
@@ -323,14 +336,12 @@ describe("SmtpConnectionPool", () => {
 
     it("should track verification metrics correctly", async () => {
       const wrapper1 = await pool.acquire();
-      wrapper1.verificationFailures = 2;
-      wrapper1.isHealthy = false; // Prevent reset on release
-      await pool.release(wrapper1);
-
       const wrapper2 = await pool.acquire();
-      wrapper2.verificationFailures = 1;
-      wrapper2.isHealthy = false; // Prevent reset on release
+      await pool.release(wrapper1);
       await pool.release(wrapper2);
+      // Set after release, which resets failures of healthy connections
+      wrapper1.verificationFailures = 2;
+      wrapper2.verificationFailures = 1;
 
       const metrics = pool.getSmtpMetrics();
       expect(metrics.totalVerificationFailures).toBe(3);
@@ -431,6 +442,61 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper);
 
       expect(wrapper.verificationFailures).toBe(1);
+    });
+
+    it("should destroy an unhealthy connection on release so the next acquire creates a new one", async () => {
+      const wrapper = await pool.acquire();
+      const closeSpy = vi.spyOn(wrapper.connection, "close");
+      wrapper.isHealthy = false;
+
+      await pool.release(wrapper);
+
+      expect(closeSpy).toHaveBeenCalled();
+      expect(pool.getMetrics().totalConnections).toBe(0);
+
+      const next = await pool.acquire();
+      expect(next.id).not.toBe(wrapper.id);
+      await pool.release(next);
+    });
+
+    it("should destroy an unhealthy connection only once when a request is waiting", async () => {
+      const singlePool = new SmtpConnectionPool({
+        ...config,
+        maxConnections: 1,
+        acquireTimeoutMs: 1000,
+      });
+      try {
+        const wrapper = await singlePool.acquire();
+        const closeSpy = vi.spyOn(wrapper.connection, "close");
+        const waiting = singlePool.acquire();
+        wrapper.isHealthy = false;
+
+        await singlePool.release(wrapper);
+        const next = await waiting;
+
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(next.id).not.toBe(wrapper.id);
+        const metrics = singlePool.getMetrics();
+        expect(metrics.totalDestroyed).toBe(1);
+        expect(metrics.totalConnections).toBe(1);
+        await singlePool.release(next);
+      } finally {
+        await singlePool.destroy();
+      }
+    });
+
+    it("should destroy an unhealthy connection only once when released twice", async () => {
+      const wrapper = await pool.acquire();
+      const closeSpy = vi.spyOn(wrapper.connection, "close");
+      wrapper.isHealthy = false;
+
+      await Promise.all([pool.release(wrapper), pool.release(wrapper)]);
+      await pool.release(wrapper);
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      const metrics = pool.getMetrics();
+      expect(metrics.totalDestroyed).toBe(1);
+      expect(metrics.totalConnections).toBe(0);
     });
   });
 

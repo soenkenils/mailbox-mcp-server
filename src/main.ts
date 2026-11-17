@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -53,6 +54,7 @@ import {
   toolOutcome,
   unknownToolError,
 } from "./types/tool.types.js";
+import { isMainModule } from "./utils/isMainModule.js";
 import { summarizeArgs } from "./utils/toolArgs.js";
 
 /**
@@ -531,7 +533,7 @@ async function main(): Promise<void> {
   await server.start();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   main().catch(error => {
     const mcpError = ErrorUtils.toMCPError(error as Error, {
       operation: "main",

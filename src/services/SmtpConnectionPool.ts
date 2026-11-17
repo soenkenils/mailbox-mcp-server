@@ -151,6 +151,18 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
     }
 
     await super.release(wrapper);
+
+    // Drop an unhealthy connection (e.g. after a network-level error) that
+    // super.release put back as idle; the next acquire creates and verifies a
+    // fresh one. With a live waiter super.release has already taken it out
+    // of the pool, and an ignored second release leaves nothing to do.
+    if (
+      !smtpWrapper.isHealthy &&
+      !wrapper.inUse &&
+      this.connections.has(wrapper.id)
+    ) {
+      await this.destroyConnectionWrapper(wrapper);
+    }
   }
 
   protected needsVerification(wrapper: SmtpConnectionWrapper): boolean {

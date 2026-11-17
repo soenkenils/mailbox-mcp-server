@@ -19,6 +19,44 @@ import {
   type SmtpPoolConfig,
 } from "./SmtpConnectionPool.js";
 
+// Connection-level error types nodemailer sets as `code`: its transient
+// errors (ECONNECTION, ESOCKET, ETIMEDOUT, see isTransientError) plus a failed
+// DNS lookup. nodemailer replaces the system errno with these and keeps the
+// errno in `originalCode`.
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNECTION",
+  "ESOCKET",
+  "ETIMEDOUT",
+  "EDNS",
+]);
+
+// Raw system errnos, as found in `originalCode` (or in `code` of an error
+// that did not pass through nodemailer)
+const SYSTEM_NETWORK_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+
+// True when the error means the pooled connection is no longer usable, e.g.
+// after a VPN or network change
+function isNetworkError(error: unknown): boolean {
+  const { code, originalCode } =
+    (error as { code?: unknown; originalCode?: unknown } | null) ?? {};
+  return (
+    (typeof code === "string" &&
+      (CONNECTION_ERROR_CODES.has(code) ||
+        SYSTEM_NETWORK_ERROR_CODES.has(code))) ||
+    (typeof originalCode === "string" &&
+      SYSTEM_NETWORK_ERROR_CODES.has(originalCode))
+  );
+}
+
 export class SmtpService {
   private pool: SmtpConnectionPool;
   private logger = createLogger("SmtpService");
@@ -70,6 +108,9 @@ export class SmtpService {
         messageId: info.messageId,
       };
     } catch (error) {
+      if (wrapper && isNetworkError(error)) {
+        wrapper.isHealthy = false;
+      }
       await this.logger.error(
         "Failed to send email",
         {
@@ -100,6 +141,9 @@ export class SmtpService {
       await wrapper.connection.verify();
       return true;
     } catch (error) {
+      if (wrapper && isNetworkError(error)) {
+        wrapper.isHealthy = false;
+      }
       await this.logger.error(
         "SMTP connection verification failed",
         {
