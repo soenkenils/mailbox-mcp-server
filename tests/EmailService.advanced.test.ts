@@ -1,4 +1,5 @@
 import type { ImapFlow } from "imapflow";
+import { type AddressObject, type ParsedMail, simpleParser } from "mailparser";
 import {
   afterEach,
   beforeEach,
@@ -24,10 +25,7 @@ type TestableEmailService = WithPrivates<
   EmailService,
   {
     isConnectionError(error: unknown): boolean;
-    formatAddressesForHeader(
-      addresses: Array<{ name?: string; address: string }>,
-    ): string;
-    buildEmailContent(composition: EmailComposition): string;
+    buildEmailContent(composition: EmailComposition): Promise<Buffer>;
     tryGetStaleCache<T>(key: string): T | null;
     clearFolderCache(folder: string): void;
     parseAddressesFromEnvelope(
@@ -189,131 +187,163 @@ describe("EmailService - Advanced Coverage", () => {
     });
   });
 
-  describe("formatAddressesForHeader", () => {
-    it("should format addresses with names", () => {
-      const addresses = [
-        { name: "John Doe", address: "john@example.com" },
-        { name: "Jane Smith", address: "jane@example.com" },
-      ];
-      const result = service.formatAddressesForHeader(addresses);
-      expect(result).toBe(
-        '"John Doe" <john@example.com>, "Jane Smith" <jane@example.com>',
-      );
-    });
-
-    it("should format addresses without names", () => {
-      const addresses = [
-        { address: "john@example.com" },
-        { address: "jane@example.com" },
-      ];
-      const result = service.formatAddressesForHeader(addresses);
-      expect(result).toBe("john@example.com, jane@example.com");
-    });
-
-    it("should handle mixed addresses with and without names", () => {
-      const addresses = [
-        { name: "John Doe", address: "john@example.com" },
-        { address: "jane@example.com" },
-      ];
-      const result = service.formatAddressesForHeader(addresses);
-      expect(result).toBe('"John Doe" <john@example.com>, jane@example.com');
-    });
-
-    it("should handle empty array", () => {
-      const result = service.formatAddressesForHeader([]);
-      expect(result).toBe("");
-    });
-  });
-
   describe("buildEmailContent", () => {
-    it("should build basic email content with plain text", () => {
-      const composition: EmailComposition = {
+    const build = async (composition: EmailComposition) => {
+      const raw = (await service.buildEmailContent(composition)).toString();
+      const parsed: ParsedMail = await simpleParser(raw);
+      return { raw, parsed };
+    };
+
+    const addressesOf = (field: AddressObject | AddressObject[] | undefined) =>
+      (Array.isArray(field) ? field : field ? [field] : []).flatMap(
+        group => group.value,
+      );
+
+    it("should build a plain text draft", async () => {
+      const { raw, parsed } = await build({
         to: [{ address: "recipient@example.com" }],
         subject: "Test Subject",
         text: "Hello, World!",
-      };
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toContain("To: recipient@example.com");
-      expect(content).toContain("Subject: Test Subject");
-      expect(content).toContain("Content-Type: text/plain; charset=utf-8");
-      expect(content).toContain("Hello, World!");
+      expect(addressesOf(parsed.to).map(a => a.address)).toEqual([
+        "recipient@example.com",
+      ]);
+      expect(parsed.subject).toBe("Test Subject");
+      expect(parsed.text?.trim()).toBe("Hello, World!");
+      expect(raw).toMatch(/^Content-Type: text\/plain; charset=utf-8/im);
     });
 
-    it("should build email content with HTML", () => {
-      const composition: EmailComposition = {
+    it("should set From to the account the draft is saved in", async () => {
+      const { parsed } = await build({
+        to: [{ address: "recipient@example.com" }],
+        subject: "Test Subject",
+        text: "Test",
+      });
+
+      expect(parsed.from?.value).toEqual([
+        { name: "Test", address: "test@example.com" },
+      ]);
+    });
+
+    it("should declare MIME-Version, Date and a Message-ID on the account's domain", async () => {
+      const { raw, parsed } = await build({
+        to: [{ address: "recipient@example.com" }],
+        subject: "Test Subject",
+        text: "Test",
+      });
+
+      expect(raw).toMatch(/^MIME-Version: 1\.0\r$/m);
+      expect(parsed.date).toBeInstanceOf(Date);
+      expect(parsed.messageId).toMatch(/^<[^@\s]+@example\.com>$/);
+    });
+
+    it("should build an HTML draft", async () => {
+      const { parsed } = await build({
         to: [{ address: "recipient@example.com" }],
         subject: "Test Subject",
         html: "<p>Hello, World!</p>",
-      };
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toContain("Content-Type: text/html; charset=utf-8");
-      expect(content).toContain("<p>Hello, World!</p>");
+      expect(parsed.html).toContain("<p>Hello, World!</p>");
     });
 
-    it("should include CC recipients", () => {
-      const composition: EmailComposition = {
+    it("should keep both text and HTML when both are given", async () => {
+      const { raw, parsed } = await build({
+        to: [{ address: "recipient@example.com" }],
+        subject: "Test Subject",
+        text: "Plain version",
+        html: "<p>HTML version</p>",
+      });
+
+      expect(raw).toMatch(/^Content-Type: multipart\/alternative/im);
+      expect(parsed.text?.trim()).toBe("Plain version");
+      expect(parsed.html).toContain("<p>HTML version</p>");
+    });
+
+    it("should include CC and keep BCC in the saved draft", async () => {
+      const { parsed } = await build({
         to: [{ address: "recipient@example.com" }],
         cc: [{ address: "cc@example.com" }],
-        subject: "Test Subject",
-        text: "Test",
-      };
-
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toContain("CC: cc@example.com");
-    });
-
-    it("should include BCC recipients", () => {
-      const composition: EmailComposition = {
-        to: [{ address: "recipient@example.com" }],
         bcc: [{ address: "bcc@example.com" }],
         subject: "Test Subject",
         text: "Test",
-      };
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toContain("BCC: bcc@example.com");
+      expect(addressesOf(parsed.cc).map(a => a.address)).toEqual([
+        "cc@example.com",
+      ]);
+      expect(addressesOf(parsed.bcc).map(a => a.address)).toEqual([
+        "bcc@example.com",
+      ]);
     });
 
-    it("should generate Date header", () => {
-      const composition: EmailComposition = {
-        to: [{ address: "recipient@example.com" }],
+    it("should encode non-ASCII subjects and names", async () => {
+      const { raw, parsed } = await build({
+        to: [{ name: "Jörg Müller", address: "joerg@example.com" }],
+        subject: "Grüße aus Kiel",
+        text: "Test",
+      });
+
+      const headers = raw.slice(0, raw.indexOf("\r\n\r\n"));
+      // Header lines are 7-bit; the words come back through RFC 2047.
+      expect(headers).not.toMatch(/[^ -~\r\n\t]/);
+      expect(parsed.subject).toBe("Grüße aus Kiel");
+      expect(addressesOf(parsed.to)).toEqual([
+        { name: "Jörg Müller", address: "joerg@example.com" },
+      ]);
+    });
+
+    // Display names crafted to read as further recipients, or a new header,
+    // if they reached the header unescaped
+    it.each([
+      'X" <evil@example.com>, "Y',
+      "Evil, Inc. <evil@example.com>",
+      'Back\\slash \\" <evil@example.com>',
+      "Line\r\nBcc: evil@example.com",
+      "Jörg Müller <evil@example.com>, 日本",
+    ])("should keep %j as one display name in to, cc and bcc", async name => {
+      const { raw, parsed } = await build({
+        to: [{ name, address: "a@example.com" }],
+        cc: [{ name, address: "c@example.com" }],
+        bcc: [{ name, address: "b@example.com" }],
         subject: "Test Subject",
         text: "Test",
-      };
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toMatch(/Date: .+/);
+      expect(addressesOf(parsed.to)).toEqual([
+        { name, address: "a@example.com" },
+      ]);
+      expect(addressesOf(parsed.cc)).toEqual([
+        { name, address: "c@example.com" },
+      ]);
+      expect(addressesOf(parsed.bcc)).toEqual([
+        { name, address: "b@example.com" },
+      ]);
+      expect(raw.match(/^Bcc:/gim)).toHaveLength(1);
     });
 
-    it("should generate Message-ID header", () => {
-      const composition: EmailComposition = {
+    it("should end every line with CRLF and keep the body's line breaks", async () => {
+      const { raw, parsed } = await build({
         to: [{ address: "recipient@example.com" }],
         subject: "Test Subject",
-        text: "Test",
-      };
+        text: "Zeile 1\nZeile 2\r\n\nZeile 4\n\tEingerückt",
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toMatch(/Message-ID: <.+@mailbox\.org>/);
+      expect(raw).not.toMatch(/(?<!\r)\n/);
+      expect(parsed.text?.replace(/\r\n/g, "\n").trim()).toBe(
+        "Zeile 1\nZeile 2\n\nZeile 4\n\tEingerückt",
+      );
     });
 
-    it("should handle empty content", () => {
-      const composition: EmailComposition = {
+    it("should build a draft with no body", async () => {
+      const { parsed } = await build({
         to: [{ address: "recipient@example.com" }],
         subject: "Test Subject",
-      };
+      });
 
-      const content = service.buildEmailContent(composition);
-
-      expect(content).toContain("Subject: Test Subject");
-      expect(content.endsWith("\r\n\r\n")).toBe(true);
+      expect(parsed.subject).toBe("Test Subject");
+      expect(parsed.text ?? "").toBe("");
     });
   });
 
@@ -1061,8 +1091,8 @@ describe("EmailService - Advanced Coverage", () => {
       expect(result.uid).toBe(456);
       const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
       expect(appendCall[0]).toBe("Drafts");
-      expect(appendCall[1]).toContain("Draft Subject");
-      expect(appendCall[1]).toContain("Draft content");
+      expect(String(appendCall[1])).toContain("Draft Subject");
+      expect(String(appendCall[1])).toContain("Draft content");
       expect(appendCall[2]).toEqual(["\\Draft"]);
     });
 
@@ -1082,8 +1112,8 @@ describe("EmailService - Advanced Coverage", () => {
 
       expect(result.success).toBe(true);
       const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
-      expect(appendCall[1]).toContain("Content-Type: text/html");
-      expect(appendCall[1]).toContain("<p>HTML content</p>");
+      expect(String(appendCall[1])).toContain("Content-Type: text/html");
+      expect(String(appendCall[1])).toContain("<p>HTML content</p>");
     });
 
     it("should create draft in custom folder", async () => {
@@ -1122,8 +1152,8 @@ describe("EmailService - Advanced Coverage", () => {
       await service.createDraft(composition);
 
       const appendCall = vi.mocked(mockWrapper.connection.append).mock.calls[0];
-      expect(appendCall[1]).toContain("CC: cc@example.com");
-      expect(appendCall[1]).toContain("BCC: bcc@example.com");
+      expect(String(appendCall[1])).toMatch(/^Cc: cc@example\.com\r$/im);
+      expect(String(appendCall[1])).toMatch(/^Bcc: bcc@example\.com\r$/im);
     });
 
     it("should clear cache after creating draft", async () => {

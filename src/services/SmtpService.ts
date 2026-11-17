@@ -12,6 +12,7 @@ import {
   ErrorUtils,
   ValidationError,
 } from "../types/errors.js";
+import { senderFor, toMailAddresses } from "../utils/mailAddresses.js";
 import { createLogger } from "./Logger.js";
 import {
   SmtpConnectionPool,
@@ -57,6 +58,12 @@ function isNetworkError(error: unknown): boolean {
   );
 }
 
+// Replaces anything shaped like an email address, so a server's reply that
+// quotes a recipient does not carry it into the logs.
+function redactAddresses(text: string): string {
+  return text.replace(/[^\s<>"'@,;:]+@[^\s<>"',;]+/g, "[address]");
+}
+
 export class SmtpService {
   private pool: SmtpConnectionPool;
   private logger = createLogger("SmtpService");
@@ -81,15 +88,10 @@ export class SmtpService {
       const transporter = wrapper.connection;
 
       const mailOptions = {
-        from: {
-          name: this.extractNameFromEmail(this.pool.connectionConfig.user),
-          address: this.pool.connectionConfig.user,
-        },
-        to: this.formatAddresses(composition.to),
-        cc: composition.cc ? this.formatAddresses(composition.cc) : undefined,
-        bcc: composition.bcc
-          ? this.formatAddresses(composition.bcc)
-          : undefined,
+        from: senderFor(this.pool.connectionConfig.user),
+        to: toMailAddresses(composition.to),
+        cc: composition.cc && toMailAddresses(composition.cc),
+        bcc: composition.bcc && toMailAddresses(composition.bcc),
         subject: composition.subject,
         text: composition.text,
         html: composition.html,
@@ -111,6 +113,10 @@ export class SmtpService {
       if (wrapper && isNetworkError(error)) {
         wrapper.isHealthy = false;
       }
+      // Shape only: the logger forwards to stderr and to the MCP client's log
+      // stream, and recipients, subject and body are the user's mail.
+      const { code, responseCode } =
+        (error as { code?: unknown; responseCode?: unknown } | null) ?? {};
       await this.logger.error(
         "Failed to send email",
         {
@@ -118,8 +124,20 @@ export class SmtpService {
           service: "SmtpService",
         },
         {
-          composition,
-          error: error instanceof Error ? error.message : String(error),
+          recipients:
+            composition.to.length +
+            (composition.cc?.length ?? 0) +
+            (composition.bcc?.length ?? 0),
+          subjectLength: composition.subject.length,
+          hasText: Boolean(composition.text),
+          hasHtml: Boolean(composition.html),
+          attachments: composition.attachments?.length ?? 0,
+          code,
+          responseCode,
+          // A rejection names the refused recipient, e.g. "550 <bob@x>: ..."
+          error: redactAddresses(
+            error instanceof Error ? error.message : String(error),
+          ),
         },
       );
       return {
@@ -158,27 +176,6 @@ export class SmtpService {
         await this.pool.release(wrapper);
       }
     }
-  }
-
-  private formatAddresses(
-    addresses: Array<{ name?: string; address: string }>,
-  ): string {
-    return addresses
-      .map(addr => {
-        if (addr.name) {
-          return `"${addr.name}" <${addr.address}>`;
-        }
-        return addr.address;
-      })
-      .join(", ");
-  }
-
-  private extractNameFromEmail(email: string): string {
-    const localPart = email.split("@")[0];
-    return localPart
-      .split(/[._-]/)
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
   }
 
   async close(): Promise<void> {

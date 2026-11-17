@@ -128,8 +128,8 @@ Each input schema is closed (`additionalProperties: false`). Undeclared argument
 | **`get_email`** | One message in full by UID, with attachment metadata. UIDs are per folder | read-only | `found`, `message` (headers, `cc`, `body`, `attachments`) |
 | **`get_email_thread`** | Every message in a conversation, found by the Message-ID of any message in it; bodies are shortened to 200 characters | read-only | `found`, `subject`, `participants`, `lastActivity`, `messages` (`uid`, `preview`, `truncated`) |
 | **`get_folders`** | Every folder with its path, flags and special-use role | read-only | `folders` |
-| **`send_email`** | Send a message over SMTP immediately; needs `text` or `html` | destructive, open-world | `success`, `messageId` |
-| **`create_draft`** | Save a message to Drafts without sending it; the body may be empty | additive | `success`, `uid`, `folder` |
+| **`send_email`** | Send a message over SMTP immediately; needs `text` or `html`. Line breaks in `text` are kept; subjects and display names are single-line | destructive, open-world | `success`, `messageId` |
+| **`create_draft`** | Save a message to Drafts without sending it; the body may be empty. The draft is built like sent mail: your account as sender, encoded headers, text and HTML both kept, Bcc remembered | additive | `success`, `uid`, `folder` |
 | **`move_email`** | Move one message to another folder (it gets a new UID there) | idempotent | – |
 | **`mark_email`** | Add or remove flags: `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, `\Draft` (server keywords such as `\Junk` are accepted too; `\Recent` is refused, the server owns it) | idempotent | – |
 | **`delete_email`** | Move one message to the trash, or with `permanent: true` expunge it | destructive | – |

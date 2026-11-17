@@ -281,6 +281,34 @@ describe("SmtpConnectionPool", () => {
       await pool.release(wrapper2);
     });
 
+    // createConnection verifies (one SMTP login); without recording that, the
+    // health check verified the new connection again on every tick until it
+    // timed out idle.
+    it("should not re-verify a freshly created connection on health-check ticks", async () => {
+      const wrapper = await pool.acquire();
+      const verifySpy = vi.spyOn(wrapper.connection, "verify");
+      await pool.release(wrapper);
+
+      // healthCheckIntervalMs is 50, verificationIntervalMs 1000
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      expect(verifySpy).not.toHaveBeenCalled();
+      expect(pool.getSmtpMetrics().connectionsNeedingVerification).toBe(0);
+    });
+
+    it("should count a passing health-check verification as verified", async () => {
+      const wrapper = await pool.acquire();
+      await pool.release(wrapper);
+      wrapper.lastVerified = new Date(Date.now() - 2000);
+      const verifySpy = vi.spyOn(wrapper.connection, "verify");
+
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      // Verified once when due, then not again within the interval
+      expect(verifySpy).toHaveBeenCalledTimes(1);
+      expect(wrapper.lastVerified.getTime()).toBeGreaterThan(Date.now() - 1000);
+    });
+
     it("should track verification failures", async () => {
       const wrapper = await pool.acquire();
       wrapper.lastVerified = new Date(Date.now() - 2000); // Force verification

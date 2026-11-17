@@ -1,4 +1,5 @@
-import type { Transporter } from "nodemailer";
+import { simpleParser } from "mailparser";
+import nodemailer, { type Transporter } from "nodemailer";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type {
   SmtpConnectionWrapper,
@@ -185,7 +186,7 @@ describe("SmtpService", () => {
           name: "Test",
           address: "test@example.com",
         },
-        to: '"John Doe" <john@example.com>',
+        to: [{ name: "John Doe", address: "john@example.com" }],
         cc: undefined,
         bcc: undefined,
         subject: "Test Subject",
@@ -205,8 +206,8 @@ describe("SmtpService", () => {
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          cc: '"Jane Smith" <jane@example.com>',
-          bcc: "secret@example.com",
+          cc: [{ name: "Jane Smith", address: "jane@example.com" }],
+          bcc: [{ name: "", address: "secret@example.com" }],
         }),
       );
     });
@@ -263,7 +264,10 @@ describe("SmtpService", () => {
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: '"John Doe" <john@example.com>, jane@example.com',
+          to: [
+            { name: "John Doe", address: "john@example.com" },
+            { name: "", address: "jane@example.com" },
+          ],
         }),
       );
     });
@@ -280,6 +284,54 @@ describe("SmtpService", () => {
         "Failed to send email: SMTP connection failed",
       );
       expect(result.messageId).toBeUndefined();
+    });
+
+    // The logger forwards to stderr and to the MCP client's log stream, so a
+    // failed send must log its shape only, never the mail itself.
+    it("should log only the shape of a failed send", async () => {
+      const logError = vi.spyOn(
+        (smtpService as unknown as { logger: { error: Mock } }).logger,
+        "error",
+      );
+      mockSendMail.mockRejectedValue(
+        Object.assign(
+          new Error(
+            "Can't send mail - all recipients were rejected: 550 5.1.1 <secret-recipient@example.com>: Recipient address rejected",
+          ),
+          { code: "EENVELOPE", responseCode: 550 },
+        ),
+      );
+
+      await smtpService.sendEmail(
+        createMockEmailComposition({
+          to: [
+            { name: "Secret Name", address: "secret-recipient@example.com" },
+          ],
+          cc: [{ address: "secret-cc@example.com" }],
+          bcc: [{ address: "secret-bcc@example.com" }],
+          subject: "Confidential subject",
+          text: "Confidential body",
+          html: "<p>Confidential html</p>",
+          attachments: [
+            { filename: "secret.pdf", content: "Confidential attachment" },
+          ],
+        }),
+      );
+
+      expect(logError).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(logError.mock.calls);
+      expect(logged).not.toMatch(/secret|confidential/i);
+      expect(logError.mock.calls[0][2]).toEqual({
+        recipients: 3,
+        subjectLength: "Confidential subject".length,
+        hasText: true,
+        hasHtml: true,
+        attachments: 1,
+        code: "EENVELOPE",
+        responseCode: 550,
+        error:
+          "Can't send mail - all recipients were rejected: 550 5.1.1 <[address]>: Recipient address rejected",
+      });
     });
 
     it("should handle non-Error exceptions", async () => {
@@ -481,25 +533,42 @@ describe("SmtpService", () => {
     });
   });
 
-  describe("formatAddresses", () => {
-    it("should format addresses with names correctly", async () => {
+  describe("recipients", () => {
+    // Display names crafted to read as further recipients if the name were
+    // ever parsed as part of an address list
+    const CRAFTED_NAMES = [
+      'x" <evil@evil.com>, "y',
+      "Evil, Inc. <evil@evil.com>",
+      'Back\\slash \\" <evil@evil.com>',
+      "Line\r\nBcc: evil@evil.com",
+      "Jörg Müller <evil@evil.com>, 日本",
+    ];
+
+    it("should pass to, cc and bcc recipients to nodemailer as objects", async () => {
       const composition = createMockEmailComposition({
         to: [
           { name: "John Doe", address: "john@example.com" },
           { name: "Jane Smith", address: "jane@example.com" },
         ],
+        cc: [{ name: "Carl Copy", address: "carl@example.com" }],
+        bcc: [{ name: "Bea Blind", address: "bea@example.com" }],
       });
 
       await smtpService.sendEmail(composition);
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: '"John Doe" <john@example.com>, "Jane Smith" <jane@example.com>',
+          to: [
+            { name: "John Doe", address: "john@example.com" },
+            { name: "Jane Smith", address: "jane@example.com" },
+          ],
+          cc: [{ name: "Carl Copy", address: "carl@example.com" }],
+          bcc: [{ name: "Bea Blind", address: "bea@example.com" }],
         }),
       );
     });
 
-    it("should format addresses without names correctly", async () => {
+    it("should keep the address out of the display name when no name is given", async () => {
       const composition = createMockEmailComposition({
         to: [{ address: "john@example.com" }, { address: "jane@example.com" }],
       });
@@ -508,9 +577,68 @@ describe("SmtpService", () => {
 
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: "john@example.com, jane@example.com",
+          to: [
+            { name: "", address: "john@example.com" },
+            { name: "", address: "jane@example.com" },
+          ],
         }),
       );
+    });
+
+    // Real nodemailer, since what counts is the SMTP envelope it derives: the
+    // mocked sendMail above cannot show who the mail would reach.
+    it.each(
+      CRAFTED_NAMES,
+    )("should not add envelope recipients for the name %j", async name => {
+      const transporter = nodemailer.createTransport({ jsonTransport: true });
+      const sendMail = vi.spyOn(transporter, "sendMail");
+      mockWrapper.connection = transporter;
+
+      const result = await smtpService.sendEmail(
+        createMockEmailComposition({
+          to: [{ name, address: "v@victim.com" }],
+          cc: [{ name, address: "c@victim.com" }],
+          bcc: [{ name, address: "b@victim.com" }],
+        }),
+      );
+
+      expect(result.success).toBe(true);
+      const info = await sendMail.mock.results[0].value;
+      expect(info.envelope).toEqual({
+        from: "test@example.com",
+        to: ["v@victim.com", "c@victim.com", "b@victim.com"],
+      });
+    });
+
+    it.each(
+      CRAFTED_NAMES,
+    )("should keep %j as one display name in the sent message", async name => {
+      const transporter = nodemailer.createTransport({
+        streamTransport: true,
+        buffer: true,
+        newline: "unix",
+      });
+      const sendMail = vi.spyOn(transporter, "sendMail");
+      mockWrapper.connection = transporter;
+
+      await smtpService.sendEmail(
+        createMockEmailComposition({
+          to: [{ name, address: "v@victim.com" }],
+          cc: [{ name, address: "c@victim.com" }],
+        }),
+      );
+
+      const info = await sendMail.mock.results[0].value;
+      const raw = info.message.toString();
+      const parsed = await simpleParser(info.message);
+      expect(parsed.to).toMatchObject({
+        value: [{ name, address: "v@victim.com" }],
+      });
+      expect(parsed.cc).toMatchObject({
+        value: [{ name, address: "c@victim.com" }],
+      });
+      // A CR/LF in the name is RFC 2047-encoded, never a new header line
+      expect(raw).not.toMatch(/^Bcc:/im);
     });
   });
 
@@ -586,7 +714,7 @@ describe("SmtpService", () => {
       expect(result.success).toBe(true);
       expect(mockSendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: "",
+          to: [],
           subject: "",
           text: "",
         }),

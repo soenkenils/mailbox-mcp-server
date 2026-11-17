@@ -5,6 +5,7 @@ import {
   type ParsedMail,
   simpleParser,
 } from "mailparser";
+import MailComposer from "nodemailer/lib/mail-composer";
 
 // IMAP library type definitions
 interface ImapSearchCriteria {
@@ -84,6 +85,7 @@ import type {
   ImapConnection,
 } from "../types/email.types.js";
 import { createCacheFetcher } from "../utils/cacheFallback.js";
+import { senderFor, toMailAddresses } from "../utils/mailAddresses.js";
 import {
   ImapConnectionPool,
   type ImapConnectionWrapper,
@@ -149,6 +151,7 @@ export class EmailService {
   private cache: LocalCache;
   private logger = createLogger("EmailService");
   private cachedFetch: ReturnType<typeof createCacheFetcher>;
+  private sender: { name?: string; address: string };
 
   constructor(
     connection: ImapConnection,
@@ -156,6 +159,7 @@ export class EmailService {
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
   ) {
     this.cache = cache;
+    this.sender = senderFor(connection.user);
     this.cachedFetch = createCacheFetcher(
       this.cache,
       this.logger,
@@ -1105,8 +1109,7 @@ export class EmailService {
     try {
       wrapper = await this.pool.acquireForFolder(folder);
 
-      // Create email content
-      const emailContent = this.buildEmailContent(composition);
+      const emailContent = await this.buildEmailContent(composition);
 
       // Append to drafts folder
       const result = await wrapper.connection.append(folder, emailContent, [
@@ -1153,46 +1156,35 @@ export class EmailService {
     }
   }
 
-  private buildEmailContent(composition: EmailComposition): string {
-    const headers: string[] = [];
+  /**
+   * Builds the RFC 5322 message with nodemailer, the same composer that sends
+   * mail: encoded headers, CRLF lines, MIME structure (multipart/alternative
+   * when there is both text and HTML) and a Message-ID on the account's
+   * domain. Recipients go in as objects, so a crafted display name cannot add
+   * recipients or headers. Bcc is kept, since a draft has to remember who it
+   * is for.
+   */
+  private async buildEmailContent(
+    composition: EmailComposition,
+  ): Promise<Buffer> {
+    const message = new MailComposer({
+      from: this.sender,
+      to: toMailAddresses(composition.to),
+      cc: composition.cc && toMailAddresses(composition.cc),
+      bcc: composition.bcc && toMailAddresses(composition.bcc),
+      subject: composition.subject,
+      text: composition.text,
+      html: composition.html,
+      // Without this the body's line breaks pass through as is, and the bodies
+      // arrive LF-normalised from validation. IMAP APPEND stores the message
+      // unchanged, and some servers reject bare LF.
+      newline: "\r\n",
+    }).compile();
+    // MailComposer has no option for this; nodemailer's transports set it the
+    // same way.
+    message.keepBcc = true;
 
-    // Add recipients
-    headers.push(`To: ${this.formatAddressesForHeader(composition.to)}`);
-
-    if (composition.cc && composition.cc.length > 0) {
-      headers.push(`CC: ${this.formatAddressesForHeader(composition.cc)}`);
-    }
-
-    if (composition.bcc && composition.bcc.length > 0) {
-      headers.push(`BCC: ${this.formatAddressesForHeader(composition.bcc)}`);
-    }
-
-    headers.push(`Subject: ${composition.subject}`);
-    headers.push(`Date: ${new Date().toUTCString()}`);
-    headers.push(`Message-ID: <${Date.now()}.${Math.random()}@mailbox.org>`);
-
-    if (composition.html) {
-      headers.push("Content-Type: text/html; charset=utf-8");
-    } else {
-      headers.push("Content-Type: text/plain; charset=utf-8");
-    }
-
-    const content = composition.html || composition.text || "";
-
-    return `${headers.join("\r\n")}\r\n\r\n${content}`;
-  }
-
-  private formatAddressesForHeader(
-    addresses: Array<{ name?: string; address: string }>,
-  ): string {
-    return addresses
-      .map(addr => {
-        if (addr.name) {
-          return `"${addr.name}" <${addr.address}>`;
-        }
-        return addr.address;
-      })
-      .join(", ");
+    return message.build();
   }
 
   private clearFolderCache(folder: string): void {
