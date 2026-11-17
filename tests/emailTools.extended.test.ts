@@ -2,13 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EmailService } from "../src/services/EmailService.js";
 import type { SmtpService } from "../src/services/SmtpService.js";
 import { handleEmailTool } from "../src/tools/emailTools.js";
+import { textOf } from "./helpers/toolResult.js";
 
 vi.mock("../src/services/EmailService.js");
 vi.mock("../src/services/SmtpService.js");
 
 describe("Email Tools - Extended Coverage", () => {
-  let mockEmailService: Partial<EmailService>;
-  let mockSmtpService: Partial<SmtpService>;
+  let mockEmailService: Pick<
+    EmailService,
+    | "searchEmails"
+    | "getEmail"
+    | "getEmailThread"
+    | "getFolders"
+    | "createDirectory"
+    | "createDraft"
+    | "moveEmail"
+    | "markEmail"
+    | "deleteEmail"
+  >;
+  let mockSmtpService: Pick<SmtpService, "sendEmail">;
 
   beforeEach(() => {
     mockEmailService = {
@@ -55,8 +67,8 @@ describe("Email Tools - Extended Coverage", () => {
         bcc: undefined,
         html: undefined,
       });
-      expect(result.content[0].text).toContain("✅ Email sent successfully!");
-      expect(result.content[0].text).toContain("Test Email");
+      expect(textOf(result)).toContain("✅ Email sent successfully!");
+      expect(textOf(result)).toContain("Test Email");
       expect(result.isError).toBe(false);
     });
 
@@ -129,7 +141,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("❌ Failed to send email");
+      expect(textOf(result)).toContain("❌ Failed to send email");
     });
 
     it("should handle missing SMTP service", async () => {
@@ -145,7 +157,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("SMTP service not available");
+      expect(textOf(result)).toContain("SMTP service not available");
     });
   });
 
@@ -168,7 +180,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(mockEmailService.createDraft).toHaveBeenCalled();
-      expect(result.content[0].text).toContain("✅ Draft saved successfully!");
+      expect(textOf(result)).toContain("✅ Draft saved successfully!");
       expect(result.isError).toBe(false);
     });
 
@@ -210,7 +222,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("❌ Failed to save draft");
+      expect(textOf(result)).toContain("❌ Failed to save draft");
     });
   });
 
@@ -236,7 +248,7 @@ describe("Email Tools - Extended Coverage", () => {
         "INBOX",
         "Archive",
       );
-      expect(result.content[0].text).toContain("✅ Email moved successfully!");
+      expect(textOf(result)).toContain("✅ Email moved successfully!");
       expect(result.isError).toBe(false);
     });
 
@@ -257,7 +269,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("❌ Failed to move email");
+      expect(textOf(result)).toContain("❌ Failed to move email");
     });
   });
 
@@ -285,9 +297,7 @@ describe("Email Tools - Extended Coverage", () => {
         ["\\Seen"],
         "add",
       );
-      expect(result.content[0].text).toContain(
-        "✅ Email flags updated successfully!",
-      );
+      expect(textOf(result)).toContain("✅ Email flags updated successfully!");
       expect(result.isError).toBe(false);
     });
 
@@ -359,9 +369,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain(
-        "❌ Failed to update email flags",
-      );
+      expect(textOf(result)).toContain("❌ Failed to update email flags");
     });
   });
 
@@ -386,9 +394,7 @@ describe("Email Tools - Extended Coverage", () => {
         "INBOX",
         false,
       );
-      expect(result.content[0].text).toContain(
-        "✅ Email deleted successfully!",
-      );
+      expect(textOf(result)).toContain("✅ Email deleted successfully!");
       expect(result.isError).toBe(false);
     });
 
@@ -408,10 +414,10 @@ describe("Email Tools - Extended Coverage", () => {
         mockEmailService as EmailService,
       );
 
-      expect(result.content[0].text).toContain(
+      expect(textOf(result)).toContain(
         "Email marked as deleted: no trash folder found",
       );
-      expect(result.content[0].text).not.toContain("Moved to trash");
+      expect(textOf(result)).not.toContain("Moved to trash");
     });
 
     it("should delete email permanently", async () => {
@@ -453,7 +459,7 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("❌ Failed to delete email");
+      expect(textOf(result)).toContain("❌ Failed to delete email");
     });
   });
 
@@ -490,10 +496,10 @@ describe("Email Tools - Extended Coverage", () => {
       );
 
       expect(mockEmailService.getFolders).toHaveBeenCalled();
-      expect(result.content[0].text).toContain("📁 Available Email Folders");
-      expect(result.content[0].text).toContain("INBOX");
-      expect(result.content[0].text).toContain("Sent");
-      expect(result.content[0].text).toContain("Drafts");
+      expect(textOf(result)).toContain("📁 Available Email Folders");
+      expect(textOf(result)).toContain("INBOX");
+      expect(textOf(result)).toContain("Sent");
+      expect(textOf(result)).toContain("Drafts");
       expect(result.isError).toBeUndefined();
     });
 
@@ -506,7 +512,7 @@ describe("Email Tools - Extended Coverage", () => {
         mockEmailService as EmailService,
       );
 
-      expect(result.content[0].text).toContain("(0)");
+      expect(textOf(result)).toContain("(0)");
     });
   });
 });

@@ -10,11 +10,20 @@ import {
   ErrorCode,
   ValidationError,
 } from "../src/types/errors.js";
+import { textOf } from "./helpers/toolResult.js";
 
 vi.mock("../src/services/CalendarService.js");
 
 describe("Calendar Tools", () => {
-  let mockCalendarService: Partial<CalendarService>;
+  let mockCalendarService: Pick<
+    CalendarService,
+    | "getCalendarEvents"
+    | "searchCalendar"
+    | "getFreeBusy"
+    | "createCalendarEvent"
+    | "updateCalendarEvent"
+    | "deleteCalendarEvent"
+  >;
 
   const mockEvent: CalendarEvent = {
     id: "event-1",
@@ -95,7 +104,7 @@ describe("Calendar Tools", () => {
 
   describe("handleCalendarTool - get_calendar_events", () => {
     it("should retrieve calendar events with date range", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -116,13 +125,13 @@ describe("Calendar Tools", () => {
         offset: 0,
       });
 
-      expect(result.content[0].text).toContain("Team Meeting");
-      expect(result.content[0].text).toContain("Conference Room A");
-      expect(result.content[0].text).toContain("2025-06-20");
+      expect(textOf(result)).toContain("Team Meeting");
+      expect(textOf(result)).toContain("Conference Room A");
+      expect(textOf(result)).toContain("2025-06-20");
     });
 
     it("should use default dates when not provided", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -133,11 +142,11 @@ describe("Calendar Tools", () => {
       );
 
       expect(mockCalendarService.getCalendarEvents).toHaveBeenCalled();
-      expect(result.content[0].text).toContain("Found 1 calendar events");
+      expect(textOf(result)).toContain("Found 1 calendar events");
     });
 
     it("should filter by specific calendar", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -161,7 +170,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should apply limit and offset for pagination", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -185,7 +194,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should handle empty results", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([]);
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([]);
 
       const result = await handleCalendarTool(
         "get_calendar_events",
@@ -196,12 +205,12 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("Found 0 calendar events");
+      expect(textOf(result)).toContain("Found 0 calendar events");
     });
 
     it("should display all-day events correctly", async () => {
       const allDayEvent = { ...mockEvent, allDay: true };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         allDayEvent,
       ]);
 
@@ -214,12 +223,12 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("(All Day)");
+      expect(textOf(result)).toContain("(All Day)");
     });
 
     it("should display recurring events correctly", async () => {
       const recurringEvent = { ...mockEvent, recurring: true };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         recurringEvent,
       ]);
 
@@ -232,11 +241,11 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("Recurring: Yes");
+      expect(textOf(result)).toContain("Recurring: Yes");
     });
 
     it("should give each event the UID update and delete take", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -246,8 +255,8 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("UID: event-1@example.com");
-      expect(result.content[0].text).not.toContain("Occurrence:");
+      expect(textOf(result)).toContain("UID: event-1@example.com");
+      expect(textOf(result)).not.toContain("Occurrence:");
     });
 
     it.each([
@@ -270,7 +279,7 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("UID: weekly@example.com\n");
       expect(text).toContain(
         "Occurrence: 2025-06-20T10:00:00.000Z of a recurring series (update/delete with this UID change the whole series)",
@@ -302,13 +311,13 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain(
+      expect(textOf(result)).toContain(
         'Could not read calendar "work": HTTP 500',
       );
     });
 
     it("should display attendee count", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -321,7 +330,7 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("Attendees: 2");
+      expect(textOf(result)).toContain("Attendees: 2");
     });
 
     it("should truncate long descriptions", async () => {
@@ -329,7 +338,7 @@ describe("Calendar Tools", () => {
         ...mockEvent,
         description: "A".repeat(200),
       };
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockResolvedValue([
+      vi.mocked(mockCalendarService.getCalendarEvents).mockResolvedValue([
         longDescriptionEvent,
       ]);
 
@@ -342,13 +351,13 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("...");
+      expect(textOf(result)).toContain("...");
     });
   });
 
   describe("handleCalendarTool - search_calendar", () => {
     it("should search calendar events by query", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+      vi.mocked(mockCalendarService.searchCalendar).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -371,12 +380,12 @@ describe("Calendar Tools", () => {
         offset: 0,
       });
 
-      expect(result.content[0].text).toContain('matching "meeting"');
-      expect(result.content[0].text).toContain("Team Meeting");
+      expect(textOf(result)).toContain('matching "meeting"');
+      expect(textOf(result)).toContain("Team Meeting");
     });
 
     it("should use default date range (1 year) when not provided", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+      vi.mocked(mockCalendarService.searchCalendar).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -389,7 +398,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(mockCalendarService.searchCalendar).toHaveBeenCalled();
-      const callArgs = vi.mocked(mockCalendarService.searchCalendar!).mock
+      const callArgs = vi.mocked(mockCalendarService.searchCalendar).mock
         .calls[0][0];
       const daysDiff =
         (callArgs.end!.getTime() - callArgs.start!.getTime()) /
@@ -398,7 +407,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should apply limit and offset", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([
+      vi.mocked(mockCalendarService.searchCalendar).mockResolvedValue([
         mockEvent,
       ]);
 
@@ -421,7 +430,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should handle empty search results", async () => {
-      vi.mocked(mockCalendarService.searchCalendar!).mockResolvedValue([]);
+      vi.mocked(mockCalendarService.searchCalendar).mockResolvedValue([]);
 
       const result = await handleCalendarTool(
         "search_calendar",
@@ -431,7 +440,7 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("Found 0 events");
+      expect(textOf(result)).toContain("Found 0 events");
     });
   });
 
@@ -464,7 +473,7 @@ describe("Calendar Tools", () => {
         ],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+      vi.mocked(mockCalendarService.getFreeBusy).mockResolvedValue(
         freeBusyInfo,
       );
 
@@ -483,11 +492,11 @@ describe("Calendar Tools", () => {
         undefined,
       );
 
-      expect(result.content[0].text).toContain("Free/Busy Information");
-      expect(result.content[0].text).toContain("Busy Times (2)");
-      expect(result.content[0].text).toContain("Free Times (2)");
-      expect(result.content[0].text).toContain("Team Meeting");
-      expect(result.content[0].text).toContain("Client Call");
+      expect(textOf(result)).toContain("Free/Busy Information");
+      expect(textOf(result)).toContain("Busy Times (2)");
+      expect(textOf(result)).toContain("Free Times (2)");
+      expect(textOf(result)).toContain("Team Meeting");
+      expect(textOf(result)).toContain("Client Call");
     });
 
     it("should filter by specific calendar", async () => {
@@ -498,7 +507,7 @@ describe("Calendar Tools", () => {
         free: [],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+      vi.mocked(mockCalendarService.getFreeBusy).mockResolvedValue(
         freeBusyInfo,
       );
 
@@ -532,7 +541,7 @@ describe("Calendar Tools", () => {
         ],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+      vi.mocked(mockCalendarService.getFreeBusy).mockResolvedValue(
         freeBusyInfo,
       );
 
@@ -545,7 +554,7 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("No busy times");
+      expect(textOf(result)).toContain("No busy times");
     });
 
     it("should handle no free times", async () => {
@@ -562,7 +571,7 @@ describe("Calendar Tools", () => {
         free: [],
       };
 
-      vi.mocked(mockCalendarService.getFreeBusy!).mockResolvedValue(
+      vi.mocked(mockCalendarService.getFreeBusy).mockResolvedValue(
         freeBusyInfo,
       );
 
@@ -575,7 +584,7 @@ describe("Calendar Tools", () => {
         mockCalendarService as CalendarService,
       );
 
-      expect(result.content[0].text).toContain("No free times");
+      expect(textOf(result)).toContain("No free times");
     });
   });
 
@@ -590,7 +599,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Invalid input");
+      expect(textOf(result)).toContain("Invalid input");
     });
 
     it("should handle unknown tool name", async () => {
@@ -601,11 +610,11 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Unknown calendar tool");
+      expect(textOf(result)).toContain("Unknown calendar tool");
     });
 
     it("should handle service errors", async () => {
-      vi.mocked(mockCalendarService.getCalendarEvents!).mockRejectedValue(
+      vi.mocked(mockCalendarService.getCalendarEvents).mockRejectedValue(
         new Error("Connection failed"),
       );
 
@@ -619,7 +628,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Error executing");
+      expect(textOf(result)).toContain("Error executing");
     });
 
     it("should handle invalid date formats", async () => {
@@ -669,7 +678,7 @@ describe("Calendar Tools", () => {
     };
 
     it("should create a calendar event with all fields", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue(
         createResult,
       );
 
@@ -701,7 +710,7 @@ describe("Calendar Tools", () => {
         calendar: "personal",
       });
 
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(result.isError).toBeUndefined();
       expect(text).toContain("created successfully");
       expect(text).toContain("New Meeting");
@@ -715,7 +724,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should pass sendInvitations through and say invitations were requested", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue(
         createResult,
       );
 
@@ -737,7 +746,7 @@ describe("Calendar Tools", () => {
       expect(mockCalendarService.createCalendarEvent).toHaveBeenCalledWith(
         expect.objectContaining({ sendInvitations: true }),
       );
-      expect(result.content[0].text).toContain(
+      expect(textOf(result)).toContain(
         "Invitations requested for 2 attendee(s)",
       );
     });
@@ -769,7 +778,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should create a calendar event with minimal fields", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue(
         createResult,
       );
 
@@ -800,7 +809,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should take an all-day end as the last day and show it so", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue({
         ...createResult,
         summary: "Holiday",
         start: new Date("2025-07-04"),
@@ -829,12 +838,12 @@ describe("Calendar Tools", () => {
           endDate: "2025-07-07",
         }),
       );
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("Dates: 2025-07-04 to 2025-07-06 (All Day)");
     });
 
     it("should pass all-day dates as written, whatever their offset", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue(
         createResult,
       );
 
@@ -862,7 +871,7 @@ describe("Calendar Tools", () => {
       ["omitted", undefined],
       ["equal to start", "2025-12-31"],
     ])("should make a one-day all-day event when end is %s", async (_, end) => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.createCalendarEvent).mockResolvedValue({
         ...createResult,
         allDay: true,
         startDate: "2025-12-31",
@@ -882,7 +891,7 @@ describe("Calendar Tools", () => {
           endDate: "2026-01-01",
         }),
       );
-      expect(result.content[0].text).toContain("Date: 2025-12-31 (All Day)");
+      expect(textOf(result)).toContain("Date: 2025-12-31 (All Day)");
     });
 
     it("should require an end for timed events", async () => {
@@ -893,7 +902,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("end is required");
+      expect(textOf(result)).toContain("end is required");
     });
 
     it("should refuse a date without a time for a timed event", async () => {
@@ -904,7 +913,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("need a date-time");
+      expect(textOf(result)).toContain("need a date-time");
       expect(mockCalendarService.createCalendarEvent).not.toHaveBeenCalled();
     });
 
@@ -916,7 +925,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Invalid input");
+      expect(textOf(result)).toContain("Invalid input");
       expect(mockCalendarService.createCalendarEvent).not.toHaveBeenCalled();
     });
 
@@ -936,7 +945,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should report why the server refused the event", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockRejectedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockRejectedValue(
         new CalendarError(
           'The CalDAV server rejected the create in calendar "work" (HTTP 403)',
           ErrorCode.EVENT_WRITE_REJECTED,
@@ -954,12 +963,12 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Error executing");
-      expect(result.content[0].text).toContain("HTTP 403");
+      expect(textOf(result)).toContain("Error executing");
+      expect(textOf(result)).toContain("HTTP 403");
     });
 
     it("should report a calendar name that was refused", async () => {
-      vi.mocked(mockCalendarService.createCalendarEvent!).mockRejectedValue(
+      vi.mocked(mockCalendarService.createCalendarEvent).mockRejectedValue(
         new ValidationError('Calendar "private" not found', "calendar"),
       );
 
@@ -975,7 +984,7 @@ describe("Calendar Tools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Calendar "private" not found');
+      expect(textOf(result)).toContain('Calendar "private" not found');
     });
   });
 
@@ -988,7 +997,7 @@ describe("Calendar Tools", () => {
       );
 
     beforeEach(() => {
-      vi.mocked(mockCalendarService.updateCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.updateCalendarEvent).mockResolvedValue({
         event: { ...mockEvent, summary: "Renamed" },
         notified: false,
       });
@@ -1015,7 +1024,7 @@ describe("Calendar Tools", () => {
         attendees: undefined,
         sendInvitations: false,
       });
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("Calendar event updated successfully");
       expect(text).toContain("UID: event-1@example.com");
       expect(text).toContain("Nobody was notified");
@@ -1056,7 +1065,7 @@ describe("Calendar Tools", () => {
     });
 
     it("should pass sendInvitations and say the server may notify", async () => {
-      vi.mocked(mockCalendarService.updateCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.updateCalendarEvent).mockResolvedValue({
         event: { ...mockEvent, recurring: true },
         notified: true,
       });
@@ -1073,7 +1082,7 @@ describe("Calendar Tools", () => {
           sendInvitations: true,
         }),
       );
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("may have emailed the participants");
       expect(text).toContain("the whole series was changed");
     });
@@ -1095,13 +1104,13 @@ describe("Calendar Tools", () => {
       const result = await run(args);
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Invalid input");
-      expect(result.content[0].text).toContain(message);
+      expect(textOf(result)).toContain("Invalid input");
+      expect(textOf(result)).toContain(message);
       expect(mockCalendarService.updateCalendarEvent).not.toHaveBeenCalled();
     });
 
     it("should show a refusal from the service with its reason", async () => {
-      vi.mocked(mockCalendarService.updateCalendarEvent!).mockRejectedValue(
+      vi.mocked(mockCalendarService.updateCalendarEvent).mockRejectedValue(
         new ValidationError(
           '"w:2025-06-20" is the id of one occurrence (2025-06-20) of the recurring series "w". Changing or deleting a single occurrence is not supported; this tool acts on the whole series and takes its UID: pass uid "w" only if the whole series is meant',
           "uid",
@@ -1112,18 +1121,18 @@ describe("Calendar Tools", () => {
       const result = await run({ uid: "w:2025-06-20", summary: "x" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('pass uid "w"');
+      expect(textOf(result)).toContain('pass uid "w"');
     });
 
     it("should report a concurrent change", async () => {
-      vi.mocked(mockCalendarService.updateCalendarEvent!).mockRejectedValue(
+      vi.mocked(mockCalendarService.updateCalendarEvent).mockRejectedValue(
         new CalendarError("changed", ErrorCode.EVENT_MODIFIED, "work", "a"),
       );
 
       const result = await run({ uid: "a", summary: "x" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Fetch it again and retry");
+      expect(textOf(result)).toContain("Fetch it again and retry");
     });
   });
 
@@ -1136,7 +1145,7 @@ describe("Calendar Tools", () => {
       );
 
     it("should delete without notifying by default", async () => {
-      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.deleteCalendarEvent).mockResolvedValue({
         uid: "a",
         summary: "Team Meeting",
         calendar: "work",
@@ -1151,14 +1160,14 @@ describe("Calendar Tools", () => {
         calendar: undefined,
         notifyParticipants: false,
       });
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("Calendar event deleted");
       expect(text).toContain("**Team Meeting**");
       expect(text).toContain("Nobody was notified");
     });
 
     it("should say when a whole series went and participants may be told", async () => {
-      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockResolvedValue({
+      vi.mocked(mockCalendarService.deleteCalendarEvent).mockResolvedValue({
         uid: "w",
         summary: "",
         calendar: "work",
@@ -1168,14 +1177,14 @@ describe("Calendar Tools", () => {
 
       const result = await run({ uid: "w", notifyParticipants: true });
 
-      const text = result.content[0].text as string;
+      const text = textOf(result);
       expect(text).toContain("the whole series, all occurrences");
       expect(text).toContain("(untitled)");
       expect(text).toContain("may have emailed the participants");
     });
 
     it("should report a missing event with its UID", async () => {
-      vi.mocked(mockCalendarService.deleteCalendarEvent!).mockRejectedValue(
+      vi.mocked(mockCalendarService.deleteCalendarEvent).mockRejectedValue(
         new CalendarError(
           'No event with UID "nope" found',
           ErrorCode.EVENT_NOT_FOUND,
@@ -1187,7 +1196,7 @@ describe("Calendar Tools", () => {
       const result = await run({ uid: "nope" });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('No event with UID "nope"');
+      expect(textOf(result)).toContain('No event with UID "nope"');
     });
 
     it("should reject unknown arguments", async () => {
