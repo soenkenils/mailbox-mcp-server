@@ -98,8 +98,10 @@ const CheckSieveScriptSchema = v.object({
 
 /**
  * Behavioural hints (MCP tool annotations). Reads are safe to run freely.
- * Writing or deleting a script changes how all future mail is filtered, so
- * those are marked destructive and clients can ask before running them.
+ * Writing, activating or deleting a script changes how all future mail is
+ * filtered (a script can discard or redirect everything, and activating one
+ * deactivates the previous one), so those are marked destructive and clients
+ * can ask before running them.
  */
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -199,7 +201,7 @@ export function getSieveTools(): Tool[] {
       name: "activate_sieve_script",
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
         openWorldHint: false,
         title: "Activate a mail filter",

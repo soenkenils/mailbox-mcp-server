@@ -156,7 +156,7 @@ Manage email filtering rules using the [Sieve language](https://tools.ietf.org/h
 | **`get_sieve_script`** | Return the source of one script | read-only |
 | **`create_sieve_filter`** | Save a script under a name (replacing one of that name) after the server has checked it; activates it unless `activate: false` | destructive, idempotent |
 | **`delete_sieve_script`** | Delete a script; the server refuses to delete the active one | destructive, idempotent |
-| **`activate_sieve_script`** | Make one script the active filter; the previous one stays stored | idempotent |
+| **`activate_sieve_script`** | Make one script the active filter; the previous one stays stored but stops running | destructive, idempotent |
 | **`check_sieve_script`** | Check a script's syntax without saving it | read-only |
 | **`get_sieve_capabilities`** | Show the server's limits and supported Sieve extensions | read-only |
 

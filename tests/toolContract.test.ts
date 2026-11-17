@@ -126,9 +126,26 @@ describe("tool annotations", () => {
       "delete_email",
       "create_sieve_filter",
       "delete_sieve_script",
+      // Activating can start discarding or redirecting all incoming mail and
+      // silently deactivates the previous script.
+      "activate_sieve_script",
     ]) {
       expect(toolNamed(name).annotations?.destructiveHint, name).toBe(true);
     }
+  });
+
+  it("should mark the Sieve reads, and only those, as read-only", () => {
+    const readOnly = getSieveTools()
+      .filter(t => t.annotations?.readOnlyHint)
+      .map(t => t.name)
+      .sort();
+
+    expect(readOnly).toEqual([
+      "check_sieve_script",
+      "get_sieve_capabilities",
+      "get_sieve_script",
+      "list_sieve_scripts",
+    ]);
   });
 
   it("should mark only send_email as reaching outside the mailbox", () => {
