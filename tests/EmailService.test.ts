@@ -323,6 +323,68 @@ describe("EmailService", () => {
       });
     });
 
+    it("should not split a quoted phrase on OR, and search it literally", () => {
+      // The quotes mark a phrase; they are not part of the text searched.
+      expect(buildSearchCriteria({ query: '"foo OR bar"' })).toEqual({
+        or: [{ subject: "foo OR bar" }, { body: "foo OR bar" }],
+      });
+    });
+
+    it("should keep a quoted phrase whole as one side of an OR", () => {
+      expect(
+        buildSearchCriteria({ query: '"rock or roll" OR from:band.example' }),
+      ).toEqual({
+        or: [
+          { subject: "rock or roll" },
+          { body: "rock or roll" },
+          { from: "band.example" },
+        ],
+      });
+    });
+
+    it("should search a quoted from: literally instead of addressing it", () => {
+      expect(buildSearchCriteria({ query: '"from:me"' })).toEqual({
+        or: [{ subject: "from:me" }, { body: "from:me" }],
+      });
+    });
+
+    it("should split on an uppercase OR", () => {
+      expect(buildSearchCriteria({ query: "rock OR roll" })).toEqual({
+        or: [
+          { subject: "rock" },
+          { body: "rock" },
+          { subject: "roll" },
+          { body: "roll" },
+        ],
+      });
+    });
+
+    it("should build a three-way OR ANDed with dates and flags", () => {
+      const since = new Date("2024-01-01");
+      const before = new Date("2024-06-01");
+      expect(
+        buildSearchCriteria({
+          query: 'from:a.example OR "x OR y" OR invoice',
+          since,
+          before,
+          seen: false,
+          answered: true,
+        }),
+      ).toEqual({
+        since,
+        before,
+        seen: false,
+        answered: true,
+        or: [
+          { from: "a.example" },
+          { subject: "x OR y" },
+          { body: "x OR y" },
+          { subject: "invoice" },
+          { body: "invoice" },
+        ],
+      });
+    });
+
     it("should treat a dangling OR as ordinary text, having only one side", () => {
       expect(buildSearchCriteria({ query: "alpha OR " })).toEqual({
         or: [{ subject: "alpha OR" }, { body: "alpha OR" }],

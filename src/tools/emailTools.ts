@@ -176,7 +176,7 @@ export function createEmailTools(
           query: {
             type: "string",
             description:
-              'Text to match in subject or body. "from:address" or "to:address" matches a sender or recipient instead. Join terms with OR (any case) to match any of them, e.g. "from:alice@example.com OR invoice". All other filters apply to the whole query.',
+              'Text to match in subject or body. "from:address" or "to:address" matches a sender or recipient instead. The word OR (any case) between spaces separates alternatives, any of which may match, e.g. from:alice@example.com OR invoice. Put a phrase in double quotes to search it literally, including any OR or from: inside it; the quotes themselves are not searched. All other filters apply to the whole query.',
           },
           folder: {
             type: "string",

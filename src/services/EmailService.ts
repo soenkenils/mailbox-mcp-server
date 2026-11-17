@@ -80,9 +80,51 @@ const FOLDERS_CACHE_KEY = "email_folders";
 
 /**
  * Separates the sides of a disjunctive query. Case-insensitive, matching the
- * from:/to: prefixes, so a lowercase `or` is not searched as literal text.
+ * from:/to: prefixes, so a lowercase `or` is not searched as literal text; a
+ * phrase in double quotes is never split. Anchored, as it is tried at each
+ * position outside quotes.
  */
-const OR_SEPARATOR = /\s+or\s+/i;
+const OR_SEPARATOR = /^\s+or\s+/i;
+
+/** One side of a query: its text, and whether it was a quoted phrase. */
+interface QueryTerm {
+  text: string;
+  quoted: boolean;
+}
+
+/** A term in double quotes is a literal phrase; the quotes are not searched. */
+const toTerm = (raw: string): QueryTerm => {
+  const text = raw.trim();
+  return text.length >= 2 && text.startsWith('"') && text.endsWith('"')
+    ? { text: text.slice(1, -1).trim(), quoted: true }
+    : { text, quoted: false };
+};
+
+/** Splits a query on OR separators that lie outside double quotes. */
+const splitOnOr = (query: string): QueryTerm[] => {
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let i = 0;
+  while (i < query.length) {
+    const char = query[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      const separator = OR_SEPARATOR.exec(query.slice(i));
+      if (separator) {
+        parts.push(current);
+        current = "";
+        i += separator[0].length;
+        continue;
+      }
+    }
+    current += char;
+    i++;
+  }
+  parts.push(current);
+  return parts.map(toTerm).filter(term => term.text !== "");
+};
 
 /** Common trash folder names, tried after the server's \Trash folder. */
 const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
@@ -450,6 +492,11 @@ export class EmailService {
       return this.handleOrQuery(criteria, query);
     }
 
+    const whole = toTerm(query);
+    if (whole.quoted) {
+      return whole.text ? this.handleTextQuery(criteria, whole.text) : criteria;
+    }
+
     if (this.isFromQuery(query)) {
       return this.handleFromQuery(criteria, query);
     }
@@ -462,11 +509,8 @@ export class EmailService {
   }
 
   /** The sides of a disjunctive query; fewer than two means it is not one. */
-  private orTerms(query: string): string[] {
-    return query
-      .split(OR_SEPARATOR)
-      .map(term => term.trim())
-      .filter(Boolean);
+  private orTerms(query: string): QueryTerm[] {
+    return splitOnOr(query);
   }
 
   private isOrQuery(query: string): boolean {
@@ -493,8 +537,17 @@ export class EmailService {
     return criteria;
   }
 
-  /** The criteria one side of an OR contributes, keeping from:/to: addressed. */
-  private termCriteria(term: string): ImapSearchCriteria[] {
+  /**
+   * The criteria one side of an OR contributes, keeping from:/to: addressed.
+   * A quoted phrase is always plain text, even when it starts with from:.
+   */
+  private termCriteria({
+    text: term,
+    quoted,
+  }: QueryTerm): ImapSearchCriteria[] {
+    if (quoted) {
+      return [{ subject: term }, { body: term }];
+    }
     if (this.isFromQuery(term)) {
       return [{ from: term.substring(5).trim() }];
     }
