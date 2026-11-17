@@ -533,6 +533,43 @@ describe("structured output", () => {
     expect(declared.sort()).toEqual([...WITH_OUTPUT].sort());
   });
 
+  it("should label every field that carries mail content as untrusted", () => {
+    type Schema = {
+      properties?: Record<string, Schema>;
+      items?: Schema;
+      description?: string;
+    };
+    const props = (name: string) =>
+      (toolNamed(name).outputSchema as Schema).properties ?? {};
+    const header = props("search_emails").messages.items as Schema;
+    const full = props("get_email").message as Schema;
+    const thread = props("get_email_thread");
+    const threadMessage = thread.messages.items as Schema;
+    const nameOf = (field: Schema) =>
+      (field.items as Schema).properties?.name as Schema;
+
+    const contentFields: Array<[string, Schema | undefined]> = [
+      ["search subject", header.properties?.subject],
+      ["search from name", nameOf(header.properties?.from as Schema)],
+      ["search to name", nameOf(header.properties?.to as Schema)],
+      ["email subject", full.properties?.subject],
+      ["email body", full.properties?.body],
+      ["email cc name", nameOf(full.properties?.cc as Schema)],
+      [
+        "attachment filename",
+        (full.properties?.attachments.items as Schema).properties?.filename,
+      ],
+      ["thread subject", thread.subject],
+      ["participant name", nameOf(thread.participants)],
+      ["thread message subject", threadMessage.properties?.subject],
+      ["thread preview", threadMessage.properties?.preview],
+    ];
+
+    for (const [label, field] of contentFields) {
+      expect(field?.description, label).toMatch(/untrusted/i);
+    }
+  });
+
   it("should leave acknowledgement-only tools without one, since isError already says", () => {
     for (const name of [
       "move_email",
