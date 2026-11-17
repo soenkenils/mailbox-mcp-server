@@ -6,27 +6,49 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the run for the previous one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test & Lint
-    runs-on: ubuntu-latest
+    # Pinned so a runner image migration (ubuntu-latest → 26.04) cannot change
+    # CI unannounced. Move deliberately.
+    runs-on: ubuntu-24.04
 
     steps:
+      # Actions are pinned to commits, not tags. Update deliberately with the
+      # newest release that is at least two weeks old:
+      #   gh release list -R actions/checkout
+      #   gh api repos/actions/checkout/commits/<tag> --jq .sha
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          # Pinned: `latest` combined with --frozen-lockfile can break CI the
+          # day Bun ships a release. Bump together with a local `bun --version`.
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       # Fails on any known high or critical advisory in the installed tree.
       # Resolve with `bun audit fix`, or bump the offending range in package.json.
+      #
+      # Ignored advisories (each needs a reason; re-check regularly):
+      # - GHSA-fc5q-39xc-vjpf picomatch <=4.0.7 ReDoS. Dev-only (vitest > vite >
+      #   tinyglobby > fdir); it only matches the repo's own config globs, never
+      #   untrusted input. No patched release exists yet (latest is 4.0.7).
+      #   Remove the ignore once picomatch ships a fix.
       - name: Audit dependencies
-        run: bun audit --audit-level=high
+        run: bun audit --audit-level=high --ignore=GHSA-fc5q-39xc-vjpf
 
       - name: Lint & format check
         run: bun run check
@@ -34,8 +56,6 @@ jobs:
       - name: Type check
         run: bun run build
 
-      - name: Run tests
-        run: bun run test
-
-      - name: Check coverage
+      # Runs the full suite once and enforces the coverage thresholds.
+      - name: Test with coverage
         run: bun run test:coverage
