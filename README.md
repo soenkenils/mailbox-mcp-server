@@ -137,7 +137,7 @@ Each input schema is closed (`additionalProperties: false`). Undeclared argument
 
 Mail content in tool results is third-party data. `search_emails`, `get_email` and `get_email_thread` say so at the top of their text, and each message body is fenced between `--- BEGIN EMAIL BODY <marker> ---` and `--- END EMAIL BODY <marker> ---` lines with a random marker, so a message cannot pass itself off as instructions by closing the fence early.
 
-**Typed output.** The tools with a "Typed output" entry return [`structuredContent`](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#structured-content) that matches the `outputSchema` they declare, next to the same text as before, so a client can read a UID or the next offset without parsing prose. A message that does not exist is `found: false`. Tools that only acknowledge an action report it through `isError`.
+**Typed output.** The tools with a "Typed output" entry return [`structuredContent`](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#structured-content) that matches the `outputSchema` they declare, next to the same text as before, so a client can read a UID or the next offset without parsing prose. A message that does not exist is `found: false`. A message date is its `Date:` header, else the server's arrival date; when neither is usable it is `null` ("unknown date" in the text) rather than a made-up one. Tools that only acknowledge an action report it through `isError`.
 
 ### **Calendar Tools**
 

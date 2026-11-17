@@ -578,6 +578,33 @@ describe("structured output", () => {
     });
   });
 
+  it("should report an unknown date as null, and say so in the text", async () => {
+    const undated = { ...message, date: null };
+    const email = {
+      searchEmails: vi
+        .fn()
+        .mockResolvedValue({ messages: [undated], total: 1 }),
+      getEmailThread: vi.fn().mockResolvedValue({
+        threadId: "t",
+        messages: [undated],
+        subject: "Hello",
+        participants: message.from,
+        lastActivity: null,
+      }),
+      getEmail: vi.fn().mockResolvedValue(undated),
+    } as unknown as EmailService;
+
+    for (const name of ["search_emails", "get_email", "get_email_thread"]) {
+      const result = await handleEmailTool(name, calls[name], email);
+      expectMatchesSchema(name, result);
+      expect(textOf(result), name).toContain("unknown date");
+    }
+    const search = await handleEmailTool("search_emails", {}, email);
+    expect(search.structuredContent).toMatchObject({
+      messages: [{ date: null }],
+    });
+  });
+
   it("should mark a message without \\Seen as unread", async () => {
     const searchEmails = vi
       .fn()

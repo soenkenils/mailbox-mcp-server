@@ -47,7 +47,11 @@ export interface EmailMessage {
     name?: string;
     address: string;
   }>;
-  date: Date;
+  /**
+   * The Date header, else the server's arrival date; null when neither is
+   * usable rather than a made-up one.
+   */
+  date: Date | null;
   text?: string;
   html?: string;
   attachments?: Array<{
@@ -68,7 +72,8 @@ export interface EmailThread {
     name?: string;
     address: string;
   }>;
-  lastActivity: Date;
+  /** Date of the newest dated message; null when none has a date. */
+  lastActivity: Date | null;
 }
 
 export interface ImapConnection {

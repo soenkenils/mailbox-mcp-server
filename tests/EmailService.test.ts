@@ -551,18 +551,16 @@ describe("EmailService", () => {
       expect(result.messages).toHaveLength(1);
     });
 
-    it.each([
-      ["an unparseable header string", "not a real date"],
-      ["an invalid Date", new Date("nonsense")],
-    ])("should coerce %s into a usable Date", async (_label, date) => {
-      // imapflow passes the raw header through when it cannot parse a date
-      // (tools.js parseEnvelope). Callers treat EmailMessage.date as a Date
-      // and call toISOString() on it, so a string here throws at render time.
+    const searchWithDates = async (
+      date: unknown,
+      internalDate: unknown,
+    ): Promise<EmailMessage | undefined> => {
       (mockCache.get as Mock).mockReturnValue(null);
       mockSearch.mockResolvedValue([1]);
       mockFetch.mockImplementation(async function* () {
         yield createMockImapMessage({
           uid: 1,
+          internalDate,
           envelope: {
             messageId: "msg-1",
             subject: "Malformed date",
@@ -573,11 +571,48 @@ describe("EmailService", () => {
           },
         });
       });
+      const result = await emailService.searchEmails({ query: "test" });
+      return result.messages[0];
+    };
+
+    it.each([
+      ["an unparseable header string", "not a real date"],
+      ["an invalid Date", new Date("nonsense")],
+      ["a missing header", undefined],
+    ])("should fall back to the server's arrival date for %s", async (_label, date) => {
+      // imapflow passes the raw header through when it cannot parse a date
+      // (tools.js parseEnvelope). The arrival date the server recorded is the
+      // honest substitute; "now" would be a made-up date.
+      const internalDate = new Date("2024-03-04T05:06:07Z");
+
+      const message = await searchWithDates(date, internalDate);
+
+      expect(message?.date?.toISOString()).toBe("2024-03-04T05:06:07.000Z");
+    });
+
+    it("should leave the date unknown when neither date is usable", async () => {
+      const message = await searchWithDates("not a real date", undefined);
+
+      expect(message?.date).toBeNull();
+    });
+
+    it("should list messages without a date after dated ones", async () => {
+      (mockCache.get as Mock).mockReturnValue(null);
+      mockSearch.mockResolvedValue([1, 2]);
+      mockFetch.mockImplementation(async function* () {
+        yield createMockImapMessage({
+          uid: 1,
+          envelope: { messageId: "a", subject: "undated", date: "bad" },
+        });
+        yield createMockImapMessage({
+          uid: 2,
+          envelope: { messageId: "b", subject: "dated", date: new Date() },
+        });
+      });
 
       const result = await emailService.searchEmails({ query: "test" });
 
-      expect(result.messages[0]?.date).toBeInstanceOf(Date);
-      expect(() => result.messages[0]?.date.toISOString()).not.toThrow();
+      expect(result.messages.map(m => m.subject)).toEqual(["dated", "undated"]);
     });
 
     it("should keep a date header that parses as a string", async () => {
@@ -806,7 +841,8 @@ describe("EmailService", () => {
         from: [],
         to: [],
         cc: [],
-        date: expect.any(Date),
+        // No Date header and no arrival date: unknown, not invented.
+        date: null,
         flags: [],
         folder: "INBOX",
       });
@@ -836,6 +872,24 @@ describe("EmailService", () => {
       ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
       expect(Array.isArray(result.flags)).toBe(true);
       expect(result.flags).toEqual(["\\Answered"]);
+    });
+
+    it("should fall back to the arrival date when the Date header is missing", () => {
+      const message = createMockImapMessage({
+        internalDate: new Date("2024-03-04T05:06:07Z"),
+      });
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.date?.toISOString()).toBe("2024-03-04T05:06:07.000Z");
+    });
+
+    it("should leave the date unknown when there is no date at all", () => {
+      const message = createMockImapMessage();
+      const result = (
+        emailService as TestableEmailService
+      ).parseFullEmailMessage({ subject: "Hi" }, message, "INBOX");
+      expect(result.date).toBeNull();
     });
 
     it("should return an empty array when flags are missing", () => {

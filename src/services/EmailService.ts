@@ -29,22 +29,37 @@ interface ImapSearchCriteria {
 /**
  * imapflow returns the raw header string when a Date: header will not parse
  * (see parseEnvelope in its tools.js), which mail from spammers and broken
- * clients regularly triggers. Callers treat EmailMessage.date as a Date and
- * call toISOString() on it, so one such message would otherwise throw and
- * take the whole result listing down with it.
+ * clients regularly triggers. Such a value is normalised to a Date, or to
+ * null when it names no real time, so one message cannot break a listing.
  */
-const toDate = (value: Date | string | undefined, fallback: Date): Date => {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
+const toDate = (value: unknown): Date | null => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
   }
   if (typeof value === "string") {
     const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
-  return fallback;
+  return null;
 };
+
+/**
+ * The message's own Date header, else the time the server received it
+ * (INTERNALDATE). Null when neither is usable: inventing "now" would show a
+ * made-up date and sort the message to the top of every listing.
+ */
+const messageDate = (header: unknown, internalDate: unknown): Date | null =>
+  toDate(header) ?? toDate(internalDate);
+
+/** Newest first, with undated messages after every dated one. */
+const byDateDescending = (a: EmailMessage, b: EmailMessage): number =>
+  (b.date?.getTime() ?? Number.NEGATIVE_INFINITY) -
+    (a.date?.getTime() ?? Number.NEGATIVE_INFINITY) || 0;
+
+/** Oldest first, as a thread reads, with undated messages at the end. */
+const byDateAscending = (a: EmailMessage, b: EmailMessage): number =>
+  (a.date?.getTime() ?? Number.POSITIVE_INFINITY) -
+    (b.date?.getTime() ?? Number.POSITIVE_INFINITY) || 0;
 
 /**
  * The shape imapflow actually hands back, taken from the library rather than
@@ -296,6 +311,7 @@ export class EmailService {
           envelope: true,
           uid: true,
           flags: true,
+          internalDate: true,
         },
         { uid: true },
       );
@@ -335,7 +351,7 @@ export class EmailService {
   }
 
   private sortMessagesByDate(messages: EmailMessage[]): EmailMessage[] {
-    return messages.sort((a, b) => b.date.getTime() - a.date.getTime());
+    return messages.sort(byDateDescending);
   }
 
   private async fetchEmailByUid(
@@ -421,6 +437,7 @@ export class EmailService {
         envelope: true,
         uid: true,
         flags: true,
+        internalDate: true,
       },
       { uid: true },
     );
@@ -616,7 +633,7 @@ export class EmailService {
       from: this.parseAddressesFromEnvelope(envelope.from),
       to: this.parseAddressesFromEnvelope(envelope.to),
       cc: this.parseAddressesFromEnvelope(envelope.cc),
-      date: toDate(envelope.date, new Date()),
+      date: messageDate(envelope.date, message.internalDate),
       flags: Array.from(message.flags ?? []),
       folder,
     };
@@ -635,7 +652,7 @@ export class EmailService {
       to: this.parseAddressesFromParsed(parsed.to),
       cc: this.parseAddressesFromParsed(parsed.cc),
       bcc: this.parseAddressesFromParsed(parsed.bcc),
-      date: toDate(parsed.date, new Date()),
+      date: messageDate(parsed.date, message.internalDate),
       text: parsed.text,
       html: parsed.html || undefined,
       attachments: parsed.attachments?.map(att => ({
@@ -731,9 +748,7 @@ export class EmailService {
       }
 
       // Oldest first: a thread reads in the order it happened.
-      const ordered = [...messages].sort(
-        (a, b) => a.date.getTime() - b.date.getTime(),
-      );
+      const ordered = [...messages].sort(byDateAscending);
       // Callers may pass the id with or without angle brackets, while the
       // envelope keeps whichever form the sender used.
       const sameId = (a: string, b: string) =>
@@ -746,7 +761,10 @@ export class EmailService {
         messages: ordered,
         subject: root.subject,
         participants: this.collectParticipants(ordered),
-        lastActivity: ordered[ordered.length - 1].date,
+        // The newest known date: undated messages sort last, so skip them.
+        lastActivity:
+          [...ordered].reverse().find(message => message.date !== null)?.date ??
+          null,
       };
     } finally {
       if (wrapper) {

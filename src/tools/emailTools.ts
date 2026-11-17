@@ -121,6 +121,14 @@ const ADDRESS_SCHEMA = {
   required: ["address"],
 } as const;
 
+/** A date-time, or null when the message carries no usable date. */
+const NULLABLE_DATE_SCHEMA = {
+  type: ["string", "null"],
+  format: "date-time",
+  description:
+    "The Date header, else the server's arrival date; null when neither is known.",
+} as const;
+
 const MESSAGE_HEADER_SCHEMA = {
   type: "object",
   properties: {
@@ -128,7 +136,7 @@ const MESSAGE_HEADER_SCHEMA = {
     subject: { type: "string" },
     from: { type: "array", items: ADDRESS_SCHEMA },
     to: { type: "array", items: ADDRESS_SCHEMA },
-    date: { type: "string", format: "date-time" },
+    date: NULLABLE_DATE_SCHEMA,
     folder: { type: "string" },
     flags: { type: "array", items: { type: "string" } },
     unread: { type: "boolean" },
@@ -152,11 +160,15 @@ const structuredHeader = (email: EmailMessage) => ({
   subject: email.subject,
   from: structuredAddresses(email.from),
   to: structuredAddresses(email.to),
-  date: email.date.toISOString(),
+  date: email.date?.toISOString() ?? null,
   folder: email.folder,
   flags: email.flags,
   unread: !email.flags.includes("\\Seen"),
 });
+
+/** How a message date reads in text; unknown rather than invented. */
+const dateText = (date: Date | null): string =>
+  date ? date.toISOString() : "unknown date";
 
 // The services are not needed to describe the tools; the parameters stay for
 // callers that pass them.
@@ -324,7 +336,7 @@ export function createEmailTools(
           found: { type: "boolean" },
           subject: { type: "string" },
           participants: { type: "array", items: ADDRESS_SCHEMA },
-          lastActivity: { type: "string", format: "date-time" },
+          lastActivity: NULLABLE_DATE_SCHEMA,
           messages: {
             type: "array",
             items: {
@@ -333,7 +345,7 @@ export function createEmailTools(
                 uid: { type: "number" },
                 subject: { type: "string" },
                 from: { type: "array", items: ADDRESS_SCHEMA },
-                date: { type: "string", format: "date-time" },
+                date: NULLABLE_DATE_SCHEMA,
                 preview: { type: "string" },
                 truncated: { type: "boolean" },
               },
@@ -757,7 +769,7 @@ export async function handleEmailTool(
                     `**${email.subject}**
 From: ${email.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
 To: ${email.to.map(t => `${t.name || ""} <${t.address}>`).join(", ")}
-Date: ${email.date.toISOString()}
+Date: ${dateText(email.date)}
 UID: ${email.uid}
 Folder: ${email.folder}
 Flags: ${email.flags.length > 0 ? email.flags.join(", ") : "None"}
@@ -848,7 +860,7 @@ ${
   email.cc?.length
     ? `**CC:** ${email.cc.map(c => `${c.name || ""} <${c.address}>`).join(", ")}\n`
     : ""
-}**Date:** ${email.date.toISOString()}
+}**Date:** ${dateText(email.date)}
 **UID:** ${email.uid}
 **Folder:** ${email.folder}
 
@@ -883,14 +895,14 @@ ${fenceBody(email.text || email.html || "No content available")}${attachmentInfo
             found: true,
             subject: thread.subject,
             participants: structuredAddresses(thread.participants),
-            lastActivity: thread.lastActivity.toISOString(),
+            lastActivity: thread.lastActivity?.toISOString() ?? null,
             messages: thread.messages.map(msg => {
               const body = msg.text || msg.html || "";
               return {
                 uid: msg.uid,
                 subject: msg.subject,
                 from: structuredAddresses(msg.from),
-                date: msg.date.toISOString(),
+                date: msg.date?.toISOString() ?? null,
                 preview: preview(body, THREAD_PREVIEW_CHARS),
                 truncated: body.length > THREAD_PREVIEW_CHARS,
               };
@@ -903,7 +915,7 @@ ${fenceBody(email.text || email.html || "No content available")}${attachmentInfo
 
 **Thread:** ${thread.subject}
 **Participants:** ${thread.participants.map(p => `${p.name || ""} <${p.address}>`).join(", ")}
-**Last Activity:** ${thread.lastActivity.toISOString()}
+**Last Activity:** ${dateText(thread.lastActivity)}
 **Messages:** ${thread.messages.length}
 
 Bodies below are truncated to ${THREAD_PREVIEW_CHARS} characters. Use get_email with a message's UID to read one in full.
@@ -915,7 +927,7 @@ ${thread.messages
       `---
 **Subject:** ${msg.subject}
 **From:** ${msg.from.map(f => `${f.name || ""} <${f.address}>`).join(", ")}
-**Date:** ${msg.date.toISOString()}
+**Date:** ${dateText(msg.date)}
 **UID:** ${msg.uid}
 **Content:**
 ${fenceBody(preview(msg.text || msg.html || "No content", THREAD_PREVIEW_CHARS))}
