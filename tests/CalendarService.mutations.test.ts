@@ -1971,6 +1971,26 @@ describe("CalendarService event changes", () => {
       }
     });
 
+    it("should pass the credentials with Schedule-Reply but never log them", async () => {
+      const token = Buffer.from("me@mailbox.org:secret").toString("base64");
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const service = makeService();
+
+      await service.deleteCalendarEvent({ uid: "evt-1" });
+      objectsByCalendar[WORK_URL] = [stored(vcalendar(meeting()))];
+      await service.deleteCalendarEvent({ uid: "evt-1" });
+
+      for (const [params] of deleteCalendarObject.mock.calls) {
+        expect(params.headers).toEqual({
+          authorization: `Basic ${token}`,
+          "Schedule-Reply": "F",
+        });
+      }
+      const logged = JSON.stringify(errorSpy.mock.calls);
+      expect(logged).not.toContain(token);
+      expect(logged).not.toContain("secret");
+    });
+
     it("should delete a whole recurring series and say so", async () => {
       objectsByCalendar[WORK_URL] = [stored(richSeries)];
 

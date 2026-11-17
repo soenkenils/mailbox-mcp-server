@@ -2,12 +2,7 @@ import { randomUUID } from "node:crypto";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import ICAL from "ical.js";
-import {
-  createDAVClient,
-  type DAVCalendar,
-  type DAVObject,
-  getBasicAuthHeaders,
-} from "tsdav";
+import { createDAVClient, type DAVCalendar, type DAVObject } from "tsdav";
 import type { LocalCache } from "../types/cache.types.js";
 import type {
   Attendee,
@@ -100,6 +95,7 @@ export class CalendarService {
   private circuitBreaker: CircuitBreaker;
   private logger = createLogger("CalendarService");
   private cachedFetch: ReturnType<typeof createCacheFetcher>;
+  private authorization: string | undefined;
 
   constructor(
     connection: CalDavConnection,
@@ -349,10 +345,7 @@ export class CalendarService {
     const headers: Record<string, string> = notify
       ? {}
       : {
-          ...getBasicAuthHeaders({
-            username: this.connection.username,
-            password: this.connection.password,
-          }),
+          authorization: this.basicAuthorization(),
           "Schedule-Reply": "F",
         };
     await this.writeChecked("delete", located.calendarName, options.uid, () =>
@@ -377,6 +370,18 @@ export class CalendarService {
       recurring: event?.recurring ?? false,
       notified: notify && role.kind !== "none",
     };
+  }
+
+  /**
+   * The Basic authorization value, built once. tsdav's getBasicAuthHeaders
+   * writes the encoded credentials to its debug log on every call; this
+   * value is never logged or put into an error.
+   */
+  private basicAuthorization(): string {
+    this.authorization ??= `Basic ${Buffer.from(
+      `${this.connection.username}:${this.connection.password}`,
+    ).toString("base64")}`;
+    return this.authorization;
   }
 
   /**
