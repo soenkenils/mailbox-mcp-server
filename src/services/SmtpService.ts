@@ -12,7 +12,7 @@ import {
   ErrorUtils,
   ValidationError,
 } from "../types/errors.js";
-import { toMailAddresses } from "../utils/mailAddresses.js";
+import { senderFor, toMailAddresses } from "../utils/mailAddresses.js";
 import { createLogger } from "./Logger.js";
 import {
   SmtpConnectionPool,
@@ -82,10 +82,7 @@ export class SmtpService {
       const transporter = wrapper.connection;
 
       const mailOptions = {
-        from: {
-          name: this.extractNameFromEmail(this.pool.connectionConfig.user),
-          address: this.pool.connectionConfig.user,
-        },
+        from: senderFor(this.pool.connectionConfig.user),
         to: toMailAddresses(composition.to),
         cc: composition.cc && toMailAddresses(composition.cc),
         bcc: composition.bcc && toMailAddresses(composition.bcc),
@@ -157,14 +154,6 @@ export class SmtpService {
         await this.pool.release(wrapper);
       }
     }
-  }
-
-  private extractNameFromEmail(email: string): string {
-    const localPart = email.split("@")[0];
-    return localPart
-      .split(/[._-]/)
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
   }
 
   async close(): Promise<void> {
