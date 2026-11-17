@@ -74,6 +74,11 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 - `bun run test` - Run all tests (using vitest)
 - `bun run test:watch` - Run tests in watch mode
 - `bun run test:coverage` - Run tests with coverage report
+- `bun run test:e2e` - Run `tests/e2e/imap-e2e.mjs` against a local GreenMail
+  container (see README → End-to-end checks). The unit tests mock `imapflow`,
+  so only this catches protocol-level regressions; run it when changing
+  IMAP/SMTP behaviour or upgrading those libraries. It refuses to run unless
+  every host points at localhost/127.0.0.1. Not run in CI.
 - `bun run test:ui` - Run tests with interactive UI
 
 ### Code Quality

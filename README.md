@@ -453,6 +453,7 @@ MCP_DEBUG=true MCP_INSPECTOR=true bun start
 - **`bun run typecheck`** - Type-check `src/` and `tests/` (`build` covers `src/` only)
 - **`bun start`** - Start production server
 - **`bun run test`** - Run test suite
+- **`bun run test:e2e`** - Run the end-to-end check against a local IMAP server (see [End-to-end checks](#end-to-end-checks))
 - **`bun run test:unit`** - Run unit tests only
 - **`bun run test:integration`** - Run integration tests only
 - **`bun format`** - Format code with Biome
@@ -477,6 +478,65 @@ bun run test:coverage
 # Test specific service
 bun run test ImapService
 ```
+
+### **End-to-end checks**
+
+The unit tests mock `imapflow` entirely, so they cannot catch protocol-level
+regressions: a method that resolves `false` instead of throwing, a search
+criterion the server ignores, or a library upgrade that changes envelope
+shapes. `tests/e2e/imap-e2e.mjs` drives the **built** server over stdio
+against [GreenMail](https://greenmail-mail-test.github.io/greenmail/), which
+keeps its mailboxes in memory and holds no real mail. The script refuses to
+run unless every host it hands the server (IMAP, SMTP, Sieve, CalDAV) is
+`localhost` or `127.0.0.1`, and it does not pass on any `MAILBOX_*` variables
+from your shell, so your own mailbox is never touched.
+
+The server only sends mail over TLS and always verifies the certificate, and
+GreenMail's built-in certificate is not issued for `127.0.0.1`. So GreenMail
+is started with a throwaway test certificate, which the check then trusts:
+
+```bash
+# 1. A test certificate for 127.0.0.1 (valid 30 days)
+mkdir -p /tmp/greenmail-tls && cd /tmp/greenmail-tls
+openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+  -days 30 -subj /CN=localhost -addext subjectAltName=IP:127.0.0.1,DNS:localhost
+openssl pkcs12 -export -in cert.pem -inkey key.pem -out greenmail.p12 \
+  -passout pass:changeit -name greenmail
+cd -
+
+# 2. Start a throwaway IMAP/SMTP server
+docker run --rm -p 3143:3143 -p 3465:3465 -p 3993:3993 \
+  -v /tmp/greenmail-tls:/certs:ro \
+  -e GREENMAIL_OPTS='-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=e2e:e2epass@example.com -Dgreenmail.users.login=email -Dgreenmail.tls.keystore.file=/certs/greenmail.p12 -Dgreenmail.tls.keystore.password=changeit -Dgreenmail.tls.key.password=changeit' \
+  greenmail/standalone:2.1.3
+
+# 3. Build, then run the checks
+bun run build
+E2E_CA_FILE=/tmp/greenmail-tls/cert.pem bun run test:e2e
+```
+
+GreenMail cannot delete a folder a closed session had open, so the `Trash`
+folder the run creates outlives it; a second run against the same container
+skips the "no trash folder" case and says so. Restart the container to cover
+it again.
+
+It covers folder creation (top-level and nested via `parentPath`) and cache
+invalidation, drafts, sending, searching (newest first, flag filters),
+fetching a message's addresses and body, flags, threading by `Message-ID`
+header, moving, permanent deletion (re-checked from a fresh process so a warm
+cache cannot mask it), and soft deletion with and without a trash folder. It
+exits non-zero if any check fails. It is not run in CI.
+
+SMTP always goes over GreenMail's SMTPS port (3465). To run IMAP over TLS as
+well:
+
+```bash
+E2E_CA_FILE=/tmp/greenmail-tls/cert.pem E2E_IMAP_PORT=3993 E2E_IMAP_SECURE=true bun run test:e2e
+```
+
+Worth running before merging an upgrade to `imapflow`, `mailparser`,
+`nodemailer` or the MCP SDK. `E2E_SERVER=/path/to/dist/main.js` points the
+checks at another build, which is handy for comparing two revisions.
 
 ## Dependencies
 

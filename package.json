@@ -20,6 +20,7 @@
     "test": "bun run vitest --run",
     "test:watch": "bun run vitest --watch",
     "test:coverage": "bun run vitest --coverage",
+    "test:e2e": "node tests/e2e/imap-e2e.mjs",
     "format": "bun run biome format --write src/ tests/",
     "lint": "bun run biome lint src/ tests/",
     "check": "bun run biome check src/ tests/",
