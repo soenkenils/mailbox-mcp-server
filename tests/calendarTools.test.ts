@@ -263,7 +263,7 @@ describe("Calendar Tools", () => {
       ["get_calendar_events", "getCalendarEvents"],
       ["search_calendar", "searchCalendar"],
     ] as const)("should mark an occurrence of a series in %s with the series UID", async (tool, method) => {
-      vi.mocked(mockCalendarService[method]!).mockResolvedValue([
+      vi.mocked(mockCalendarService[method]).mockResolvedValue([
         {
           ...mockEvent,
           id: "weekly@example.com:2025-06-20T10:00:00.000Z",
@@ -292,7 +292,7 @@ describe("Calendar Tools", () => {
       ["search_calendar", "searchCalendar"],
       ["get_free_busy", "getFreeBusy"],
     ] as const)("should report an unreadable calendar from %s as an error, not an empty result", async (tool, method) => {
-      vi.mocked(mockCalendarService[method]!).mockRejectedValue(
+      vi.mocked(mockCalendarService[method]).mockRejectedValue(
         new CalendarError(
           'Could not read calendar "work": HTTP 500',
           ErrorCode.CALENDAR_READ_FAILED,
@@ -400,8 +400,11 @@ describe("Calendar Tools", () => {
       expect(mockCalendarService.searchCalendar).toHaveBeenCalled();
       const callArgs = vi.mocked(mockCalendarService.searchCalendar).mock
         .calls[0][0];
+      if (!callArgs.start || !callArgs.end) {
+        throw new Error("Expected search_calendar to pass a date range");
+      }
       const daysDiff =
-        (callArgs.end!.getTime() - callArgs.start!.getTime()) /
+        (callArgs.end.getTime() - callArgs.start.getTime()) /
         (1000 * 60 * 60 * 24);
       expect(daysDiff).toBeCloseTo(365, 0);
     });

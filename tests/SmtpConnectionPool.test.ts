@@ -53,7 +53,7 @@ class MockTransporter {
     return this.isValid;
   }
 
-  async sendMail(options: SendMailOptions): Promise<{ messageId: string }> {
+  async sendMail(_options: SendMailOptions): Promise<{ messageId: string }> {
     if (this.shouldFailSend) {
       throw new Error("Failed to send email");
     }

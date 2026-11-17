@@ -72,7 +72,7 @@ class MockImapFlow {
     this.selectedFolder = folder;
   }
 
-  on(event: string, handler: (...args: unknown[]) => void): MockImapFlow {
+  on(_event: string, _handler: (...args: unknown[]) => void): MockImapFlow {
     // Mock event handler registration - ensure proper chaining
     return this;
   }
@@ -449,7 +449,6 @@ describe("ImapConnectionPool", () => {
 
     it("should mark connection unhealthy and recreate if validation fails", async () => {
       const wrapper = await pool.acquire();
-      const connectionId = wrapper.id;
 
       // Simulate connection becoming unhealthy
       wrapper.isHealthy = false;

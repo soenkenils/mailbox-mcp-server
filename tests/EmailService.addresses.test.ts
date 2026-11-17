@@ -9,7 +9,6 @@ const mockPool = {
 };
 
 vi.mock("../src/services/ImapConnectionPool.js", () => ({
-  // biome-ignore lint/complexity/useArrowFunction: vitest mocks need a constructor
   ImapConnectionPool: vi.fn(function () {
     return mockPool;
   }),

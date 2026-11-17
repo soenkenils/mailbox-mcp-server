@@ -1,6 +1,5 @@
 import type { Transporter } from "nodemailer";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import type { ConnectionPoolConfig } from "../src/services/ConnectionPool.js";
 import type {
   SmtpConnectionWrapper,
   SmtpPoolConfig,

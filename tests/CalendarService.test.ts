@@ -25,7 +25,10 @@ type MockDAVClient = Pick<
 
 // Private methods of CalendarService reached for branch coverage testing
 type CalendarServicePrivates = {
-  filterEventsByQuery(events: CalendarEvent[], query?: string): CalendarEvent[];
+  filterEventsByQuery(
+    events: CalendarEvent[],
+    query?: string | null,
+  ): CalendarEvent[];
   extractStatus(attendee: unknown): string;
 };
 
@@ -38,7 +41,7 @@ class TestableCalendarService extends CalendarService {
   // Expose private methods for branch coverage testing
   public testFilterEventsByQuery(
     events: CalendarEvent[],
-    query?: string,
+    query?: string | null,
   ): CalendarEvent[] {
     return (this as unknown as CalendarServicePrivates).filterEventsByQuery(
       events,
@@ -685,7 +688,7 @@ describe("CalendarService", () => {
       ["case insensitive location", "virtual", 1, "4"],
       ["no matches", "xyz-not-found", 0, null],
       ["empty string", "", 4, null],
-    ])("should filter %s", (scenario, query, expectedCount, expectedFirstId) => {
+    ])("should filter %s", (_scenario, query, expectedCount, expectedFirstId) => {
       const results = calendarService.testFilterEventsByQuery(events, query);
       expect(results).toHaveLength(expectedCount);
       if (expectedFirstId) {
@@ -703,10 +706,7 @@ describe("CalendarService", () => {
     });
 
     it("should return all events when query is null", () => {
-      const results = calendarService.testFilterEventsByQuery(
-        events,
-        null as any,
-      );
+      const results = calendarService.testFilterEventsByQuery(events, null);
       expect(results).toEqual(events);
     });
   });

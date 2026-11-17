@@ -59,12 +59,6 @@
 				"rules": {
 					"complexity": {
 						"useArrowFunction": "off"
-					},
-					"suspicious": {
-						"noExplicitAny": "warn"
-					},
-					"style": {
-						"noNonNullAssertion": "warn"
 					}
 				}
 			}
@@ -72,13 +66,7 @@
 		{
 			"includes": [
 				"src/services/ConnectionPool.ts",
-				"src/services/SmtpService.ts",
-				"tests/CalendarService.test.ts",
-				"tests/ImapConnectionPool.test.ts",
-				"tests/SmtpConnectionPool.test.ts",
-				"tests/SmtpService.test.ts",
-				"tests/config.test.ts",
-				"tests/validation.test.ts"
+				"src/services/SmtpService.ts"
 			],
 			"linter": {
 				"rules": {
