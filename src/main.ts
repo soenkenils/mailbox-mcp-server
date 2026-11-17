@@ -295,6 +295,7 @@ class MailboxMcpServer {
             name,
             toolArgs,
             this.calendarService,
+            context,
           );
         } else if (isSieveTool(name)) {
           result = await handleSieveTool(

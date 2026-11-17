@@ -9,9 +9,14 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { describe, expect, it, vi } from "vitest";
 import type { ServerConfig } from "../src/config/config.js";
 import { SERVER_INSTRUCTIONS } from "../src/main.js";
+import type { CalendarService } from "../src/services/CalendarService.js";
 import type { EmailService } from "../src/services/EmailService.js";
 import { SieveService } from "../src/services/SieveService.js";
 import type { SmtpService } from "../src/services/SmtpService.js";
+import {
+  createCalendarTools,
+  handleCalendarTool,
+} from "../src/tools/calendarTools.js";
 import { createEmailTools, handleEmailTool } from "../src/tools/emailTools.js";
 import { getSieveTools, handleSieveTool } from "../src/tools/sieveTools.js";
 import {
@@ -59,9 +64,6 @@ interface ContractModule {
  * Tool modules that meet the full contract checked below. Each entry is
  * checked tool by tool, so a tool added to one of them is covered without
  * touching this file.
- *
- * TODO: add the calendar tools once their annotations and argument checks
- * land (they are being reworked separately).
  */
 const CONTRACT_MODULES: ContractModule[] = [
   {
@@ -74,6 +76,12 @@ const CONTRACT_MODULES: ContractModule[] = [
         spyService<EmailService>(),
         spyService<SmtpService>(),
       ),
+  },
+  {
+    name: "calendar",
+    tools: () => createCalendarTools(),
+    call: (name, args) =>
+      handleCalendarTool(name, args, spyService<CalendarService>()),
   },
   {
     name: "sieve",
@@ -152,12 +160,38 @@ describe("tool annotations", () => {
     ]);
   });
 
-  it("should mark only send_email as reaching outside the mailbox", () => {
+  it("should mark as open-world only the tools that can email other people", () => {
     const openWorld = allTools()
       .filter(t => t.annotations?.openWorldHint)
-      .map(t => t.name);
+      .map(t => t.name)
+      .sort();
 
-    expect(openWorld).toEqual(["send_email"]);
+    // Calendar writes may email attendees (sendInvitations, notifyParticipants).
+    expect(openWorld).toEqual([
+      "create_calendar_event",
+      "delete_calendar_event",
+      "send_email",
+      "update_calendar_event",
+    ]);
+  });
+
+  it("should mark the calendar reads read-only and its edits and deletes destructive", () => {
+    for (const name of [
+      "get_calendar_events",
+      "search_calendar",
+      "get_free_busy",
+    ]) {
+      expect(toolNamed(name).annotations?.readOnlyHint, name).toBe(true);
+    }
+    // Overwritten event fields cannot be restored; deletes cannot be undone.
+    for (const name of ["update_calendar_event", "delete_calendar_event"]) {
+      expect(toolNamed(name).annotations?.destructiveHint, name).toBe(true);
+    }
+    expect(toolNamed("create_calendar_event").annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
   });
 });
 
@@ -215,6 +249,37 @@ describe("advertised input schemas", () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("UID must be a number");
     expect(getEmail).not.toHaveBeenCalled();
+  });
+
+  it("should ignore undeclared arguments on calendar tools", async () => {
+    const getCalendarEvents = vi.fn().mockResolvedValue([]);
+
+    const result = await handleCalendarTool(
+      "get_calendar_events",
+      { calendar: "work", event_uuid: "null" },
+      { getCalendarEvents } as unknown as CalendarService,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(getCalendarEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar: "work" }),
+    );
+    expect(getCalendarEvents.mock.calls[0][0]).not.toHaveProperty("event_uuid");
+  });
+
+  it.each([
+    ["update_calendar_event", { uid: "a", summary: "x", recurrence: "daily" }],
+    ["delete_calendar_event", { uid: "a", force: true }],
+  ])("%s should still refuse undeclared arguments, as a calendar edit", async (name, args) => {
+    // Skipping an argument the caller believes was applied would report a
+    // change that never happened.
+    const service = spyService<CalendarService>();
+
+    const result = await handleCalendarTool(name, args, service);
+
+    expect(result.isError).toBe(true);
+    expect(service.updateCalendarEvent).not.toHaveBeenCalled();
+    expect(service.deleteCalendarEvent).not.toHaveBeenCalled();
   });
 
   it("should ignore undeclared arguments on Sieve tools", async () => {
@@ -312,6 +377,20 @@ describe("cancellation", () => {
     expect(searchEmails).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("Cancelled search_emails");
+  });
+
+  it("should not reach the calendar service once the client has cancelled", async () => {
+    const getCalendarEvents = vi.fn();
+
+    const result = await handleCalendarTool(
+      "get_calendar_events",
+      {},
+      { getCalendarEvents } as unknown as CalendarService,
+      aborted(),
+    );
+
+    expect(getCalendarEvents).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
   });
 
   it("should not open a Sieve session once the client has cancelled", async () => {

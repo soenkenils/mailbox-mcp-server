@@ -116,9 +116,9 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ## Available Tools
 
-Every email and Sieve tool carries [MCP tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-annotations): a human-readable title plus hints that tell the client whether the tool only reads (`readOnlyHint`), can destroy data (`destructiveHint`), is safe to repeat (`idempotentHint`) and reaches outside your mailbox (`openWorldHint`). Clients use them to decide what to run freely and what to confirm with you first. The "Hints" column below summarises them.
+Every tool carries [MCP tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-annotations): a human-readable title plus hints that tell the client whether the tool only reads (`readOnlyHint`), can destroy data (`destructiveHint`), is safe to repeat (`idempotentHint`) and reaches outside your mailbox (`openWorldHint`). Clients use them to decide what to run freely and what to confirm with you first. The "Hints" column below summarises them for email and Sieve; the calendar reads (`get_calendar_events`, `search_calendar`, `get_free_busy`) are read-only, `create_calendar_event` is additive, `update_calendar_event` and `delete_calendar_event` are destructive, and all three calendar writes are open-world because they can email participants when asked to.
 
-Each input schema is closed (`additionalProperties: false`). Undeclared arguments are ignored: they are dropped before validation, never reach the mail or Sieve server, and only their names are logged at debug level. Declared arguments are validated as before.
+Each input schema is closed (`additionalProperties: false`). Undeclared arguments are ignored: they are dropped before validation, never reach the mail, calendar or Sieve server, and only their names are logged at debug level. Declared arguments are validated as before. `update_calendar_event` and `delete_calendar_event` are the exception and refuse undeclared arguments, so an edit is never reported for a field that was not applied.
 
 ### **Email Tools**
 
