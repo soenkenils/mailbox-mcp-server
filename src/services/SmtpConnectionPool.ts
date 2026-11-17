@@ -21,6 +21,10 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   private smtpConfig: SmtpConnection;
   private verificationIntervalMs: number;
   private maxVerificationFailures: number;
+  // When a transporter passed verify() in createConnection or the health
+  // check, which see only the transporter, not its wrapper. Moved onto the
+  // wrapper's lastVerified by adoptVerification.
+  private verifiedAt = new WeakMap<Transporter, Date>();
 
   get connectionConfig(): SmtpConnection {
     return this.smtpConfig;
@@ -59,12 +63,14 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
 
     // Verify the connection immediately after creation
     await transporter.verify();
+    this.verifiedAt.set(transporter, new Date());
     return transporter;
   }
 
   async validateConnection(connection: Transporter): Promise<boolean> {
     try {
       await connection.verify();
+      this.verifiedAt.set(connection, new Date());
       return true;
     } catch (error) {
       await this.logger.warning(
@@ -137,6 +143,7 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
     if (wrapper.verificationFailures === undefined) {
       wrapper.verificationFailures = 0;
     }
+    this.adoptVerification(wrapper);
 
     return wrapper;
   }
@@ -166,12 +173,25 @@ export class SmtpConnectionPool extends ConnectionPool<Transporter> {
   }
 
   protected needsVerification(wrapper: SmtpConnectionWrapper): boolean {
+    this.adoptVerification(wrapper);
+
     if (!wrapper.lastVerified) {
       return true;
     }
 
     const timeSinceVerification = Date.now() - wrapper.lastVerified.getTime();
     return timeSinceVerification > this.verificationIntervalMs;
+  }
+
+  // Without this a new connection, verified in createConnection, had no
+  // lastVerified and was verified again, one SMTP login each, on every
+  // health-check tick until it timed out idle.
+  private adoptVerification(wrapper: SmtpConnectionWrapper): void {
+    const verifiedAt = this.verifiedAt.get(wrapper.connection);
+    if (verifiedAt) {
+      wrapper.lastVerified = verifiedAt;
+      this.verifiedAt.delete(wrapper.connection);
+    }
   }
 
   // Get pool status with SMTP-specific information
