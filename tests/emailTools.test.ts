@@ -7,21 +7,23 @@ import { textOf } from "./helpers/toolResult.js";
 vi.mock("../src/services/EmailService.js");
 
 describe("Email Tools", () => {
-  let mockEmailService: EmailService;
+  let mockEmailService: Pick<
+    EmailService,
+    "searchEmails" | "getEmail" | "getEmailThread" | "createDirectory"
+  >;
 
   beforeEach(() => {
     mockEmailService = {
       searchEmails: vi.fn(),
       getEmail: vi.fn(),
       getEmailThread: vi.fn(),
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-    } as EmailService;
+      createDirectory: vi.fn(),
+    };
   });
 
   describe("createEmailTools", () => {
     it("should create all email tools", () => {
-      const tools = createEmailTools(mockEmailService);
+      const tools = createEmailTools(mockEmailService as EmailService);
 
       expect(tools).toHaveLength(10);
       expect(tools.map(t => t.name)).toEqual([
@@ -39,7 +41,7 @@ describe("Email Tools", () => {
     });
 
     it("should have proper schema for search_emails tool", () => {
-      const tools = createEmailTools(mockEmailService);
+      const tools = createEmailTools(mockEmailService as EmailService);
       const searchTool = tools.find(t => t.name === "search_emails");
 
       expect(searchTool?.inputSchema.properties).toHaveProperty("query");
@@ -56,7 +58,7 @@ describe("Email Tools", () => {
       "draft",
       "deleted",
     ])("should document %s as an optional boolean with omit = both", name => {
-      const tools = createEmailTools(mockEmailService);
+      const tools = createEmailTools(mockEmailService as EmailService);
       const searchTool = tools.find(t => t.name === "search_emails");
       const prop = (
         searchTool?.inputSchema.properties as Record<
@@ -71,7 +73,7 @@ describe("Email Tools", () => {
     });
 
     it("should have proper schema for get_email tool", () => {
-      const tools = createEmailTools(mockEmailService);
+      const tools = createEmailTools(mockEmailService as EmailService);
       const getTool = tools.find(t => t.name === "get_email");
 
       expect(getTool?.inputSchema.required).toContain("uid");
@@ -107,7 +109,7 @@ describe("Email Tools", () => {
             folder: "INBOX",
             limit: 10,
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.searchEmails).toHaveBeenCalledWith({
@@ -119,8 +121,8 @@ describe("Email Tools", () => {
           before: undefined,
         });
 
-        expect(result.content[0].text).toContain("Test Subject");
-        expect(result.content[0].text).toContain("test@example.com");
+        expect(textOf(result)).toContain("Test Subject");
+        expect(textOf(result)).toContain("test@example.com");
       });
 
       it("should pass flag filters through to the service", async () => {
@@ -132,7 +134,7 @@ describe("Email Tools", () => {
         await handleEmailTool(
           "search_emails",
           { seen: false, flagged: true },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.searchEmails).toHaveBeenCalledWith(
@@ -149,12 +151,12 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           {},
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
-        expect(result.content[0].text).toContain("Flags: \\Seen, \\Flagged");
+        expect(textOf(result)).toContain("Flags: \\Seen, \\Flagged");
         // Subjects and addresses are third-party text too.
-        expect(result.content[0].text).toContain("untrusted");
+        expect(textOf(result)).toContain("untrusted");
       });
 
       it("should print None in the Flags line for an empty flag array", async () => {
@@ -166,10 +168,10 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           {},
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
-        expect(result.content[0].text).toContain("Flags: None");
+        expect(textOf(result)).toContain("Flags: None");
       });
 
       it("should handle date parameters", async () => {
@@ -184,7 +186,7 @@ describe("Email Tools", () => {
             since: "2024-01-01T00:00",
             before: "2024-01-31T23:59",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.searchEmails).toHaveBeenCalledWith({
@@ -206,7 +208,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           { limit: 1 },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(textOf(result)).toContain("Showing 1 of 312 matches (offset 0)");
@@ -222,7 +224,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           {},
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(textOf(result)).toContain("Found 1 emails");
@@ -238,7 +240,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           { limit: 1, offset: 9 },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         // Offset 9 plus one result is the tenth of ten: nothing left to page.
@@ -259,7 +261,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           { limit: 5 },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(textOf(result)).toContain("Call again with offset 5 for more");
@@ -276,12 +278,12 @@ describe("Email Tools", () => {
             uid: 123,
             folder: "INBOX",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.getEmail).toHaveBeenCalledWith(123, "INBOX");
-        expect(result.content[0].text).toContain("Test Subject");
-        expect(result.content[0].text).toContain("Test email content");
+        expect(textOf(result)).toContain("Test Subject");
+        expect(textOf(result)).toContain("Test email content");
       });
 
       it("should mark the message body as untrusted content", async () => {
@@ -293,7 +295,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "get_email",
           { uid: 123 },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
         const text = textOf(result);
 
@@ -312,7 +314,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "get_email",
           { uid: 123 },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
         const text = textOf(result);
         const [, marker] = text.match(/--- BEGIN EMAIL BODY (\S+) ---/) ?? [];
@@ -330,7 +332,7 @@ describe("Email Tools", () => {
           const result = await handleEmailTool(
             "get_email",
             { uid: 123 },
-            mockEmailService,
+            mockEmailService as EmailService,
           );
           return textOf(result).match(/--- BEGIN EMAIL BODY (\S+) ---/)?.[1];
         };
@@ -346,12 +348,10 @@ describe("Email Tools", () => {
           {
             uid: 999,
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
-        expect(result.content[0].text).toContain(
-          "Email with UID 999 not found",
-        );
+        expect(textOf(result)).toContain("Email with UID 999 not found");
       });
     });
 
@@ -374,18 +374,18 @@ describe("Email Tools", () => {
           {
             messageId: "test@example.com",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.getEmailThread).toHaveBeenCalledWith(
           "test@example.com",
           "INBOX",
         );
-        expect(result.content[0].text).toContain("Test Subject");
-        expect(result.content[0].text).toContain("**Messages:** 1");
-        expect(result.content[0].text).toContain("**UID:** 123");
-        expect(result.content[0].text).toContain("untrusted");
-        expect(result.content[0].text).toMatch(
+        expect(textOf(result)).toContain("Test Subject");
+        expect(textOf(result)).toContain("**Messages:** 1");
+        expect(textOf(result)).toContain("**UID:** 123");
+        expect(textOf(result)).toContain("untrusted");
+        expect(textOf(result)).toMatch(
           /--- BEGIN EMAIL BODY [0-9a-f]{8} ---\nTest email content\n--- END EMAIL BODY [0-9a-f]{8} ---/,
         );
       });
@@ -406,7 +406,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "get_email_thread",
           { messageId: "test@example.com" },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(textOf(result)).toContain("Short body");
@@ -422,7 +422,7 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "get_email_thread",
           { messageId: "test@example.com" },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(textOf(result)).toContain(
@@ -450,17 +450,15 @@ describe("Email Tools", () => {
             name: "MyNewFolder",
             parentPath: "INBOX",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.createDirectory).toHaveBeenCalledWith(
           "MyNewFolder",
           "INBOX",
         );
-        expect(result.content[0].text).toContain(
-          "✅ Directory created successfully!",
-        );
-        expect(result.content[0].text).toContain("MyNewFolder");
+        expect(textOf(result)).toContain("✅ Directory created successfully!");
+        expect(textOf(result)).toContain("MyNewFolder");
         expect(result.isError).toBe(false);
       });
 
@@ -475,7 +473,7 @@ describe("Email Tools", () => {
           {
             name: "MyNewFolder",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(mockEmailService.createDirectory).toHaveBeenCalledWith(
@@ -495,13 +493,11 @@ describe("Email Tools", () => {
           {
             name: "ExistingFolder",
           },
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
-        expect(result.content[0].text).toContain(
-          "❌ Failed to create directory",
-        );
-        expect(result.content[0].text).toContain("Folder already exists");
+        expect(textOf(result)).toContain("❌ Failed to create directory");
+        expect(textOf(result)).toContain("Folder already exists");
         expect(result.isError).toBe(true);
       });
     });
@@ -515,24 +511,22 @@ describe("Email Tools", () => {
         const result = await handleEmailTool(
           "search_emails",
           {},
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain(
-          "Unable to connect to the server",
-        );
+        expect(textOf(result)).toContain("Unable to connect to the server");
       });
 
       it("should handle unknown tool", async () => {
         const result = await handleEmailTool(
           "unknown_tool",
           {},
-          mockEmailService,
+          mockEmailService as EmailService,
         );
 
         expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain("Unknown email tool");
+        expect(textOf(result)).toContain("Unknown email tool");
       });
     });
   });

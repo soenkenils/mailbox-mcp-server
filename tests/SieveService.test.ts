@@ -7,14 +7,20 @@ import type {
   SieveScript,
 } from "../src/types/sieve.types.js";
 
+// Private methods of SieveService reached by these tests
+type SieveServicePrivates = {
+  parseScriptList(data: string): SieveScript[];
+  parseCapabilities(data: string): SieveCapabilities;
+};
+
 // Testable subclass to access private methods
 class TestableSieveService extends SieveService {
   public testParseScriptList(data: string): SieveScript[] {
-    return (this as any).parseScriptList(data);
+    return (this as unknown as SieveServicePrivates).parseScriptList(data);
   }
 
   public testParseCapabilities(data: string): SieveCapabilities {
-    return (this as any).parseCapabilities(data);
+    return (this as unknown as SieveServicePrivates).parseCapabilities(data);
   }
 }
 

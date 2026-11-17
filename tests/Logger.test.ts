@@ -1,5 +1,5 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type LogContext,
   Logger,
@@ -75,7 +75,9 @@ describe("Logger", () => {
       // Should log the MCP failure to stderr
       const calls = mockConsoleError.mock.calls;
       expect(
-        calls.some(call => call[0].includes("Failed to send MCP notification")),
+        calls.some((call: unknown[]) =>
+          String(call[0]).includes("Failed to send MCP notification"),
+        ),
       ).toBe(true);
     });
   });
@@ -95,7 +97,9 @@ describe("Logger", () => {
 
       expect(mockConsoleError).toHaveBeenCalledTimes(8);
 
-      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(
+        (call: unknown[]) => call[0],
+      );
       expect(outputs[0]).toContain("[DEBUG]");
       expect(outputs[1]).toContain("[INFO]");
       expect(outputs[2]).toContain("[NOTICE]");
@@ -116,7 +120,9 @@ describe("Logger", () => {
       logger.error("error - should log");
 
       expect(mockConsoleError).toHaveBeenCalledTimes(2);
-      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(
+        (call: unknown[]) => call[0],
+      );
       expect(outputs[0]).toContain("warning - should log");
       expect(outputs[1]).toContain("error - should log");
     });
@@ -237,7 +243,9 @@ describe("Logger", () => {
       child.emergency("emergency");
 
       expect(mockConsoleError).toHaveBeenCalledTimes(8);
-      const outputs = mockConsoleError.mock.calls.map(call => call[0]);
+      const outputs = mockConsoleError.mock.calls.map(
+        (call: unknown[]) => call[0],
+      );
       for (const output of outputs) {
         expect(output).toContain("[TestChild]");
       }

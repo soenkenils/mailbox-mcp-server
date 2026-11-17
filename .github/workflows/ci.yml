@@ -56,6 +56,10 @@ jobs:
       - name: Type check
         run: bun run build
 
+      # tsconfig.json excludes tests, so `build` never type-checks them.
+      - name: Type check tests
+        run: bun run typecheck
+
       # Runs the full suite once and enforces the coverage thresholds.
       - name: Test with coverage
         run: bun run test:coverage

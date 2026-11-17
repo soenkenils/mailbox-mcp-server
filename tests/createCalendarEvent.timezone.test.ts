@@ -5,6 +5,7 @@ import {
   createCalendarEventSchema,
   validateInput,
 } from "../src/validation/schemas.js";
+import { textOf } from "./helpers/toolResult.js";
 
 // Date-times without an offset are read in the server's local time zone,
 // so these tests pin it. Node re-reads process.env.TZ when it changes.
@@ -83,7 +84,7 @@ describe("create_calendar_event in a fixed time zone (Europe/Berlin)", () => {
       service,
     );
 
-    const text = result.content[0].text as string;
+    const text = textOf(result);
     expect(text).toContain("Start: 2025-06-20 14:00 +02:00");
     expect(text).toContain("End: 2025-01-20 14:00 +01:00");
   });

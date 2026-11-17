@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   createCalendarEventSchema,
   createDirectorySchema,
-  createDraftSchema,
-  deleteEmailSchema,
   getCalendarEventsSchema,
   getEmailSchema,
   getFreeBusySchema,

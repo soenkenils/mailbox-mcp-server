@@ -292,6 +292,7 @@ describe("advertised input schemas", () => {
 
     const result = await handleSieveTool(
       {
+        method: "tools/call",
         params: {
           name: "get_sieve_script",
           arguments: { name: "main", conversation_uuid: "null" },
