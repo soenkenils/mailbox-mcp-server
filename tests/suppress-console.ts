@@ -26,6 +26,8 @@ beforeAll(() => {
       message.includes("Error fetching email UID") ||
       message.includes("Connection creation failed") ||
       message.includes("Error fetching folders:") ||
+      message.includes("Rejected unauthenticated MCP request") ||
+      message.includes("Request to unknown path") ||
       message.includes(
         "Failed to create minimum connection during health check:",
       )

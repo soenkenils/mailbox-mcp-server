@@ -50,6 +50,7 @@
     "vitest": "4.1.12"
   },
   "dependencies": {
+    "@modelcontextprotocol/node": "^2.1.2",
     "@modelcontextprotocol/server": "^2.4.0",
     "@types/nodemailer": "^8.0.1",
     "dayjs": "^1.11.19",
