@@ -449,6 +449,41 @@ describe("ConnectionPool", () => {
         config.minConnections,
       );
     });
+
+    it("should not open connections in the background when minConnections is 0", async () => {
+      const onDemandPool = new TestConnectionPool({
+        ...config,
+        minConnections: 0,
+      });
+
+      try {
+        // Several health check intervals pass with no traffic.
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        expect(onDemandPool.getMetrics().totalConnections).toBe(0);
+        expect(onDemandPool.getMetrics().totalCreated).toBe(0);
+      } finally {
+        await onDemandPool.destroy();
+      }
+    });
+
+    it("should still connect on demand when minConnections is 0", async () => {
+      const onDemandPool = new TestConnectionPool({
+        ...config,
+        minConnections: 0,
+      });
+
+      try {
+        const wrapper = await onDemandPool.acquire();
+
+        expect(wrapper).toBeDefined();
+        expect(onDemandPool.getMetrics().totalConnections).toBe(1);
+
+        await onDemandPool.release(wrapper);
+      } finally {
+        await onDemandPool.destroy();
+      }
+    });
   });
 
   describe("pool shutdown", () => {

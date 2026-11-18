@@ -10,6 +10,15 @@ export interface PoolsConfig {
   smtp: ConnectionPoolConfig;
 }
 
+export type TransportMode = "stdio" | "http";
+
+export interface TransportConfig {
+  mode: TransportMode;
+  port: number;
+  /** Shared secret required for HTTP mode; undefined in stdio mode. */
+  authToken?: string;
+}
+
 export interface ServerConfig {
   email: ImapConnection;
   smtp: SmtpConnection;
@@ -17,8 +26,12 @@ export interface ServerConfig {
   sieve: SieveConnection;
   cache: CacheConfig;
   pools: PoolsConfig;
+  transport: TransportConfig;
   debug: boolean;
 }
+
+/** Minimum length for MCP_AUTH_TOKEN; `openssl rand -hex 32` yields 64 chars. */
+const MIN_AUTH_TOKEN_LENGTH = 32;
 
 // Environment variables validation schema
 const EnvSchema = v.object({
@@ -92,6 +105,15 @@ const EnvSchema = v.object({
   ),
 
   // Optional pool configuration
+  POOL_MIN_CONNECTIONS: v.optional(
+    v.pipe(
+      v.string(),
+      v.transform(Number),
+      v.number(),
+      v.minValue(0),
+      v.maxValue(100),
+    ),
+  ),
   POOL_MAX_CONNECTIONS: v.optional(
     v.pipe(
       v.string(),
@@ -110,6 +132,19 @@ const EnvSchema = v.object({
   POOL_HEALTH_CHECK_MS: v.optional(
     v.pipe(v.string(), v.transform(Number), v.number(), v.minValue(1000)),
   ),
+
+  // Optional transport configuration (stdio for local clients, http for hosted)
+  MCP_TRANSPORT: v.optional(v.picklist(["stdio", "http"])),
+  PORT: v.optional(
+    v.pipe(
+      v.string(),
+      v.transform(Number),
+      v.number(),
+      v.minValue(1),
+      v.maxValue(65535),
+    ),
+  ),
+  MCP_AUTH_TOKEN: v.optional(v.string()),
 
   // Optional debug flag
   DEBUG: v.optional(v.picklist(["true", "false"])),
@@ -158,6 +193,38 @@ export function loadConfig(): ServerConfig {
       );
     }
 
+    const transportMode: TransportMode = validatedEnv.MCP_TRANSPORT || "stdio";
+    const authToken = validatedEnv.MCP_AUTH_TOKEN;
+
+    // HTTP mode exposes the server on a network port, so refuse to start
+    // without a usable shared secret rather than serving mailbox tools
+    // unauthenticated.
+    if (
+      transportMode === "http" &&
+      (!authToken || authToken.length < MIN_AUTH_TOKEN_LENGTH)
+    ) {
+      throw new Error(
+        `Configuration validation failed: MCP_AUTH_TOKEN: HTTP transport requires a token of at least ${MIN_AUTH_TOKEN_LENGTH} characters`,
+      );
+    }
+
+    // A warm IMAP connection pays off for a long-lived local process, but a
+    // hosted server is often stopped whenever it goes idle: keeping a minimum
+    // open only produces repeated background IMAP logins that never get used,
+    // which the mail provider may read as suspicious activity. Connect on
+    // demand instead.
+    const imapMinConnections =
+      validatedEnv.POOL_MIN_CONNECTIONS ?? (transportMode === "http" ? 0 : 1);
+    const imapMaxConnections = validatedEnv.POOL_MAX_CONNECTIONS || 3;
+
+    // The pool tops itself up to the minimum without consulting the maximum,
+    // so an inverted pair would open more IMAP logins than the cap allows.
+    if (imapMinConnections > imapMaxConnections) {
+      throw new Error(
+        `Configuration validation failed: POOL_MIN_CONNECTIONS must not exceed POOL_MAX_CONNECTIONS (${imapMaxConnections})`,
+      );
+    }
+
     return {
       email: {
         host: validatedEnv.MAILBOX_IMAP_HOST || "imap.mailbox.org",
@@ -201,8 +268,8 @@ export function loadConfig(): ServerConfig {
       },
       pools: {
         imap: {
-          minConnections: 1,
-          maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 3,
+          minConnections: imapMinConnections,
+          maxConnections: imapMaxConnections,
           acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
           maxRetries: 5,
@@ -223,6 +290,11 @@ export function loadConfig(): ServerConfig {
           retryDelayMs: 200,
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
+      },
+      transport: {
+        mode: transportMode,
+        port: validatedEnv.PORT || 8080,
+        authToken,
       },
       debug: validatedEnv.DEBUG === "true",
     };
