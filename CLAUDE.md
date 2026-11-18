@@ -26,6 +26,7 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 
 - **stdio** (default) - one long-lived protocol server, launched locally by the client
 - **HTTP** (`MCP_TRANSPORT=http`, `src/transport/`) - stateless Streamable HTTP on `POST /mcp` with a fresh protocol server per request (`createProtocolServer` in `src/main.ts`) sharing the same services; `auth.ts` checks the bearer token in constant time, `diagnostics.ts` describes requests for logs without credentials. Never log tokens, `Authorization` values or OAuth codes
+- **OAuth** (`src/transport/oauth/`, enabled by `PUBLIC_URL`) - stateless single-user authorization server: `tokens.ts` signs all OAuth state with a key derived from `MCP_AUTH_TOKEN`, `redirectPolicy.ts` is the redirect allowlist, `provider.ts` the consent form and grants, `router.ts` the Express endpoints (the SDK v2 no longer ships them)
 
 ### Connection Management
 

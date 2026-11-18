@@ -324,6 +324,15 @@ In stdio mode the IMAP pool keeps one connection open while idle (see `POOL_MIN_
 - `MCP_AUTH_TOKEN`: Shared secret required by every HTTP request
   - **Required** in `http` mode; the server refuses to start without it
   - Must be at least 32 characters; generate with `openssl rand -hex 32`
+- `PUBLIC_URL`: Externally reachable origin, e.g. `https://mcp.example.com`
+  - Optional. Setting it enables OAuth, which needs a stable public URL to publish in discovery metadata and to build redirects
+  - Must be `https`, except `localhost`/`127.0.0.1` for local testing
+  - Origin only: a path, query or fragment is refused, since the OAuth endpoints are served at the root
+  - Without it the server accepts only the static `MCP_AUTH_TOKEN`
+- `OAUTH_ALLOWED_REDIRECT_HOSTS`: Comma-separated hosts an OAuth client may register a redirect URI for
+  - Defaults to `claude.ai,claude.com`
+  - Loopback (`localhost`, `127.0.0.1`, `::1`) is always allowed on any port, since native clients such as Claude Code receive their callback locally
+  - Hosts match exactly: allowing `claude.ai` does not allow `sub.claude.ai` or `claude.ai.evil.example`
 
 #### **Optional Debug Configuration**
 
@@ -349,6 +358,7 @@ The same server can run remotely over Streamable HTTP, which makes it usable fro
 
 - `POST /mcp`: the MCP endpoint. Requires `Authorization: Bearer <MCP_AUTH_TOKEN>`. Stateless (no session IDs) with JSON responses, so nothing is lost when the host stops an idle container. `GET` is refused, so no long-lived SSE stream is held open. Bodies over 4 MiB are rejected
 - `GET /health`: unauthenticated liveness check, returns `{"status":"ok"}`
+- With `PUBLIC_URL` set: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/register`, `/authorize` and `/token` (see [How OAuth works here](#how-oauth-works-here))
 
 The token is accepted only in the `Authorization` header, never in the URL, where proxies and access logs would record it.
 
@@ -386,9 +396,49 @@ curl -s -o /dev/null -w "%{http_code}\n" https://your-host.example/mcp \
 
 `200` means the token was accepted; `401` means it was missing or did not match.
 
+**claude.ai (web and mobile) via OAuth.** Custom connectors cannot send an `Authorization` header; the dialog only offers OAuth fields. Set `PUBLIC_URL` and add a custom connector pointing at the plain endpoint, with no credential in the URL:
+
+```
+https://your-host.example/mcp
+```
+
+Leave **OAuth Client ID** and **OAuth Client Secret** empty. The server supports dynamic client registration, so the client registers itself; clients are public and use PKCE, so there is no client secret.
+
+A browser page then names the application and the host the authorization code will be sent to. Check that destination before entering the value of `MCP_AUTH_TOKEN`. The client ends up holding a short-lived access token plus a refresh token, rather than a credential embedded in a URL.
+
+**Claude Desktop against the hosted server**: bridge stdio to HTTP with a pinned `mcp-remote` version. It performs the OAuth flow itself and receives its callback on a loopback port, which the redirect allowlist permits:
+
+```json
+{
+  "mcpServers": {
+    "mailbox": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote@0.1.38", "https://your-host.example/mcp"]
+    }
+  }
+}
+```
+
+Pin the version rather than using a floating `mcp-remote`, which would fetch the latest package on every launch and run it locally. This path is untested here; the local stdio setup is the usual way to use Claude Desktop with this server.
+
+### **How OAuth works here**
+
+There is exactly one resource owner, so the authorization step is a form asking for `MCP_AUTH_TOKEN` rather than a user database. Everything else is carried in HMAC-signed tokens (authorization codes, access tokens, refresh tokens, even client registrations), so the flow needs no database and survives the container being restarted or stopped while idle.
+
+Consequences worth knowing:
+
+- **Revocation is all-or-nothing.** Nothing is stored, so individual tokens cannot be revoked before they expire. Rotating `MCP_AUTH_TOKEN` changes the derived signing key and invalidates every outstanding token at once; that is the intended kill switch.
+- **Access tokens last 1 hour**, refresh tokens 30 days, authorization codes 60 seconds. Refreshing never extends a session past 30 days from the original authorization, and never widens the granted scopes, so the token has to be entered again at least monthly.
+- **Rotating `MCP_AUTH_TOKEN` disconnects OAuth clients**, since it is both the login credential and the signing key. Re-authorize the connector afterwards.
+- **The static token keeps working** as an `Authorization: Bearer` header on `/mcp`, so Claude Code is unaffected.
+- **Registration is restricted.** Anyone can reach `/register`, so a client may only register a redirect URI on an allowed host (see `OAUTH_ALLOWED_REDIRECT_HOSTS`). Without this, someone could register a client pointing at a host they control and send you an authorize link that looks entirely genuine. The consent screen also names the client and shows where the code will be sent, and refuses to be framed.
+- **Rate limits** apply per client address on `/authorize`, `/token` and `/register`. The server trusts exactly one proxy hop for `X-Forwarded-For`, which matches a single TLS-terminating proxy in front of it.
+
 ### **Rotating the access token**
 
-Set a new `MCP_AUTH_TOKEN` on the host and restart the container, then update every client. Store the new value before you close the terminal: many hosts keep secrets write-only, so a lost token can only be replaced, not recovered.
+`MCP_AUTH_TOKEN` is both the credential clients present and the secret the OAuth signing key is derived from, so rotating it is the kill switch for everything the server has issued: every OAuth access and refresh token, every client registration (the `client_id` is itself a signed token), and any client still using the old value as a bearer header.
+
+Set a new `MCP_AUTH_TOKEN` on the host and restart the container, then update every client. claude.ai connectors must be removed and added again: they cannot be edited in place, and re-authorizing one with a stale `client_id` fails with `invalid_client`. Store the new value before you close the terminal: many hosts keep secrets write-only, so a lost token can only be replaced, not recovered.
 
 ### **Operational notes**
 
@@ -410,6 +460,10 @@ In **stdio** mode everything runs on your machine and nothing is exposed to the 
 
 - ✅ **Shared-secret authentication** on every MCP request, compared in constant time over SHA-256 digests
 - ✅ **Credential-free request logging** - rejected requests are logged without the token they carried
+- ✅ **OAuth 2.0** with PKCE, dynamic client registration, and short-lived tokens, so no credential need appear in a URL
+- ✅ **Redirect URI allowlist** - registration is open, so clients may only register a redirect on an allowed host (loopback excepted), preventing an authorization code being delivered to an attacker
+- ✅ **Consent screen** naming the requesting client and the destination of the authorization code
+- ✅ **Stateless signed tokens**, so no session store survives to be stolen, and rotating `MCP_AUTH_TOKEN` invalidates everything at once
 
 ## Architecture
 
@@ -678,10 +732,15 @@ This project relies on the following key dependencies:
    - The token in the client does not match `MCP_AUTH_TOKEN`. If it is lost, rotate it.
    - The logs distinguish the cases: `credentialHeaders: []` means nothing was sent, `authScheme: Bearer` means a credential arrived and did not match.
 
-3. **`/mcp/<token>` returns 404**
+3. **A connector cannot complete OAuth**
+   - `/register` returning `invalid_client_metadata` means the redirect URI's host is not allowed; add it to `OAUTH_ALLOWED_REDIRECT_HOSTS`.
+   - `invalid_client` on `/authorize` means the stored `client_id` is no longer valid, which happens after `MCP_AUTH_TOKEN` is rotated. Remove and re-add the connector.
+   - OAuth endpoints returning 404 means `PUBLIC_URL` is not set.
+
+4. **`/mcp/<token>` returns 404**
    - Expected. Tokens are accepted only in the `Authorization` header.
 
-4. **First call after idle is slow**
+5. **First call after idle is slow**
    - Expected when the host stops idle containers: connections are re-established on demand.
 
 ## Contributing

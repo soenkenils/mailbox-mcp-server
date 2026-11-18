@@ -151,6 +151,8 @@ describe("Configuration", () => {
       process.env.MCP_TRANSPORT = undefined;
       process.env.MCP_AUTH_TOKEN = undefined;
       process.env.PORT = undefined;
+      process.env.PUBLIC_URL = undefined;
+      process.env.OAUTH_ALLOWED_REDIRECT_HOSTS = undefined;
     });
 
     it("should default to stdio transport on port 8080 without a token", () => {
@@ -205,6 +207,55 @@ describe("Configuration", () => {
       process.env.MCP_TRANSPORT = "carrier-pigeon";
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should leave publicUrl unset by default", () => {
+      expect(loadConfig().transport.publicUrl).toBeUndefined();
+    });
+
+    it("should strip trailing slashes from PUBLIC_URL", () => {
+      // Otherwise published metadata would contain doubled slashes.
+      process.env.PUBLIC_URL = "https://mcp.example.com//";
+
+      expect(loadConfig().transport.publicUrl).toBe("https://mcp.example.com");
+    });
+
+    it("should reject a malformed PUBLIC_URL", () => {
+      process.env.PUBLIC_URL = "not-a-url";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should reject a PUBLIC_URL with a path", () => {
+      // The OAuth endpoints are served at the root and their published URLs
+      // are built from the origin, so a path would be advertised in the issuer
+      // but silently dropped from every endpoint.
+      process.env.PUBLIC_URL = "https://mcp.example.com/mailbox";
+
+      expect(() => loadConfig()).toThrow(
+        "PUBLIC_URL must be an origin without a path, query or fragment",
+      );
+    });
+
+    it("should reject a PUBLIC_URL with a query string", () => {
+      process.env.PUBLIC_URL = "https://mcp.example.com/?x=1";
+
+      expect(() => loadConfig()).toThrow(
+        "PUBLIC_URL must be an origin without a path, query or fragment",
+      );
+    });
+
+    it("should leave the redirect allowlist to the OAuth defaults when unset", () => {
+      expect(loadConfig().transport.allowedRedirectHosts).toBeUndefined();
+    });
+
+    it("should parse OAUTH_ALLOWED_REDIRECT_HOSTS, ignoring blanks", () => {
+      process.env.OAUTH_ALLOWED_REDIRECT_HOSTS = " claude.ai, ,example.com ,";
+
+      expect(loadConfig().transport.allowedRedirectHosts).toEqual([
+        "claude.ai",
+        "example.com",
+      ]);
     });
 
     it("should validate the port range", () => {
