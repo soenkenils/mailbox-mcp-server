@@ -270,6 +270,8 @@ const createRequestListener = (options: HttpTransportOptions) => {
   }
 
   const app = express();
+  // No reason to tell every caller which framework answers.
+  app.disable("x-powered-by");
   // Hosted mode sits behind exactly one reverse proxy (the TLS terminator),
   // which appends the real client address to X-Forwarded-For. Without this,
   // req.ip is the proxy for every request and the OAuth rate limiters share

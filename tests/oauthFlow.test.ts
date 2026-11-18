@@ -141,6 +141,22 @@ describe("OAuth authorization code flow", () => {
       }),
     });
 
+  describe("response headers", () => {
+    it("should not advertise the server framework", async () => {
+      const response = await fetch(
+        `${baseUrl}/.well-known/oauth-authorization-server`,
+      );
+
+      expect(response.headers.get("x-powered-by")).toBeNull();
+    });
+
+    it("should answer an unparseable request target with 400", async () => {
+      const response = await fetch(`${baseUrl}//`);
+
+      expect(response.status).toBe(400);
+    });
+  });
+
   describe("discovery", () => {
     it("should publish authorization server metadata", async () => {
       const response = await fetch(
