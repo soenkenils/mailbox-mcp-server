@@ -41,6 +41,7 @@ import {
   isSieveTool,
 } from "./tools/sieveTools.js";
 import { closeHttpServer, startHttpServer } from "./transport/http.js";
+import { createOAuthSupport } from "./transport/oauth/index.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
 import {
   createProgressReporter,
@@ -446,14 +447,28 @@ class MailboxMcpServer {
     const startTimer = this.logger.startTimer("server_startup");
 
     try {
-      const { mode, port, authToken } = this.config.transport;
+      const { mode, port, authToken, publicUrl, allowedRedirectHosts } =
+        this.config.transport;
 
       if (mode === "http") {
+        // OAuth needs a stable public origin to publish in its discovery
+        // metadata, so it is enabled only once PUBLIC_URL is known.
+        const oauth = publicUrl
+          ? createOAuthSupport(
+              authToken as string,
+              publicUrl,
+              allowedRedirectHosts,
+            )
+          : undefined;
+
         this.httpServer = await startHttpServer({
           port,
           // Guaranteed present in http mode by config validation.
           authToken: authToken as string,
           createProtocolServer: this.createProtocolServer,
+          oauthProvider: oauth?.provider,
+          authRouter: oauth?.authRouter,
+          resourceMetadataUrl: oauth?.resourceMetadataUrl,
         });
       } else {
         await this.server.connect(new StdioServerTransport());
@@ -471,7 +486,7 @@ class MailboxMcpServer {
           version: SERVER_INFO.version,
           capabilities: ["tools", "logging", "prompts", "resources"],
           transport: mode,
-          ...(mode === "http" ? { port } : {}),
+          ...(mode === "http" ? { port, oauth: Boolean(publicUrl) } : {}),
         },
       );
     } catch (error) {

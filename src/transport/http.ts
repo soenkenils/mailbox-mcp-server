@@ -5,7 +5,8 @@ import {
   type ServerResponse,
 } from "node:http";
 import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
-import type { Server } from "@modelcontextprotocol/server";
+import type { OAuthTokenVerifier, Server } from "@modelcontextprotocol/server";
+import express, { type RequestHandler } from "express";
 import { createLogger } from "../services/Logger.js";
 import { extractToken, isMcpPath, verifyToken } from "./auth.js";
 import { describeRequest } from "./diagnostics.js";
@@ -30,9 +31,32 @@ export interface HttpTransportOptions {
    * expects. TLS is terminated in front of the server, never here.
    */
   host?: string;
+  /** Present when OAuth is enabled; also accepts its access tokens on /mcp. */
+  oauthProvider?: OAuthTokenVerifier;
+  /** Advertised on 401 so OAuth clients can discover how to authenticate. */
+  resourceMetadataUrl?: string;
+  /** OAuth endpoints (metadata, register, authorize, token) to serve. */
+  authRouter?: RequestHandler;
 }
 
 const logger = createLogger("HttpTransport");
+
+/** OAuth access tokens are accepted alongside the static shared secret. */
+const isValidOAuthToken = async (
+  provider: OAuthTokenVerifier | undefined,
+  token: string | undefined,
+): Promise<boolean> => {
+  if (!provider || !token) {
+    return false;
+  }
+
+  try {
+    await provider.verifyAccessToken(token);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const sendJson = (
   res: ServerResponse,
@@ -158,7 +182,11 @@ const handleRequest = async (
   }
 
   const presented = extractToken(req.headers.authorization);
-  if (!verifyToken(presented, options.authToken)) {
+  const authorized =
+    verifyToken(presented, options.authToken) ||
+    (await isValidOAuthToken(options.oauthProvider, presented));
+
+  if (!authorized) {
     // Records how the client tried to authenticate — never what with — so that
     // "no credential arrived" is distinguishable from "credential mismatched".
     logger.warning(
@@ -170,7 +198,11 @@ const handleRequest = async (
       describeRequest(req.method, pathname, searchParams, req.headers),
     );
     sendJsonRpcError(res, 401, -32001, "Unauthorized", {
-      "WWW-Authenticate": "Bearer",
+      // Points OAuth-capable clients at the metadata describing how to
+      // authenticate, per RFC 9728.
+      "WWW-Authenticate": options.resourceMetadataUrl
+        ? `Bearer resource_metadata="${options.resourceMetadataUrl}"`
+        : "Bearer",
     });
     return;
   }
@@ -205,9 +237,13 @@ const handleRequest = async (
   await handleMcpRequest(req, res, options.createProtocolServer, parsedBody);
 };
 
-const createRequestListener =
-  (options: HttpTransportOptions) =>
-  (req: IncomingMessage, res: ServerResponse): void => {
+/**
+ * Serves the OAuth endpoints (metadata, registration, authorize, token) ahead
+ * of the MCP routes when OAuth is enabled. Express only claims those specific
+ * paths, so /mcp request bodies are left untouched for the transport to read.
+ */
+const createRequestListener = (options: HttpTransportOptions) => {
+  const handle = (req: IncomingMessage, res: ServerResponse) => {
     handleRequest(req, res, options).catch(error => {
       logger.error(
         "Unhandled error while serving request",
@@ -222,6 +258,21 @@ const createRequestListener =
       }
     });
   };
+
+  if (!options.authRouter) {
+    return handle;
+  }
+
+  const app = express();
+  // Hosted mode sits behind exactly one reverse proxy (the TLS terminator),
+  // which appends the real client address to X-Forwarded-For. Without this,
+  // req.ip is the proxy for every request and the OAuth rate limiters share
+  // one bucket across all clients.
+  app.set("trust proxy", 1);
+  app.use(options.authRouter);
+  app.use((req, res) => handle(req, res));
+  return app;
+};
 
 /** Starts the HTTP transport and resolves once it is accepting connections. */
 export const startHttpServer = (
