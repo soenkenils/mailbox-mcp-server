@@ -40,7 +40,7 @@ Consider infos from:
 * Use Biome for code formatting and linting
 * Study Context7 MCP server patterns for modern TypeScript architecture
 * Implement proper tool registration and handler patterns like Context7
-* Use @modelcontextprotocol/sdk patterns from Context7 examples
+* Use @modelcontextprotocol/server patterns from Context7 examples
 
 ## When Invoked
 

@@ -1,4 +1,4 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EmailService } from "../src/services/EmailService.js";
 import {
@@ -62,8 +62,10 @@ describe("email resources", () => {
       getFolders,
     } as unknown as EmailService);
 
-    await expect(read).rejects.toBeInstanceOf(McpError);
-    await expect(read).rejects.toMatchObject({ code: ErrorCode.InvalidParams });
+    await expect(read).rejects.toBeInstanceOf(ProtocolError);
+    await expect(read).rejects.toMatchObject({
+      code: ProtocolErrorCode.InvalidParams,
+    });
     expect(getFolders).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@
  * Provides both stderr logging and MCP notifications with RFC 5424 log levels
  */
 
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { Server } from "@modelcontextprotocol/server";
 
 /**
  * RFC 5424 log levels as specified in MCP specification

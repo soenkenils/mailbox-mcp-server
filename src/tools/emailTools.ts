@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 import type { EmailService } from "../services/EmailService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import type { EmailMessage } from "../types/email.types.js";

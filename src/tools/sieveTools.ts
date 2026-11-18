@@ -2,7 +2,7 @@ import type {
   CallToolRequest,
   CallToolResult,
   Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/server";
 import * as v from "valibot";
 import type { ServerConfig } from "../config/config.js";
 import { createLogger } from "../services/Logger.js";

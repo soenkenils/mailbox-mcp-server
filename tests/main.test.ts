@@ -126,19 +126,6 @@ describe("main.ts module structure and logic", () => {
   });
 
   describe("Module Dependencies", () => {
-    it("should import required MCP SDK modules", () => {
-      const requiredSDKModules = [
-        "@modelcontextprotocol/sdk/server/index.js",
-        "@modelcontextprotocol/sdk/server/stdio.js",
-        "@modelcontextprotocol/sdk/types.js",
-      ];
-
-      for (const module of requiredSDKModules) {
-        expect(typeof module).toBe("string");
-        expect(module.includes("@modelcontextprotocol")).toBe(true);
-      }
-    });
-
     it("should import required local modules", () => {
       const requiredLocalModules = [
         "./config/config.js",

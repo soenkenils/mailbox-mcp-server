@@ -1,4 +1,4 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import {
   createEmailPrompts,
@@ -153,7 +153,9 @@ describe("handleEmailPrompt", () => {
       caught = error;
     }
 
-    expect(caught).toBeInstanceOf(McpError);
-    expect((caught as McpError).code).toBe(ErrorCode.InvalidParams);
+    expect(caught).toBeInstanceOf(ProtocolError);
+    expect((caught as ProtocolError).code).toBe(
+      ProtocolErrorCode.InvalidParams,
+    );
   });
 });

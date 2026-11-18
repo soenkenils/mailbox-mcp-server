@@ -547,7 +547,7 @@ checks at another build, which is handy for comparing two revisions.
 This project relies on the following key dependencies:
 
 - **Runtime Dependencies**
-  - `@modelcontextprotocol/sdk` - MCP server implementation
+  - `@modelcontextprotocol/server` - MCP server implementation (SDK v2)
   - `imapflow` - IMAP client for email access
   - `tsdav` - CalDAV client for calendar access
   - `ical.js` - iCalendar parsing library

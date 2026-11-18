@@ -1,4 +1,4 @@
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import type { CalendarService } from "../services/CalendarService.js";

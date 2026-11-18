@@ -1,21 +1,13 @@
 #!/usr/bin/env node
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   type CallToolRequest,
-  CallToolRequestSchema,
   type CallToolResult,
-  ErrorCode,
-  GetPromptRequestSchema,
-  ListPromptsRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  type ServerNotification,
-  type ServerRequest,
-} from "@modelcontextprotocol/sdk/types.js";
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 import { loadConfig, type ServerConfig } from "./config/config.js";
 import { CalendarService } from "./services/CalendarService.js";
@@ -230,29 +222,31 @@ class MailboxMcpServer {
   }
 
   /**
-   * Narrows the SDK's per-request `extra` to what tools need: the abort
+   * Narrows the SDK's per-request context to what tools need: the abort
    * signal, and a progress reporter only when the client sent a
    * progressToken, since without one there is nothing to address it to.
    */
   private toolContext(
     request: CallToolRequest,
-    extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+    ctx: ServerContext,
   ): ToolContext {
     return {
-      signal: extra.signal,
+      signal: ctx.mcpReq.signal,
       reportProgress: createProgressReporter(
         request.params._meta?.progressToken,
         params =>
-          extra.sendNotification({
+          ctx.mcpReq.notify({
             method: "notifications/progress",
-            params,
+            // The spread is for the types: ProgressUpdate is an interface, so
+            // it lacks the index signature the SDK's params type requires.
+            params: { ...params },
           }),
       ),
     };
   }
 
   private setupToolHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, () => {
+    this.server.setRequestHandler("tools/list", () => {
       // Tool definitions are synchronous
       const emailTools = createEmailTools(this.emailService, this.smtpService);
       const calendarTools = createCalendarTools(this.calendarService);
@@ -264,10 +258,10 @@ class MailboxMcpServer {
     });
 
     const { server } = this;
-    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    server.setRequestHandler("tools/call", async (request, ctx) => {
       const { name, arguments: args } = request.params;
       const timer = this.logger.startTimer(`tool:${name}`);
-      const context = this.toolContext(request, extra);
+      const context = this.toolContext(request, ctx);
 
       this.logger.debug(
         `Executing tool: ${name}`,
@@ -327,8 +321,8 @@ class MailboxMcpServer {
         return result;
       } catch (error) {
         // A protocol error such as an unknown tool goes back as JSON-RPC.
-        if (error instanceof McpError) {
-          timer.end(false, "McpError");
+        if (error instanceof ProtocolError) {
+          timer.end(false, "ProtocolError");
           throw error;
         }
         // Record failed execution
@@ -380,25 +374,28 @@ class MailboxMcpServer {
    * goes through a tool call the user can see and approve.
    */
   private setupPromptAndResourceHandlers(): void {
-    this.server.setRequestHandler(ListPromptsRequestSchema, () => ({
+    this.server.setRequestHandler("prompts/list", () => ({
       prompts: createEmailPrompts(),
     }));
 
-    this.server.setRequestHandler(GetPromptRequestSchema, request => {
+    this.server.setRequestHandler("prompts/get", request => {
       const { name, arguments: args } = request.params;
       // Guarded the same way tools are, so an unknown name fails at dispatch
       // rather than inside a handler that assumes it owns the namespace.
       if (!isEmailPrompt(name)) {
-        throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Unknown prompt: ${name}`,
+        );
       }
       return handleEmailPrompt(name, args);
     });
 
-    this.server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    this.server.setRequestHandler("resources/list", () => ({
       resources: listEmailResources(),
     }));
 
-    this.server.setRequestHandler(ReadResourceRequestSchema, request =>
+    this.server.setRequestHandler("resources/read", request =>
       readEmailResource(request.params.uri, this.emailService),
     );
   }
