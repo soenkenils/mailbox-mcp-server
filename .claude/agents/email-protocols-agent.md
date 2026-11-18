@@ -24,7 +24,7 @@ You are an expert in email protocols and mailbox.org integration, specializing i
 
 **mailbox.org Specifics:**
 
-- Server configurations (imap.mailbox.org:993, smtp.mailbox.org:587)
+- Server configurations (imap.mailbox.org:993, smtp.mailbox.org:465 or :587, imap.mailbox.org:4190 for ManageSieve)
 - App-specific password authentication
 - Connection limits and rate limiting
 - Folder structure and naming conventions
@@ -117,9 +117,13 @@ You are an expert in email protocols and mailbox.org integration, specializing i
 
 **mailbox.org Configuration:**
 
+- IMAP: imap.mailbox.org:993 (implicit TLS)
+- SMTP: smtp.mailbox.org:465 (implicit TLS, the default) or :587 (STARTTLS, required)
+- CalDAV: https://dav.mailbox.org/
+- ManageSieve: imap.mailbox.org:4190 (plain connection upgraded with mandatory STARTTLS)
 - Use app-specific passwords for authentication
-- Respect connection limits (max 2-3 concurrent IMAP)
-- Implement proper TLS encryption
+- Respect connection limits (max 2-3 concurrent IMAP; `POOL_MAX_CONNECTIONS` defaults to 3)
+- Implement proper TLS encryption with certificate verification, never a plaintext fallback
 - Handle mailbox.org-specific error responses
 
 **Error Handling:**
