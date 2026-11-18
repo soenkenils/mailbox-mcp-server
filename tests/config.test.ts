@@ -307,5 +307,32 @@ describe("Configuration", () => {
 
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
+
+    it("should reject a minimum above the IMAP maximum", () => {
+      // The pool tops itself up to the minimum without checking the maximum,
+      // so this would open more IMAP connections than POOL_MAX_CONNECTIONS.
+      process.env.POOL_MIN_CONNECTIONS = "5";
+      process.env.POOL_MAX_CONNECTIONS = "3";
+
+      expect(() => loadConfig()).toThrow(
+        "POOL_MIN_CONNECTIONS must not exceed POOL_MAX_CONNECTIONS",
+      );
+    });
+
+    it("should reject a minimum above the default IMAP maximum", () => {
+      process.env.POOL_MAX_CONNECTIONS = undefined;
+      process.env.POOL_MIN_CONNECTIONS = "4";
+
+      expect(() => loadConfig()).toThrow(
+        "POOL_MIN_CONNECTIONS must not exceed POOL_MAX_CONNECTIONS",
+      );
+    });
+
+    it("should accept a minimum equal to the maximum", () => {
+      process.env.POOL_MIN_CONNECTIONS = "2";
+      process.env.POOL_MAX_CONNECTIONS = "2";
+
+      expect(loadConfig().pools.imap.minConnections).toBe(2);
+    });
   });
 });

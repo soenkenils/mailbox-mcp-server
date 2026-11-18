@@ -302,7 +302,7 @@ to a day past its lifetime; with no cached copy the tool returns an error.
 
 - `POOL_MIN_CONNECTIONS`: IMAP connections kept open while idle
   - Default: `1` in stdio mode, `0` in http mode
-  - Must be between 0 and 100 connections
+  - Must be between 0 and `POOL_MAX_CONNECTIONS`
   - `0` means connect on demand. This is the default for hosted deployments: a host that stops the container when idle would otherwise see repeated background IMAP logins that are never used, which a mail provider may treat as suspicious activity
 - `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `2` - safe for mailbox.org)
   - Must be between 1 and 100 connections

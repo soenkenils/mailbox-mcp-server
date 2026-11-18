@@ -244,6 +244,20 @@ describe("HTTP transport", () => {
 
       expect(response.status).toBe(404);
     });
+
+    it("should answer an unparseable request target with 400, not a server error", async () => {
+      // "//" parses as a scheme-relative URL with an empty host, which the URL
+      // constructor rejects. Any client can send it, so it must not surface as
+      // a 500 and an error-level log line.
+      const errorSpy = vi.spyOn(console, "error");
+
+      const response = await fetch(`${baseUrl}//`);
+
+      expect(response.status).toBe(400);
+      const logged = errorSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).not.toContain("Unhandled error while serving request");
+      errorSpy.mockRestore();
+    });
   });
 
   describe("shutdown", () => {
