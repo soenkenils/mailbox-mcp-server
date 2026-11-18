@@ -215,6 +215,15 @@ export function loadConfig(): ServerConfig {
     // demand instead.
     const imapMinConnections =
       validatedEnv.POOL_MIN_CONNECTIONS ?? (transportMode === "http" ? 0 : 1);
+    const imapMaxConnections = validatedEnv.POOL_MAX_CONNECTIONS || 3;
+
+    // The pool tops itself up to the minimum without consulting the maximum,
+    // so an inverted pair would open more IMAP logins than the cap allows.
+    if (imapMinConnections > imapMaxConnections) {
+      throw new Error(
+        `Configuration validation failed: POOL_MIN_CONNECTIONS must not exceed POOL_MAX_CONNECTIONS (${imapMaxConnections})`,
+      );
+    }
 
     return {
       email: {
@@ -260,7 +269,7 @@ export function loadConfig(): ServerConfig {
       pools: {
         imap: {
           minConnections: imapMinConnections,
-          maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 3,
+          maxConnections: imapMaxConnections,
           acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
           maxRetries: 5,
