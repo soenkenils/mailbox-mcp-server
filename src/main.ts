@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import type { Server as HttpServer } from "node:http";
 import {
   type CallToolRequest,
   type CallToolResult,
@@ -39,6 +40,7 @@ import {
   handleSieveTool,
   isSieveTool,
 } from "./tools/sieveTools.js";
+import { closeHttpServer, startHttpServer } from "./transport/http.js";
 import { ErrorUtils, ValidationError } from "./types/errors.js";
 import {
   createProgressReporter,
@@ -59,6 +61,21 @@ export const SERVER_INSTRUCTIONS = [
   "search_emails returns headers only; message bodies come from get_email.",
 ].join(" ");
 
+const SERVER_INFO = {
+  name: "mailbox-mcp-server",
+  version: "0.1.0",
+} as const;
+
+const SERVER_OPTIONS = {
+  capabilities: {
+    tools: {},
+    logging: {},
+    prompts: {},
+    resources: {},
+  },
+  instructions: SERVER_INSTRUCTIONS,
+} as const;
+
 class MailboxMcpServer {
   private server: Server;
   private emailService!: EmailService;
@@ -66,24 +83,12 @@ class MailboxMcpServer {
   private calendarService!: CalendarService;
   private cache!: MemoryCache;
   private config!: ServerConfig;
+  private httpServer?: HttpServer;
+  private shuttingDown = false;
   private logger = createLogger("MailboxMcpServer");
 
   private constructor() {
-    this.server = new Server(
-      {
-        name: "mailbox-mcp-server",
-        version: "0.1.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-          logging: {},
-          prompts: {},
-          resources: {},
-        },
-        instructions: SERVER_INSTRUCTIONS,
-      },
-    );
+    this.server = new Server(SERVER_INFO, SERVER_OPTIONS);
   }
 
   /**
@@ -93,14 +98,18 @@ class MailboxMcpServer {
   static async create(): Promise<MailboxMcpServer> {
     const instance = new MailboxMcpServer();
 
-    // Configure logger with MCP server
-    logger.setMcpServer(instance.server);
-
     instance.setupErrorHandling();
     instance.loadConfiguration();
+
+    // Only the stdio transport has a single long-lived server to attach log
+    // notifications to. HTTP mode creates a server per request, so logs go to
+    // stderr only.
+    if (instance.config.transport.mode === "stdio") {
+      logger.setMcpServer(instance.server);
+    }
+
     instance.initializeServices();
-    instance.setupToolHandlers();
-    instance.setupPromptAndResourceHandlers();
+    instance.configureServer(instance.server);
 
     return instance;
   }
@@ -117,12 +126,24 @@ class MailboxMcpServer {
       );
     };
 
-    // Unified shutdown handler for both signals
+    // Unified shutdown handler for both signals. Container hosts send SIGTERM
+    // when stopping a machine, so this runs routinely in http mode.
     const handleShutdown = async (signal: string) => {
+      if (this.shuttingDown) {
+        return;
+      }
+      this.shuttingDown = true;
+
       this.logger.info(`Received ${signal}, shutting down gracefully`, {
         operation: "shutdown",
         service: "process",
       });
+
+      // Stop accepting requests before tearing down the connection pools.
+      if (this.httpServer) {
+        await closeHttpServer(this.httpServer);
+      }
+
       await this.cleanup();
       process.exit(0);
     };
@@ -245,8 +266,18 @@ class MailboxMcpServer {
     };
   }
 
-  private setupToolHandlers(): void {
-    this.server.setRequestHandler("tools/list", () => {
+  /**
+   * Registers every handler on a server instance. The handlers close over
+   * the shared services, so any number of protocol servers can be configured
+   * against the same connection pools and cache.
+   */
+  private configureServer(server: Server): void {
+    this.setupToolHandlers(server);
+    this.setupPromptAndResourceHandlers(server);
+  }
+
+  private setupToolHandlers(server: Server): void {
+    server.setRequestHandler("tools/list", () => {
       // Tool definitions are synchronous
       const emailTools = createEmailTools(this.emailService, this.smtpService);
       const calendarTools = createCalendarTools(this.calendarService);
@@ -257,7 +288,6 @@ class MailboxMcpServer {
       };
     });
 
-    const { server } = this;
     server.setRequestHandler("tools/call", async (request, ctx) => {
       const { name, arguments: args } = request.params;
       const timer = this.logger.startTimer(`tool:${name}`);
@@ -373,12 +403,12 @@ class MailboxMcpServer {
    * the host can browse. Neither has side effects: every mail access still
    * goes through a tool call the user can see and approve.
    */
-  private setupPromptAndResourceHandlers(): void {
-    this.server.setRequestHandler("prompts/list", () => ({
+  private setupPromptAndResourceHandlers(server: Server): void {
+    server.setRequestHandler("prompts/list", () => ({
       prompts: createEmailPrompts(),
     }));
 
-    this.server.setRequestHandler("prompts/get", request => {
+    server.setRequestHandler("prompts/get", request => {
       const { name, arguments: args } = request.params;
       // Guarded the same way tools are, so an unknown name fails at dispatch
       // rather than inside a handler that assumes it owns the namespace.
@@ -391,21 +421,43 @@ class MailboxMcpServer {
       return handleEmailPrompt(name, args);
     });
 
-    this.server.setRequestHandler("resources/list", () => ({
+    server.setRequestHandler("resources/list", () => ({
       resources: listEmailResources(),
     }));
 
-    this.server.setRequestHandler("resources/read", request =>
+    server.setRequestHandler("resources/read", request =>
       readEmailResource(request.params.uri, this.emailService),
     );
   }
+
+  /**
+   * Builds a fresh protocol server bound to the shared services. The stateless
+   * HTTP transport needs one per request; the object itself is cheap, since all
+   * expensive state (pools, cache) lives in the services.
+   */
+  private createProtocolServer = (): Server => {
+    const server = new Server(SERVER_INFO, SERVER_OPTIONS);
+    server.onerror = this.server.onerror;
+    this.configureServer(server);
+    return server;
+  };
 
   async start(): Promise<void> {
     const startTimer = this.logger.startTimer("server_startup");
 
     try {
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
+      const { mode, port, authToken } = this.config.transport;
+
+      if (mode === "http") {
+        this.httpServer = await startHttpServer({
+          port,
+          // Guaranteed present in http mode by config validation.
+          authToken: authToken as string,
+          createProtocolServer: this.createProtocolServer,
+        });
+      } else {
+        await this.server.connect(new StdioServerTransport());
+      }
 
       const metrics = startTimer.end(true);
       this.logger.info(
@@ -416,9 +468,10 @@ class MailboxMcpServer {
           duration: metrics.duration,
         },
         {
-          version: "0.1.0",
+          version: SERVER_INFO.version,
           capabilities: ["tools", "logging", "prompts", "resources"],
-          transport: "stdio",
+          transport: mode,
+          ...(mode === "http" ? { port } : {}),
         },
       );
     } catch (error) {
