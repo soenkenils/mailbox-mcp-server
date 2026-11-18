@@ -22,6 +22,11 @@ Built with TypeScript and Bun runtime, designed to be used with Claude Desktop.
 - **CalendarService** (`src/services/CalendarService.ts`) - CalDAV operations for events
 - **SieveService** (`src/services/SieveService.ts`) - Email filter script management
 
+### Transports
+
+- **stdio** (default) - one long-lived protocol server, launched locally by the client
+- **HTTP** (`MCP_TRANSPORT=http`, `src/transport/`) - stateless Streamable HTTP on `POST /mcp` with a fresh protocol server per request (`createProtocolServer` in `src/main.ts`) sharing the same services; `auth.ts` checks the bearer token in constant time, `diagnostics.ts` describes requests for logs without credentials. Never log tokens, `Authorization` values or OAuth codes
+
 ### Connection Management
 
 - **ConnectionPool** (`src/services/ConnectionPool.ts`) - Manages persistent IMAP connections

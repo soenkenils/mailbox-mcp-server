@@ -300,6 +300,10 @@ to a day past its lifetime; with no cached copy the tool returns an error.
 
 **Note:** mailbox.org limits concurrent IMAP connections per account. Using more than 2-3 connections may cause connection issues.
 
+- `POOL_MIN_CONNECTIONS`: IMAP connections kept open while idle
+  - Default: `1` in stdio mode, `0` in http mode
+  - Must be between 0 and 100 connections
+  - `0` means connect on demand. This is the default for hosted deployments: a host that stops the container when idle would otherwise see repeated background IMAP logins that are never used, which a mail provider may treat as suspicious activity
 - `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `2` - safe for mailbox.org)
   - Must be between 1 and 100 connections
 - `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `15000`)
@@ -309,7 +313,17 @@ to a day past its lifetime; with no cached copy the tool returns an error.
 - `POOL_HEALTH_CHECK_MS`: Health check frequency (default: `6000`)
   - Must be at least 1000ms
 
-The IMAP pool keeps one connection open while idle. The SMTP pool connects on demand: checking an idle SMTP connection means a full login, so it is opened for a send and closed again once idle for `POOL_IDLE_TIMEOUT_MS`.
+In stdio mode the IMAP pool keeps one connection open while idle (see `POOL_MIN_CONNECTIONS`). The SMTP pool connects on demand: checking an idle SMTP connection means a full login, so it is opened for a send and closed again once idle for `POOL_IDLE_TIMEOUT_MS`.
+
+#### **Optional Transport Configuration**
+
+- `MCP_TRANSPORT`: `stdio` or `http` (default: `stdio`)
+  - `stdio` is what Claude Desktop and Claude Code launch locally
+  - `http` serves MCP over Streamable HTTP for hosted deployments (see [Hosted Mode](#hosted-mode))
+- `PORT`: HTTP listen port (default: `8080`, only used in `http` mode)
+- `MCP_AUTH_TOKEN`: Shared secret required by every HTTP request
+  - **Required** in `http` mode; the server refuses to start without it
+  - Must be at least 32 characters; generate with `openssl rand -hex 32`
 
 #### **Optional Debug Configuration**
 
@@ -322,6 +336,65 @@ The IMAP pool keeps one connection open while idle. The SMTP pool connects on de
 - Use **app-specific passwords** instead of your main password for better security
 - All credentials are passed via environment variables (no persistent storage)
 - Consider using a `.env` file for local development (add it to `.gitignore`)
+- In `http` mode, `MCP_AUTH_TOKEN` is the only thing between the network and your mailbox. Treat it like the mailbox password
+- Logs never contain credentials: only the authentication *scheme* of an `Authorization` header is recorded, a token placed in the URL path is redacted, and OAuth `code` and `code_challenge` values are excluded
+
+## Hosted Mode
+
+The same server can run remotely over Streamable HTTP, which makes it usable from clients that cannot launch a local process. Run it on any container host with `MCP_TRANSPORT=http`.
+
+**Put TLS in front of it.** The server speaks plain HTTP and binds to all interfaces (`0.0.0.0`) so a host's proxy can reach it. The bearer token and all mail content would cross the network in clear text without a TLS-terminating proxy or load balancer in front. Never expose the port directly to the internet.
+
+### **Endpoints**
+
+- `POST /mcp`: the MCP endpoint. Requires `Authorization: Bearer <MCP_AUTH_TOKEN>`. Stateless (no session IDs) with JSON responses, so nothing is lost when the host stops an idle container. `GET` is refused, so no long-lived SSE stream is held open. Bodies over 4 MiB are rejected
+- `GET /health`: unauthenticated liveness check, returns `{"status":"ok"}`
+
+The token is accepted only in the `Authorization` header, never in the URL, where proxies and access logs would record it.
+
+### **Run with Docker**
+
+```bash
+docker build -t mailbox-mcp-server .
+docker run --rm -p 127.0.0.1:8080:8080 \
+  -e MAILBOX_EMAIL=you@mailbox.org \
+  -e MAILBOX_PASSWORD='your-app-password' \
+  -e MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  mailbox-mcp-server
+```
+
+The image defaults to `MCP_TRANSPORT=http` on port 8080 and runs as an unprivileged user. Pass credentials through your host's secret store rather than baking them into the image.
+
+### **Connect a client**
+
+**Claude Code** sends the token as a header:
+
+```bash
+claude mcp add --transport http mailbox https://your-host.example/mcp \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN"
+```
+
+Verify a deployment:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://your-host.example/mcp \
+  -X POST -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+`200` means the token was accepted; `401` means it was missing or did not match.
+
+### **Rotating the access token**
+
+Set a new `MCP_AUTH_TOKEN` on the host and restart the container, then update every client. Store the new value before you close the terminal: many hosts keep secrets write-only, so a lost token can only be replaced, not recovered.
+
+### **Operational notes**
+
+- **Cold starts**: if the host stops the container when idle, the first tool call re-establishes IMAP, CalDAV and Sieve connections and takes a few seconds. Pools connect on demand by default in http mode.
+- **Logs**: structured logs go to stderr. Rejected requests record the method, path, authentication scheme and which credential headers were present, never their values.
+- Do not point an external uptime monitor at `/health` if your host stops idle containers: it would keep the container awake.
 
 ## Security Features
 
@@ -332,6 +405,11 @@ The IMAP pool keeps one connection open while idle. The SMTP pool connects on de
 - ✅ **App-specific password support** for enhanced security
 - ✅ **Session-only caching** - all data cleared on restart
 - ✅ **Privacy-first architecture** - your data stays on your machine
+
+In **stdio** mode everything runs on your machine and nothing is exposed to the network. In **http** mode mail content passes through the host you deploy to, and the server adds:
+
+- ✅ **Shared-secret authentication** on every MCP request, compared in constant time over SHA-256 digests
+- ✅ **Credential-free request logging** - rejected requests are logged without the token they carried
 
 ## Architecture
 
@@ -590,6 +668,21 @@ This project relies on the following key dependencies:
      ```
 
    - Check the [Debugging with Inspector](#debugging-with-inspector) section for advanced troubleshooting
+
+### Hosted mode
+
+1. **The server exits at startup with `MCP_AUTH_TOKEN`**
+   - `MCP_TRANSPORT=http` needs a token of at least 32 characters.
+
+2. **Every request returns 401**
+   - The token in the client does not match `MCP_AUTH_TOKEN`. If it is lost, rotate it.
+   - The logs distinguish the cases: `credentialHeaders: []` means nothing was sent, `authScheme: Bearer` means a credential arrived and did not match.
+
+3. **`/mcp/<token>` returns 404**
+   - Expected. Tokens are accepted only in the `Authorization` header.
+
+4. **First call after idle is slow**
+   - Expected when the host stops idle containers: connections are re-established on demand.
 
 ## Contributing
 
