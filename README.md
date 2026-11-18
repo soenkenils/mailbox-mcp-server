@@ -1,6 +1,9 @@
 # Mailbox.org MCP Server
 
-A Model Context Protocol (MCP) server that integrates mailbox.org email and calendar services with Anthropic's Claude Desktop application. This server enables Claude to access, search, and interact with your personal email and calendar data through a secure, locally-hosted interface.
+A Model Context Protocol (MCP) server that integrates mailbox.org email, calendar and Sieve mail filters with Claude. It runs in either of two modes:
+
+- **stdio** (default): launched locally by Claude Desktop or Claude Code; your credentials and mail never leave your machine except to talk to mailbox.org.
+- **http**: a Streamable HTTP server you host yourself, reachable from Claude Code, claude.ai and mobile. See [Hosted Mode](#hosted-mode).
 
 ## Features
 
@@ -14,8 +17,8 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Attachment detection** and metadata extraction
 
 **Composition & Management:**
-- ✅ **Send emails** with rich content (HTML/text) and attachments
-- ✅ **Draft management** - save and edit email drafts
+- ✅ **Send emails** as plain text, HTML or both (sending attachments is not supported)
+- ✅ **Save drafts** to the Drafts folder without sending them
 - ✅ **Email organization** - move emails between folders
 - ✅ **Flag management** - mark as read/unread, important, etc.
 - ✅ **Email deletion** - trash or permanent removal
@@ -29,10 +32,10 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 - ✅ **Retrieve calendar events** within specified date ranges
 - ✅ **Search calendar events** by title, description, location
 - ✅ **Free/busy time checking** for scheduling
-- ✅ **Create calendar events** (timed or all-day, with attendees)
+- ✅ **Create, update and delete calendar events** (timed or all-day, with attendees), without sending invitations unless you ask
 - ✅ **Multi-calendar support** and aggregation
-- ✅ **Recurring events** and exception handling
-- ✅ **Connection pooling** for CalDAV with automatic retry logic
+- ✅ **Recurring events** expanded into occurrences, with exception handling
+- ✅ **Circuit breaker** on CalDAV requests, backing off after repeated failures
 - ✅ **Session-based caching** for improved performance
 
 ### **Email Filter Management (Sieve/ManageSieve)**
@@ -46,16 +49,16 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 ## Requirements
 
-- Node.js 20 or later
-- A mailbox.org account
-- Claude Desktop application
+- Node.js 20 or later to run the server, and [bun](https://bun.sh) to install, build and test it
+- A mailbox.org account; an [app password](https://support.mailbox.org/en/help/app-passwords) is recommended over your account password, so this server's access can be revoked on its own
+- At least one MCP client: Claude Desktop or Claude Code (stdio), or Claude Code / claude.ai against a hosted server (see [Hosted Mode](#hosted-mode))
 
 ## Installation
 
 1. Clone and build the project:
 
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/soenkenils/mailbox-mcp-server.git
    cd mailbox-mcp-server
    bun install
    bun run build
@@ -75,20 +78,25 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
    # Required settings
    MAILBOX_EMAIL=your-email@mailbox.org
    MAILBOX_PASSWORD=your-app-specific-password
-   
+
    # Optional: IMAP configuration (defaults shown)
    MAILBOX_IMAP_HOST=imap.mailbox.org
    MAILBOX_IMAP_PORT=993
    MAILBOX_IMAP_SECURE=true
-   
+
    # Optional: SMTP configuration (defaults shown)
    MAILBOX_SMTP_HOST=smtp.mailbox.org
    MAILBOX_SMTP_PORT=465
    MAILBOX_SMTP_SECURE=true
-   
-   # Optional: CalDAV configuration (defaults shown) 
+
+   # Optional: CalDAV configuration (defaults shown)
    MAILBOX_CALDAV_URL=https://dav.mailbox.org/
-   
+
+   # Optional: ManageSieve configuration (defaults shown)
+   MAILBOX_SIEVE_HOST=imap.mailbox.org
+   MAILBOX_SIEVE_PORT=4190
+   MAILBOX_SIEVE_SECURE=false
+
    # Optional: Enable debug logging
    DEBUG=false
    ```
@@ -101,14 +109,19 @@ A Model Context Protocol (MCP) server that integrates mailbox.org email and cale
 
 4. Add to Claude Desktop configuration:
 
-   Add this server to your Claude Desktop `claude_desktop_config.json`:
+   Add this server to your Claude Desktop `claude_desktop_config.json`. Claude
+   Desktop does not read `.env`, so the credentials go in the `env` block:
 
    ```json
    {
      "mcpServers": {
        "mailbox-mcp-server": {
          "command": "node",
-         "args": ["/path/to/mailbox-mcp-server/dist/main.js"]
+         "args": ["/path/to/mailbox-mcp-server/dist/main.js"],
+         "env": {
+           "MAILBOX_EMAIL": "your-email@mailbox.org",
+           "MAILBOX_PASSWORD": "your-app-specific-password"
+         }
        }
      }
    }
@@ -129,10 +142,10 @@ Each input schema is closed (`additionalProperties: false`). Undeclared argument
 | **`get_email_thread`** | Every message in a conversation, found by the Message-ID of any message in it; bodies are shortened to 200 characters | read-only | `found`, `subject`, `participants`, `lastActivity`, `messages` (`uid`, `preview`, `truncated`) |
 | **`get_folders`** | Every folder with its path, flags and special-use role | read-only | `folders` |
 | **`send_email`** | Send a message over SMTP immediately; needs `text` or `html`. Line breaks in `text` are kept; subjects and display names are single-line | destructive, open-world | `success`, `messageId` |
-| **`create_draft`** | Save a message to Drafts without sending it; the body may be empty. The draft is built like sent mail: your account as sender, encoded headers, text and HTML both kept, Bcc remembered | additive | `success`, `uid`, `folder` |
+| **`create_draft`** | Save a message to Drafts (or another `folder`) without sending it; the body may be empty. The draft is built like sent mail: your account as sender, encoded headers, text and HTML both kept, Bcc remembered | additive | `success`, `uid`, `folder` |
 | **`move_email`** | Move one message to another folder (it gets a new UID there) | idempotent | – |
 | **`mark_email`** | Add or remove flags: `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, `\Draft` (server keywords such as `\Junk` are accepted too; `\Recent` is refused, the server owns it) | idempotent | – |
-| **`delete_email`** | Move one message to the trash, or with `permanent: true` expunge it | destructive | – |
+| **`delete_email`** | Move one message to the trash, or with `permanent: true` expunge it (needs a server with UIDPLUS). Without a trash folder a non-permanent delete only flags the message `\Deleted` | destructive | – |
 | **`create_directory`** | Create a folder, optionally under an existing `parentPath` | additive | – |
 
 Mail content in tool results is third-party data. `search_emails`, `get_email` and `get_email_thread` say so at the top of their text, and each message body is fenced between `--- BEGIN EMAIL BODY <marker> ---` and `--- END EMAIL BODY <marker> ---` lines with a random marker, so a message cannot pass itself off as instructions by closing the fence early.
@@ -141,9 +154,9 @@ Mail content in tool results is third-party data. `search_emails`, `get_email` a
 
 ### **Calendar Tools**
 
-- **`get_calendar_events`** - Retrieve events in date range. Recurring events are listed once per occurrence; each event shows its `UID`, and an occurrence of a series shows the series UID plus an `Occurrence:` line with its recurrence id
-- **`search_calendar`** - Search events by keyword (same event format)
-- **`get_free_busy`** - Check availability for scheduling
+- **`get_calendar_events`** - Retrieve events in a date range (default: today to 30 days later; `limit` 1-500, default 100, and `offset` page through them). Recurring events are listed once per occurrence; each event shows its `UID`, and an occurrence of a series shows the series UID plus an `Occurrence:` line with its recurrence id
+- **`search_calendar`** - Search events by keyword in title, description and location (same event format; default range today to one year later, `limit` 1-200, default 50)
+- **`get_free_busy`** - Check availability between a required `start` and `end`
 - **`create_calendar_event`** - Create an event (summary, start/end, optional description, location, all-day flag, attendees, target calendar) and return its UID. Timed events need a date-time with an explicit offset or `Z` (a date-time without one is read in the time zone of the machine running the server) and are stored in UTC. For all-day events pass dates (`YYYY-MM-DD`); `end` is the last day, inclusive, and can be omitted for a one-day event. Impossible dates such as `2025-02-30` and local times skipped by a daylight-saving change are refused. By default nobody is notified: attendees are only recorded on the event. Only with `sendInvitations: true` (meant for when you explicitly ask to invite people) does your account become the organizer, and mailbox.org may then email invitations to all attendees. The target calendar and the `MAILBOX_CALENDARS` entries are matched exactly, by display name, full URL or last URL segment; a name that matches several calendars is refused. When `MAILBOX_CALENDARS` is set, events can only be created in those calendars, and the first one listed is the default
 - **`update_calendar_event`** - Change an event found by its UID: only the fields passed change (an empty `description` or `location` removes it, `attendees` replaces the list and keeps the reply status of those who stay); alarms, recurrence rules and time zones are kept. Times follow the `create_calendar_event` contract; when only `start` is passed the event keeps its length, and values equal to the stored ones count as no change. The write carries the event's ETag (`If-Match`), so a change made elsewhere in the meantime fails with "changed on the server" instead of being overwritten
 - **`delete_calendar_event`** - Permanently delete an event found by its UID, also with `If-Match`
@@ -287,9 +300,17 @@ Configuration is automatically validated at startup using comprehensive validati
 
 #### **Optional Cache Configuration**
 
-Cache lifetimes are fixed (searches 5 min, messages 10 min, folder list 15
-min). When the server is unreachable, an expired cached copy is served for up
-to a day past its lifetime; with no cached copy the tool returns an error.
+Cache lifetimes are fixed in code: email searches and threads 5 min, single
+messages 10 min, the folder list 15 min, calendar events and calendar searches
+15 min, free/busy 5 min. An entry read often may have its lifetime extended, up
+to one hour. When the server is unreachable, an expired cached copy is served
+for up to a day past its lifetime; with no cached copy the tool returns an
+error. Moving, flagging and deleting mail, saving drafts, creating folders and
+calendar changes clear the affected cached entries.
+
+`CACHE_EMAIL_SEARCH_TTL`, `CACHE_EMAIL_MESSAGE_TTL`, `CACHE_EMAIL_THREAD_TTL`,
+`CACHE_CALENDAR_EVENTS_TTL` and `CACHE_CALENDAR_FREEBUSY_TTL` are still
+validated at startup (non-negative numbers) but have no effect.
 
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
   - Must be a positive integer
@@ -302,10 +323,11 @@ to a day past its lifetime; with no cached copy the tool returns an error.
 
 - `POOL_MIN_CONNECTIONS`: IMAP connections kept open while idle
   - Default: `1` in stdio mode, `0` in http mode
-  - Must be between 0 and `POOL_MAX_CONNECTIONS`
+  - Must be between 0 and `POOL_MAX_CONNECTIONS`; a larger value is refused at startup
   - `0` means connect on demand. This is the default for hosted deployments: a host that stops the container when idle would otherwise see repeated background IMAP logins that are never used, which a mail provider may treat as suspicious activity
-- `POOL_MAX_CONNECTIONS`: Maximum total connections (default: `2` - safe for mailbox.org)
+- `POOL_MAX_CONNECTIONS`: Maximum IMAP connections (default: `3`)
   - Must be between 1 and 100 connections
+  - Also caps the SMTP pool, at most `5`; without it the SMTP pool allows `2`
 - `POOL_TIMEOUT_MS`: Connection acquire timeout (default: `15000`)
   - Must be at least 1000ms
 - `POOL_IDLE_TIMEOUT_MS`: Idle connection timeout (default: `30000`)
@@ -357,7 +379,7 @@ The same server can run remotely over Streamable HTTP, which makes it usable fro
 ### **Endpoints**
 
 - `POST /mcp`: the MCP endpoint. Requires `Authorization: Bearer <MCP_AUTH_TOKEN>`. Stateless (no session IDs) with JSON responses, so nothing is lost when the host stops an idle container. `GET` is refused, so no long-lived SSE stream is held open. Bodies over 4 MiB are rejected
-- `GET /health`: unauthenticated liveness check, returns `{"status":"ok"}`
+- `GET /health` (or `HEAD`): unauthenticated liveness check, returns `{"status":"ok"}`. It does not touch mailbox.org
 - With `PUBLIC_URL` set: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/register`, `/authorize` and `/token` (see [How OAuth works here](#how-oauth-works-here))
 
 The token is accepted only in the `Authorization` header, never in the URL, where proxies and access logs would record it.
@@ -402,7 +424,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://your-host.example/mcp \
 https://your-host.example/mcp
 ```
 
-Leave **OAuth Client ID** and **OAuth Client Secret** empty. The server supports dynamic client registration, so the client registers itself; clients are public and use PKCE, so there is no client secret.
+Leave **OAuth Client ID** and **OAuth Client Secret** empty. The server supports dynamic client registration, so the client registers itself. PKCE is what ties an authorization code to the client that asked for it: a client registering as public gets no secret, and one registering as confidential is handed a secret that is never checked.
 
 A browser page then names the application and the host the authorization code will be sent to. Check that destination before entering the value of `MCP_AUTH_TOKEN`. The client ends up holding a short-lived access token plus a refresh token, rather than a credential embedded in a URL.
 
@@ -432,7 +454,7 @@ Consequences worth knowing:
 - **Rotating `MCP_AUTH_TOKEN` disconnects OAuth clients**, since it is both the login credential and the signing key. Re-authorize the connector afterwards.
 - **The static token keeps working** as an `Authorization: Bearer` header on `/mcp`, so Claude Code is unaffected.
 - **Registration is restricted.** Anyone can reach `/register`, so a client may only register a redirect URI on an allowed host (see `OAUTH_ALLOWED_REDIRECT_HOSTS`). Without this, someone could register a client pointing at a host they control and send you an authorize link that looks entirely genuine. The consent screen also names the client and shows where the code will be sent, and refuses to be framed.
-- **Rate limits** apply per client address on `/authorize`, `/token` and `/register`. The server trusts exactly one proxy hop for `X-Forwarded-For`, which matches a single TLS-terminating proxy in front of it.
+- **Rate limits** apply per client address: 100 requests per 15 minutes on `/authorize`, 50 per 15 minutes on `/token`, 20 per hour on `/register`. The server trusts exactly one proxy hop for `X-Forwarded-For`, which matches a single TLS-terminating proxy in front of it.
 
 ### **Rotating the access token**
 
@@ -448,13 +470,12 @@ Set a new `MCP_AUTH_TOKEN` on the host and restart the container, then update ev
 
 ## Security Features
 
-- ✅ **TLS encryption** for all IMAP, SMTP, CalDAV, and CardDAV connections
+- ✅ **TLS encryption** with certificate verification for IMAP, SMTP and CalDAV (with the default settings), and STARTTLS required for SMTP on port 587 and for ManageSieve
 - ✅ **Connection pooling with health monitoring** - automatic detection and recovery from failed connections
-- ✅ **Local-only processing** - no data sent to third parties
 - ✅ **Environment-based credentials** - no persistent storage of passwords
 - ✅ **App-specific password support** for enhanced security
-- ✅ **Session-only caching** - all data cleared on restart
-- ✅ **Privacy-first architecture** - your data stays on your machine
+- ✅ **Session-only caching** - an in-memory cache, cleared on restart
+- ✅ **No third-party data flow beyond your chosen client** - mail content goes only between mailbox.org, this server, and the MCP client you connect
 
 In **stdio** mode everything runs on your machine and nothing is exposed to the network. In **http** mode mail content passes through the host you deploy to, and the server adds:
 
@@ -485,10 +506,14 @@ The server implements robust connection pooling for optimal performance and reli
 
 #### **Base Pool Features**
 - **Sensible Defaults**: Production-ready configuration that works out of the box
-- **Simple Tuning**: Only 4 configuration variables for essential performance tuning
+- **Simple Tuning**: Five `POOL_*` environment variables cover the useful adjustments
 - **Health Checks**: Background monitoring and cleanup of idle/unhealthy connections
 - **Graceful Shutdown**: Proper cleanup of all connections on server termination
 - **Error Recovery**: Automatic recreation of failed connections with hardcoded retry logic
+
+#### **CalDAV and ManageSieve**
+- CalDAV has no pool: requests go through a circuit breaker that stops calling the server for a while after repeated failures
+- ManageSieve opens a connection per tool call
 
 #### **Performance Benefits**
 - **Reduced Latency**: Connection reuse eliminates costly connection establishment overhead
@@ -503,7 +528,7 @@ The server implements robust connection pooling for optimal performance and reli
 1. Clone the repository:
 
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/soenkenils/mailbox-mcp-server.git
    cd mailbox-mcp-server
    ```
 
@@ -513,96 +538,44 @@ The server implements robust connection pooling for optimal performance and reli
    bun install
    ```
 
-   > **Note**: This project uses bun as the package manager. Make sure you have bun installed (version 1.0 or later recommended).
+   > **Note**: This project uses bun as the package manager and test runner. CI pins the bun version in `.github/workflows/ci.yml`.
 
 3. Create environment configuration:
 
    ```bash
    cp .env.example .env
    # Edit .env with your mailbox.org credentials
-
-### Debugging with Inspector
-
-The MCP Inspector is a powerful tool for debugging and monitoring your MCP server. It provides real-time insights into errors, request/response cycles, and server state.
-
-#### Enabling the Inspector
-
-1. Start the server with inspector enabled:
-
-   ```bash
-   MCP_INSPECTOR=true bun start
    ```
 
-2. Access the web UI at `http://localhost:3000/inspector` (port may vary based on your configuration)
+### **Debugging with the MCP Inspector**
 
-#### Key Features
-
-- **Real-time Error Monitoring**
-  - View errors as they occur
-  - See detailed stack traces and context
-  - Filter errors by type and severity
-
-- **Request/Response Inspection**
-  - Monitor all MCP protocol messages
-  - Inspect request/response payloads
-  - View timing information
-
-- **Tool Validation**
-  - Validate tool definitions against MCP specifications
-  - Get warnings about potential issues
-
-#### Common Debugging Workflow
-
-1. **Reproduce the Issue**
-   - Perform the action that causes the error
-   - Note any error messages or unexpected behavior
-
-2. **Inspect the Error**
-   - Look for red indicators in the Inspector UI
-   - Expand error entries for detailed information
-   - Check the network tab for failed requests
-
-3. **View Context**
-   - Examine the server state at the time of the error
-   - Check the request payload and headers
-   - Look at previous successful requests for comparison
-
-#### Enabling Verbose Logging
-
-For more detailed debugging information, enable debug mode:
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a separate tool (not a dependency of this project) that launches the server over stdio and lets you list and call its tools, prompts and resources from a browser UI:
 
 ```bash
-MCP_DEBUG=true MCP_INSPECTOR=true bun start
+bun run build
+npx @modelcontextprotocol/inspector node --env-file=.env dist/main.js
 ```
 
-#### Best Practices
-
-- Keep the Inspector open during development
-- Use the search/filter functionality to find specific errors
-- Take advantage of the "Resend" feature to retry failed requests
-- Use the "Copy as cURL" feature to share reproducible test cases
+`--env-file` makes `node` load your `.env`, since the server does not read it itself. Add `DEBUG=true` to `.env` for debug-level logs, which go to stderr.
 
 ### **Available Scripts**
 
-- **`bun dev`** - Start development server with hot reloading
-- **`bun run build`** - Build for production
+- **`bun run dev`** - Start the server from source with `tsx watch`, restarting on changes
+- **`bun run build`** - Compile `src/` to `dist/`
 - **`bun run typecheck`** - Type-check `src/` and `tests/` (`build` covers `src/` only)
-- **`bun start`** - Start production server
-- **`bun run test`** - Run test suite
+- **`bun run start`** - Start the built server (`node dist/main.js`)
+- **`bun run test`** - Run the test suite once
+- **`bun run test:watch`** - Run the tests in watch mode
+- **`bun run test:coverage`** - Run the tests with coverage and enforce the thresholds in `vitest.config.ts`
 - **`bun run test:e2e`** - Run the end-to-end check against a local IMAP server (see [End-to-end checks](#end-to-end-checks))
-- **`bun run test:unit`** - Run unit tests only
-- **`bun run test:integration`** - Run integration tests only
-- **`bun format`** - Format code with Biome
-- **`bun lint`** - Lint code with Biome
-- **`bun check`** - Run both linting and formatting
+- **`bun run check`** - Lint and format check with Biome, read-only (what CI runs)
+- **`bun run fix`** - Apply what `check` can fix automatically
+- **`bun run format`** - Format code with Biome
+- **`bun run lint`** - Lint code with Biome
 
 ### **Testing**
 
-The project includes comprehensive test coverage:
-
-- **Unit tests**: Service layer logic testing
-- **Integration tests**: Real mailbox.org API testing  
-- **Mock services**: IMAP/CalDAV/CardDAV protocol testing
+The tests live in `tests/` and run with Vitest. They mock `imapflow`, `nodemailer` and `tsdav`, and the ManageSieve tests talk to a fake server on a local socket, so no test contacts mailbox.org; `tests/integration.test.ts` wires the real services together over those mocks. `tests/toolContract.test.ts` checks every tool's annotations, closed input schema and structured output.
 
 ```bash
 # Run all tests
@@ -611,9 +584,12 @@ bun run test
 # Run with coverage
 bun run test:coverage
 
-# Test specific service
-bun run test ImapService
+# Run one file, or tests matching a name
+bun run test EmailService
+bun run test -t "search"
 ```
+
+CI (`.github/workflows/ci.yml`) runs, in order: `bun install --frozen-lockfile`, `bun audit --audit-level=high` (with documented ignores), `bun run check`, `bun run build`, `bun run typecheck` and `bun run test:coverage`. Run the same before pushing.
 
 ### **End-to-end checks**
 
@@ -679,17 +655,23 @@ checks at another build, which is handy for comparing two revisions.
 This project relies on the following key dependencies:
 
 - **Runtime Dependencies**
-  - `@modelcontextprotocol/server` - MCP server implementation (SDK v2)
+  - `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, `@modelcontextprotocol/core` - MCP server implementation (SDK v2), its Node HTTP transport and shared types
   - `imapflow` - IMAP client for email access
+  - `nodemailer` - SMTP client for sending mail
   - `tsdav` - CalDAV client for calendar access
   - `ical.js` - iCalendar parsing library
   - `mailparser` - Email message parsing
+  - `valibot` - Validation of environment variables and tool arguments
   - `dayjs` - Date manipulation library
+  - `express`, `cors`, `express-rate-limit` - OAuth endpoints in http mode (SDK v2 no longer ships them)
+
+  ManageSieve is implemented directly on `node:net`/`node:tls`, without a library.
 
 - **Development Dependencies**
   - `typescript` - TypeScript compiler
   - `vitest` - Testing framework
-  - `biome` - Code formatting and linting
+  - `@biomejs/biome` - Code formatting and linting
+  - `tsx` - Runs the TypeScript sources in `bun run dev`
   - `@types/*` - TypeScript type definitions
 
 ## Troubleshooting
@@ -718,10 +700,10 @@ This project relies on the following key dependencies:
    - Enable debug mode for more detailed logs:
 
      ```bash
-     DEBUG=true bun start
+     DEBUG=true bun run start
      ```
 
-   - Check the [Debugging with Inspector](#debugging-with-inspector) section for advanced troubleshooting
+   - Check the [Debugging with the MCP Inspector](#debugging-with-the-mcp-inspector) section for advanced troubleshooting
 
 ### Hosted mode
 
