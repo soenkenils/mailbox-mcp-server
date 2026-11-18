@@ -17,6 +17,13 @@ export interface TransportConfig {
   port: number;
   /** Shared secret required for HTTP mode; undefined in stdio mode. */
   authToken?: string;
+  /**
+   * Externally reachable origin. Enables OAuth when set, since discovery
+   * metadata and redirects must advertise a stable public URL.
+   */
+  publicUrl?: string;
+  /** Hosts an OAuth client may register a redirect URI for. */
+  allowedRedirectHosts?: string[];
 }
 
 export interface ServerConfig {
@@ -145,6 +152,8 @@ const EnvSchema = v.object({
     ),
   ),
   MCP_AUTH_TOKEN: v.optional(v.string()),
+  PUBLIC_URL: v.optional(v.pipe(v.string(), v.url())),
+  OAUTH_ALLOWED_REDIRECT_HOSTS: v.optional(v.string()),
 
   // Optional debug flag
   DEBUG: v.optional(v.picklist(["true", "false"])),
@@ -286,6 +295,13 @@ export function loadConfig(): ServerConfig {
         mode: transportMode,
         port: validatedEnv.PORT || 8080,
         authToken,
+        // Trailing slashes would produce doubled slashes in published metadata.
+        publicUrl: validatedEnv.PUBLIC_URL?.replace(/\/+$/, ""),
+        allowedRedirectHosts: validatedEnv.OAUTH_ALLOWED_REDIRECT_HOSTS?.split(
+          ",",
+        )
+          .map(host => host.trim())
+          .filter(host => host.length > 0),
       },
       debug: validatedEnv.DEBUG === "true",
     };
