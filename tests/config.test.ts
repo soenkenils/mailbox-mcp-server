@@ -213,4 +213,67 @@ describe("Configuration", () => {
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
   });
+
+  describe("pool minimum connections", () => {
+    const validToken = "a".repeat(64);
+
+    beforeEach(() => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
+      process.env.MCP_TRANSPORT = undefined;
+      process.env.MCP_AUTH_TOKEN = undefined;
+      process.env.POOL_MIN_CONNECTIONS = undefined;
+    });
+
+    it("should keep a warm IMAP connection in stdio mode", () => {
+      const config = loadConfig();
+
+      expect(config.pools.imap.minConnections).toBe(1);
+      expect(config.pools.smtp.minConnections).toBe(0);
+    });
+
+    it("should connect on demand in http mode", () => {
+      process.env.MCP_TRANSPORT = "http";
+      process.env.MCP_AUTH_TOKEN = validToken;
+
+      const config = loadConfig();
+
+      expect(config.pools.imap.minConnections).toBe(0);
+      expect(config.pools.smtp.minConnections).toBe(0);
+    });
+
+    it("should let POOL_MIN_CONNECTIONS override the IMAP default", () => {
+      process.env.POOL_MIN_CONNECTIONS = "2";
+
+      const config = loadConfig();
+
+      expect(config.pools.imap.minConnections).toBe(2);
+      // SMTP always connects on demand: a warm transporter only costs logins.
+      expect(config.pools.smtp.minConnections).toBe(0);
+    });
+
+    it("should honour an explicit zero rather than falling back", () => {
+      process.env.POOL_MIN_CONNECTIONS = "0";
+
+      const config = loadConfig();
+
+      expect(config.pools.imap.minConnections).toBe(0);
+    });
+
+    it("should allow warm connections in http mode when asked", () => {
+      process.env.MCP_TRANSPORT = "http";
+      process.env.MCP_AUTH_TOKEN = validToken;
+      process.env.POOL_MIN_CONNECTIONS = "1";
+
+      const config = loadConfig();
+
+      expect(config.pools.imap.minConnections).toBe(1);
+    });
+
+    it("should reject negative minimum connections", () => {
+      process.env.POOL_MIN_CONNECTIONS = "-1";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+  });
 });

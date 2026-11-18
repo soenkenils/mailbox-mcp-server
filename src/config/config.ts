@@ -105,6 +105,15 @@ const EnvSchema = v.object({
   ),
 
   // Optional pool configuration
+  POOL_MIN_CONNECTIONS: v.optional(
+    v.pipe(
+      v.string(),
+      v.transform(Number),
+      v.number(),
+      v.minValue(0),
+      v.maxValue(100),
+    ),
+  ),
   POOL_MAX_CONNECTIONS: v.optional(
     v.pipe(
       v.string(),
@@ -199,6 +208,14 @@ export function loadConfig(): ServerConfig {
       );
     }
 
+    // A warm IMAP connection pays off for a long-lived local process, but a
+    // hosted server is often stopped whenever it goes idle: keeping a minimum
+    // open only produces repeated background IMAP logins that never get used,
+    // which the mail provider may read as suspicious activity. Connect on
+    // demand instead.
+    const imapMinConnections =
+      validatedEnv.POOL_MIN_CONNECTIONS ?? (transportMode === "http" ? 0 : 1);
+
     return {
       email: {
         host: validatedEnv.MAILBOX_IMAP_HOST || "imap.mailbox.org",
@@ -242,7 +259,7 @@ export function loadConfig(): ServerConfig {
       },
       pools: {
         imap: {
-          minConnections: 1,
+          minConnections: imapMinConnections,
           maxConnections: validatedEnv.POOL_MAX_CONNECTIONS || 3,
           acquireTimeoutMs: validatedEnv.POOL_TIMEOUT_MS || 15000,
           idleTimeoutMs: validatedEnv.POOL_IDLE_TIMEOUT_MS || 30000,
