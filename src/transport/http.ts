@@ -121,11 +121,17 @@ const handleRequest = async (
   res: ServerResponse,
   options: HttpTransportOptions,
 ): Promise<void> => {
-  // Parsed against a dummy origin because req.url only carries the path.
-  const { pathname, searchParams } = new URL(
-    req.url ?? "/",
-    "http://localhost",
-  );
+  // Parsed against a dummy origin because req.url only carries the path. A
+  // target such as "//" reads as a URL with an empty host and does not parse;
+  // that is the client's fault, not a server error.
+  let url: URL;
+  try {
+    url = new URL(req.url ?? "/", "http://localhost");
+  } catch {
+    sendJson(res, 400, { error: "Bad Request" });
+    return;
+  }
+  const { pathname, searchParams } = url;
 
   if (pathname === HEALTH_PATH) {
     if (req.method !== "GET" && req.method !== "HEAD") {
