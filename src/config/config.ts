@@ -224,6 +224,22 @@ export function loadConfig(): ServerConfig {
     // demand instead.
     const imapMinConnections =
       validatedEnv.POOL_MIN_CONNECTIONS ?? (transportMode === "http" ? 0 : 1);
+    // OAuth endpoints are served at the root and their published URLs are
+    // built from the origin, so a path would appear in the issuer but be
+    // dropped from every endpoint it advertises.
+    if (validatedEnv.PUBLIC_URL) {
+      const publicUrl = new URL(validatedEnv.PUBLIC_URL);
+      if (
+        publicUrl.pathname.replace(/\/+$/, "") !== "" ||
+        publicUrl.search ||
+        publicUrl.hash
+      ) {
+        throw new Error(
+          "Configuration validation failed: PUBLIC_URL must be an origin without a path, query or fragment",
+        );
+      }
+    }
+
     const imapMaxConnections = validatedEnv.POOL_MAX_CONNECTIONS || 3;
 
     // The pool tops itself up to the minimum without consulting the maximum,

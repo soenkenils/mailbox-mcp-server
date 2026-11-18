@@ -226,6 +226,25 @@ describe("Configuration", () => {
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
 
+    it("should reject a PUBLIC_URL with a path", () => {
+      // The OAuth endpoints are served at the root and their published URLs
+      // are built from the origin, so a path would be advertised in the issuer
+      // but silently dropped from every endpoint.
+      process.env.PUBLIC_URL = "https://mcp.example.com/mailbox";
+
+      expect(() => loadConfig()).toThrow(
+        "PUBLIC_URL must be an origin without a path, query or fragment",
+      );
+    });
+
+    it("should reject a PUBLIC_URL with a query string", () => {
+      process.env.PUBLIC_URL = "https://mcp.example.com/?x=1";
+
+      expect(() => loadConfig()).toThrow(
+        "PUBLIC_URL must be an origin without a path, query or fragment",
+      );
+    });
+
     it("should leave the redirect allowlist to the OAuth defaults when unset", () => {
       expect(loadConfig().transport.allowedRedirectHosts).toBeUndefined();
     });

@@ -327,6 +327,7 @@ In stdio mode the IMAP pool keeps one connection open while idle (see `POOL_MIN_
 - `PUBLIC_URL`: Externally reachable origin, e.g. `https://mcp.example.com`
   - Optional. Setting it enables OAuth, which needs a stable public URL to publish in discovery metadata and to build redirects
   - Must be `https`, except `localhost`/`127.0.0.1` for local testing
+  - Origin only: a path, query or fragment is refused, since the OAuth endpoints are served at the root
   - Without it the server accepts only the static `MCP_AUTH_TOKEN`
 - `OAUTH_ALLOWED_REDIRECT_HOSTS`: Comma-separated hosts an OAuth client may register a redirect URI for
   - Defaults to `claude.ai,claude.com`
