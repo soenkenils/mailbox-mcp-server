@@ -141,4 +141,76 @@ describe("Configuration", () => {
       expect(() => loadConfig()).toThrow("Configuration validation failed:");
     });
   });
+
+  describe("transport configuration", () => {
+    const validToken = "a".repeat(64);
+
+    beforeEach(() => {
+      process.env.MAILBOX_EMAIL = "test@mailbox.org";
+      process.env.MAILBOX_PASSWORD = "TestPass123!";
+      process.env.MCP_TRANSPORT = undefined;
+      process.env.MCP_AUTH_TOKEN = undefined;
+      process.env.PORT = undefined;
+    });
+
+    it("should default to stdio transport on port 8080 without a token", () => {
+      const config = loadConfig();
+
+      expect(config.transport.mode).toBe("stdio");
+      expect(config.transport.port).toBe(8080);
+      expect(config.transport.authToken).toBeUndefined();
+    });
+
+    it("should enable http transport when MCP_TRANSPORT is http", () => {
+      process.env.MCP_TRANSPORT = "http";
+      process.env.MCP_AUTH_TOKEN = validToken;
+      process.env.PORT = "9090";
+
+      const config = loadConfig();
+
+      expect(config.transport.mode).toBe("http");
+      expect(config.transport.port).toBe(9090);
+      expect(config.transport.authToken).toBe(validToken);
+    });
+
+    it("should reject http transport without an auth token", () => {
+      process.env.MCP_TRANSPORT = "http";
+
+      expect(() => loadConfig()).toThrow("MCP_AUTH_TOKEN");
+    });
+
+    it("should reject http transport with a too-short auth token", () => {
+      process.env.MCP_TRANSPORT = "http";
+      process.env.MCP_AUTH_TOKEN = "short-token";
+
+      expect(() => loadConfig()).toThrow(
+        "requires a token of at least 32 characters",
+      );
+    });
+
+    it("should not echo the auth token in a validation error", () => {
+      process.env.MCP_TRANSPORT = "http";
+      process.env.MCP_AUTH_TOKEN = "short-secret-value";
+
+      expect(() => loadConfig()).not.toThrow("short-secret-value");
+    });
+
+    it("should not require an auth token in stdio mode", () => {
+      process.env.MCP_TRANSPORT = "stdio";
+
+      expect(() => loadConfig()).not.toThrow();
+    });
+
+    it("should validate unknown transport modes", () => {
+      process.env.MCP_TRANSPORT = "carrier-pigeon";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+
+    it("should validate the port range", () => {
+      process.env.PORT = "70000";
+
+      expect(() => loadConfig()).toThrow("Configuration validation failed:");
+    });
+  });
 });

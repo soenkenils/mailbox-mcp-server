@@ -10,6 +10,15 @@ export interface PoolsConfig {
   smtp: ConnectionPoolConfig;
 }
 
+export type TransportMode = "stdio" | "http";
+
+export interface TransportConfig {
+  mode: TransportMode;
+  port: number;
+  /** Shared secret required for HTTP mode; undefined in stdio mode. */
+  authToken?: string;
+}
+
 export interface ServerConfig {
   email: ImapConnection;
   smtp: SmtpConnection;
@@ -17,8 +26,12 @@ export interface ServerConfig {
   sieve: SieveConnection;
   cache: CacheConfig;
   pools: PoolsConfig;
+  transport: TransportConfig;
   debug: boolean;
 }
+
+/** Minimum length for MCP_AUTH_TOKEN; `openssl rand -hex 32` yields 64 chars. */
+const MIN_AUTH_TOKEN_LENGTH = 32;
 
 // Environment variables validation schema
 const EnvSchema = v.object({
@@ -111,6 +124,19 @@ const EnvSchema = v.object({
     v.pipe(v.string(), v.transform(Number), v.number(), v.minValue(1000)),
   ),
 
+  // Optional transport configuration (stdio for local clients, http for hosted)
+  MCP_TRANSPORT: v.optional(v.picklist(["stdio", "http"])),
+  PORT: v.optional(
+    v.pipe(
+      v.string(),
+      v.transform(Number),
+      v.number(),
+      v.minValue(1),
+      v.maxValue(65535),
+    ),
+  ),
+  MCP_AUTH_TOKEN: v.optional(v.string()),
+
   // Optional debug flag
   DEBUG: v.optional(v.picklist(["true", "false"])),
 });
@@ -155,6 +181,21 @@ export function loadConfig(): ServerConfig {
     if (!imapSecure || !smtpSecure) {
       console.warn(
         "⚠️  Security Warning: Non-secure connections detected. Ensure you're connecting over encrypted channels in production.",
+      );
+    }
+
+    const transportMode: TransportMode = validatedEnv.MCP_TRANSPORT || "stdio";
+    const authToken = validatedEnv.MCP_AUTH_TOKEN;
+
+    // HTTP mode exposes the server on a network port, so refuse to start
+    // without a usable shared secret rather than serving mailbox tools
+    // unauthenticated.
+    if (
+      transportMode === "http" &&
+      (!authToken || authToken.length < MIN_AUTH_TOKEN_LENGTH)
+    ) {
+      throw new Error(
+        `Configuration validation failed: MCP_AUTH_TOKEN: HTTP transport requires a token of at least ${MIN_AUTH_TOKEN_LENGTH} characters`,
       );
     }
 
@@ -223,6 +264,11 @@ export function loadConfig(): ServerConfig {
           retryDelayMs: 200,
           healthCheckIntervalMs: validatedEnv.POOL_HEALTH_CHECK_MS || 6000,
         },
+      },
+      transport: {
+        mode: transportMode,
+        port: validatedEnv.PORT || 8080,
+        authToken,
       },
       debug: validatedEnv.DEBUG === "true",
     };
