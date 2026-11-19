@@ -257,7 +257,6 @@ All via environment variables, validated at startup in `src/config/config.ts`:
 ## Documentation
 
 - `README.md` - Project overview, tools, configuration, hosted mode
-- `docs/` - Design notes (`concept.md`, `sieve-filter-concept.md`)
 
 ## Troubleshooting
 
