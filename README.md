@@ -300,17 +300,19 @@ Configuration is automatically validated at startup using comprehensive validati
 
 #### **Optional Cache Configuration**
 
-Cache lifetimes are fixed in code: email searches and threads 5 min, single
-messages 10 min, the folder list 15 min, calendar events and calendar searches
-15 min, free/busy 5 min. An entry read often may have its lifetime extended, up
-to one hour. When the server is unreachable, an expired cached copy is served
-for up to a day past its lifetime; with no cached copy the tool returns an
-error. Moving, flagging and deleting mail, saving drafts, creating folders and
-calendar changes clear the affected cached entries.
+Cache lifetimes in ms (`0` or unset uses the default):
 
-`CACHE_EMAIL_SEARCH_TTL`, `CACHE_EMAIL_MESSAGE_TTL`, `CACHE_EMAIL_THREAD_TTL`,
-`CACHE_CALENDAR_EVENTS_TTL` and `CACHE_CALENDAR_FREEBUSY_TTL` are still
-validated at startup (non-negative numbers) but have no effect.
+- `CACHE_EMAIL_SEARCH_TTL`: email searches (default: `300000`, 5 min)
+- `CACHE_EMAIL_MESSAGE_TTL`: single messages (default: `600000`, 10 min)
+- `CACHE_EMAIL_THREAD_TTL`: threads (default: `300000`, 5 min)
+- `CACHE_CALENDAR_EVENTS_TTL`: calendar events and calendar searches (default: `900000`, 15 min)
+- `CACHE_CALENDAR_FREEBUSY_TTL`: free/busy (default: `300000`, 5 min)
+
+The folder list is cached for a fixed 15 min. An entry read often may have its
+lifetime extended, up to one hour. When the server is unreachable, an expired
+cached copy is served for up to a day past its lifetime; with no cached copy
+the tool returns an error. Moving, flagging and deleting mail, saving drafts,
+creating folders and calendar changes clear the affected cached entries.
 
 - `CACHE_MAX_SIZE`: Maximum cache entries (default: `1000`)
   - Must be a positive integer

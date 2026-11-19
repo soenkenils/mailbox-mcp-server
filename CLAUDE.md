@@ -243,7 +243,7 @@ All via environment variables, validated at startup in `src/config/config.ts`:
 
 - `MAILBOX_IMAP_*`, `MAILBOX_SMTP_*`, `MAILBOX_CALDAV_URL`, `MAILBOX_CALENDARS`, `MAILBOX_SIEVE_*` - server endpoints
 - `POOL_*` - connection pool sizes and timeouts (`POOL_MAX_CONNECTIONS` defaults to 3)
-- `CACHE_MAX_SIZE`, `CACHE_CLEANUP_INTERVAL` - cache limits (the `CACHE_*_TTL` variables are validated but unused)
+- `CACHE_*_TTL` - cache lifetimes per operation; `CACHE_MAX_SIZE`, `CACHE_CLEANUP_INTERVAL` - cache limits
 - `MCP_TRANSPORT`, `PORT`, `MCP_AUTH_TOKEN`, `PUBLIC_URL`, `OAUTH_ALLOWED_REDIRECT_HOSTS` - hosted mode
 - `DEBUG` - debug logging
 

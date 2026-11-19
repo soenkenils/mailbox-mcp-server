@@ -3,7 +3,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import ICAL from "ical.js";
 import { createDAVClient, type DAVCalendar, type DAVObject } from "tsdav";
-import type { LocalCache } from "../types/cache.types.js";
+import type { CacheConfig, LocalCache } from "../types/cache.types.js";
 import type {
   Attendee,
   CalDavConnection,
@@ -88,6 +88,12 @@ interface LocatedEvent {
 const calendarLabel = (calendar: DAVCalendar): string =>
   (calendar.displayName as string) || calendar.url;
 
+/** Used when no TTLs are passed in; match the defaults in config.ts. */
+const DEFAULT_CALENDAR_TTLS: CacheConfig["calendar"] = {
+  eventsTtl: 900000, // 15 minutes
+  freeBusyTtl: 300000, // 5 minutes
+};
+
 export class CalendarService {
   private connection: CalDavConnection;
   private cache: LocalCache;
@@ -96,14 +102,17 @@ export class CalendarService {
   private logger = createLogger("CalendarService");
   private cachedFetch: ReturnType<typeof createCacheFetcher>;
   private authorization: string | undefined;
+  private ttls: CacheConfig["calendar"];
 
   constructor(
     connection: CalDavConnection,
     cache: LocalCache,
     circuitBreakerConfig?: CircuitBreakerConfig,
+    ttls: CacheConfig["calendar"] = DEFAULT_CALENDAR_TTLS,
   ) {
     this.connection = connection;
     this.cache = cache;
+    this.ttls = ttls;
     this.cachedFetch = createCacheFetcher(
       this.cache,
       this.logger,
@@ -143,7 +152,7 @@ export class CalendarService {
       `calendar_events:${JSON.stringify(options)}`,
       () => this.fetchCalendarEvents(options),
       "getCalendarEvents",
-      900000, // 15 minutes
+      this.ttls.eventsTtl,
     );
   }
 
@@ -158,7 +167,7 @@ export class CalendarService {
           options.query,
         ),
       "searchCalendar",
-      900000, // 15 minutes
+      this.ttls.eventsTtl,
     );
   }
 
@@ -176,7 +185,7 @@ export class CalendarService {
           end,
         ),
       "getFreeBusy",
-      300000, // 5 minutes
+      this.ttls.freeBusyTtl,
     );
   }
 

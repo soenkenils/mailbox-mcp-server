@@ -197,6 +197,7 @@ class MailboxMcpServer {
         this.config.email,
         this.cache,
         this.config.pools.imap,
+        this.config.cache.email,
       );
       this.smtpService = new SmtpService(
         this.config.smtp,
@@ -205,6 +206,8 @@ class MailboxMcpServer {
       this.calendarService = new CalendarService(
         this.config.calendar,
         this.cache,
+        undefined,
+        this.config.cache.calendar,
       );
 
       this.logger.info(

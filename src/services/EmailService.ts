@@ -73,7 +73,7 @@ const byDateAscending = (a: EmailMessage, b: EmailMessage): number =>
  */
 type ImapMessage = FetchMessageObject;
 
-import type { LocalCache } from "../types/cache.types.js";
+import type { CacheConfig, LocalCache } from "../types/cache.types.js";
 import type {
   EmailComposition,
   EmailFolder,
@@ -143,6 +143,13 @@ const splitOnOr = (query: string): QueryTerm[] => {
   return parts.map(toTerm).filter(term => term.text !== "");
 };
 
+/** Used when no TTLs are passed in; match the defaults in config.ts. */
+const DEFAULT_EMAIL_TTLS: CacheConfig["email"] = {
+  searchTtl: 300000, // 5 minutes
+  messageTtl: 600000, // 10 minutes
+  threadTtl: 300000, // 5 minutes
+};
+
 /** Common trash folder names, tried after the server's \Trash folder. */
 const TRASH_FOLDER_NAMES = ["Trash", "Deleted Items", "Deleted", "INBOX.Trash"];
 
@@ -152,13 +159,16 @@ export class EmailService {
   private logger = createLogger("EmailService");
   private cachedFetch: ReturnType<typeof createCacheFetcher>;
   private sender: { name?: string; address: string };
+  private ttls: CacheConfig["email"];
 
   constructor(
     connection: ImapConnection,
     cache: LocalCache,
     poolConfig: Omit<ImapPoolConfig, "connectionConfig">,
+    ttls: CacheConfig["email"] = DEFAULT_EMAIL_TTLS,
   ) {
     this.cache = cache;
+    this.ttls = ttls;
     this.sender = senderFor(connection.user);
     this.cachedFetch = createCacheFetcher(
       this.cache,
@@ -194,7 +204,7 @@ export class EmailService {
         }
       },
       "searchEmails",
-      300000, // 5 minutes TTL
+      this.ttls.searchTtl,
       // No default: on a connection failure with nothing cached, an empty
       // list would read as "no such emails" instead of an outage.
     );
@@ -214,7 +224,7 @@ export class EmailService {
           return await this.fetchEmailByUid(wrapper, uid, folder);
         },
         "getEmail",
-        600000, // 10 minutes TTL
+        this.ttls.messageTtl,
       );
     } finally {
       // A timed-out or failed fetch has already marked the connection
@@ -239,7 +249,7 @@ export class EmailService {
     const thread = await this.buildEmailThread(messageId, folder);
 
     if (thread) {
-      this.cache.set(cacheKey, thread, 300000); // 5 minutes TTL
+      this.cache.set(cacheKey, thread, this.ttls.threadTtl);
     }
 
     return thread;
